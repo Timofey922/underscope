@@ -31,6 +31,7 @@ def test_more_severity_never_helps_values(panel, t):
     for lo, hi in itertools.pairwise(vals):
         assert hi.repair_cost.expected >= lo.repair_cost.expected
         assert hi.as_is_value <= lo.as_is_value
+        assert hi.repaired_value <= lo.repaired_value
         assert hi.parts_gross_value.expected <= lo.parts_gross_value.expected
         assert hi.salvage_value.expected <= lo.salvage_value.expected
 

@@ -86,3 +86,15 @@ def test_dealer_repair_does_not_brand_title():
     assert dealer.repair_ratio >= dealer.total_loss_threshold
     assert dealer.title_after_repair == TitleStatus.CLEAN
     assert claim.title_after_repair == TitleStatus.REBUILT
+
+
+def test_repaired_haircut_scales_with_damage():
+    a = default_assumptions()
+    full = a["market"]["repaired_value_haircut_pct_at_total_damage"] / 100
+    none = value_vehicle(veh(), [])
+    dent = value_vehicle(veh(), [f(sev=0.3)])
+    frame = value_vehicle(veh(), [f("frame", "crush", 0.6)])
+    assert none.repaired_value == none.clean_value
+    assert frame.repaired_value < dent.repaired_value < none.repaired_value
+    # A small cosmetic repair carries almost no stigma.
+    assert dent.repaired_value > dent.clean_value * (1 - full * 0.1)

@@ -16,46 +16,46 @@ Vehicles: 500. Oracle = best realized net per vehicle.
 
 | Metric | Same model | Misspecified |
 |---|---|---|
-| Accuracy (picked the oracle's path) | 90.0% | 91.4% |
-| Average regret per vehicle | $61 | $80 |
-| Human-review rate | 3.2% | 3.2% |
-| Best fixed-policy regret | $101 | $76 |
+| Accuracy (picked the oracle's path) | 90.0% | 90.2% |
+| Average regret per vehicle | $59 | $84 |
+| Human-review rate | 4.0% | 4.0% |
+| Best fixed-policy regret | $110 | $78 |
 
-- Same model: UnderScope ($61) beats the best fixed policy, always acv_as_is ($101).
-- Misspecified: UnderScope ($80) does not beat the best fixed policy, always acv_as_is ($76).
+- Same model: UnderScope ($59) beats the best fixed policy, always acv_as_is ($110).
+- Misspecified: UnderScope ($84) does not beat the best fixed policy, always acv_as_is ($78).
 
 ## Same model
 
-Average oracle net $7,946.
+Average oracle net $7,956.
 
 | Group | Vehicles | Accuracy | Avg regret |
 |---|---|---|---|
-| Flagged for review | 16 | 37.5% | $491 |
-| Not flagged | 484 | 91.7% | $47 |
+| Flagged for review | 20 | 50.0% | $204 |
+| Not flagged | 480 | 91.7% | $53 |
 
 | Policy | Avg regret |
 |---|---|
-| always repair_then_acv | $2,075 |
-| always acv_as_is | $101 |
-| always copart_salvage | $6,989 |
-| always part_out | $4,671 |
-| UnderScope | $61 |
+| always repair_then_acv | $1,756 |
+| always acv_as_is | $110 |
+| always copart_salvage | $6,999 |
+| always part_out | $4,681 |
+| UnderScope | $59 |
 
 ## Misspecified
 
-Average oracle net $7,918.
+Average oracle net $7,921.
 
 | Group | Vehicles | Accuracy | Avg regret |
 |---|---|---|---|
-| Flagged for review | 16 | 50.0% | $715 |
-| Not flagged | 484 | 92.8% | $59 |
+| Flagged for review | 20 | 50.0% | $352 |
+| Not flagged | 480 | 91.9% | $72 |
 
 | Policy | Avg regret |
 |---|---|
-| always repair_then_acv | $2,407 |
-| always acv_as_is | $76 |
-| always copart_salvage | $6,504 |
-| always part_out | $4,977 |
-| UnderScope | $80 |
+| always repair_then_acv | $2,078 |
+| always acv_as_is | $78 |
+| always copart_salvage | $6,506 |
+| always part_out | $4,979 |
+| UnderScope | $84 |
 
 Regret is in dollars (integer cents internally). Regenerate with `.venv/bin/python -m underscope.data && .venv/bin/python -m underscope.backtest`.

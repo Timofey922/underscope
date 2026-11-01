@@ -96,7 +96,7 @@ def repair_friendly():
     a = default_assumptions()
     return _with(
         market={**a["market"], "as_is_discount_multiple_of_repair": 3.0,
-                "repaired_value_haircut_pct": 1},
+                "repaired_value_haircut_pct_at_total_damage": 5},
         timing={**a["timing"], "holding_cost_per_day_cents": 2000},
     )  # fmt: skip
 

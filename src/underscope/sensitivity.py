@@ -20,7 +20,7 @@ from underscope.perception import MockDetector
 SCALES = (0.5, 0.75, 1.0, 1.25, 1.5)
 PARAMS = (
     ("market", "as_is_discount_multiple_of_repair"),
-    ("market", "repaired_value_haircut_pct"),
+    ("market", "repaired_value_haircut_pct_at_total_damage"),
     ("market", "salvage_fraction_of_clean"),
     ("timing", "holding_cost_per_day_cents"),
     ("hidden_damage", "reserve_pct_of_repair"),

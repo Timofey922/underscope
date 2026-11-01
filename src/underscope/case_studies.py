@@ -17,11 +17,12 @@ CASES = [
         "Case 1: the $600 dent",
         "Dealer persona (no insurance claim). A door dent on a clean-title car, repair estimate "
         "around $650.",
-        "Selling as-is wins under the untuned placeholders: a flat 6% accident-history haircut "
-        "on the repaired car ($1,500 here) outweighs a $650 repair. Repair only wins if buyers "
-        "discount the visible damage by about 4.5x the repair cost (reports/sensitivity.md). "
-        "The answer to the dealer's question depends on two unknowns, the as-is discount and "
-        "the haircut for a minor cosmetic repair, and real ACV sale data should settle both.",
+        "Selling as-is wins narrowly under the untuned placeholders. The accident-history "
+        "haircut scales with damage, so a 3%-of-value dent carries almost none; what sinks "
+        "repair is the extra holding time and the hidden-damage reserve. Repair wins once "
+        "buyers discount the visible damage by about 2.4x the repair cost (placeholder 1.3x; "
+        "see reports/sensitivity.md). That one number, measurable from ACV sale data, answers "
+        "the dealer's question.",
     ),
     (
         "borderline_writeoff.json",

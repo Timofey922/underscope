@@ -97,9 +97,11 @@ def value_vehicle(
         clean - round(m["as_is_discount_multiple_of_repair"] * rep.expected),
     )
     as_is = round(as_is * title[vehicle.title_status.value])
-    repaired = round(clean * (1 - m["repaired_value_haircut_pct"] / 100))
-
+    # Damage score: expected repair cost as a share of clean value, capped at 1.
     damage_score = min(1.0, rep.expected / clean) if clean else 1.0
+    haircut = m["repaired_value_haircut_pct_at_total_damage"] / 100 * damage_score
+    repaired = round(clean * (1 - haircut))
+
     adj = 1 - m["salvage_damage_adjust_pct_per_unit_severity"] / 100 * damage_score
     salvage = Range(*(round(clean * frac * adj) for frac in m["salvage_fraction_of_clean"]))
 

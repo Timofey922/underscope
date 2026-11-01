@@ -12,6 +12,7 @@ Credentials come from the environment the Anthropic SDK reads (ANTHROPIC_API_KEY
 from __future__ import annotations
 
 import base64
+import io
 import json
 from pathlib import Path as FsPath
 from typing import Any
@@ -43,6 +44,8 @@ def estimated_cost_usd(photos: int) -> float:
 MEDIA_TYPES = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
                ".webp": "image/webp", ".gif": "image/gif"}  # fmt: skip
 MAX_IMAGE_BYTES = 5 * 1024 * 1024  # API limit per image
+# The API resizes images beyond about this long edge anyway; sending more only costs upload.
+MAX_EDGE = 1568
 
 SYSTEM = f"""You inspect photos of damaged vehicles for a remarketing company and report \
 exterior damage as structured findings.
@@ -103,13 +106,39 @@ def _clamp(x: float) -> float:
     return min(1.0, max(0.0, float(x)))
 
 
+def _downscale(path: FsPath) -> bytes | None:
+    """JPEG bytes of the photo shrunk to MAX_EDGE on its long side (upright per its EXIF
+    orientation), or None when it is already small enough. Needs Pillow (vision extra)."""
+    try:
+        from PIL import Image, ImageOps, UnidentifiedImageError
+    except ImportError:
+        return None
+    try:
+        im = Image.open(path)
+    except UnidentifiedImageError:
+        return None  # not something Pillow reads; send as is and let the API judge
+    with im:
+        if max(im.size) <= MAX_EDGE and path.stat().st_size <= MAX_IMAGE_BYTES:
+            return None
+        im = ImageOps.exif_transpose(im).convert("RGB")
+        im.thumbnail((MAX_EDGE, MAX_EDGE))
+        buf = io.BytesIO()
+        im.save(buf, format="JPEG", quality=90)
+        return buf.getvalue()
+
+
 def image_block(path: FsPath) -> dict[str, Any]:
     media_type = MEDIA_TYPES.get(path.suffix.lower())
     if media_type is None:
         raise DetectionError(f"{path}: unsupported image type (use jpg, png, webp or gif)")
-    data = path.read_bytes()
+    data = _downscale(path) if media_type != "image/gif" else None
+    if data is not None:
+        media_type = "image/jpeg"
+    else:
+        data = path.read_bytes()
     if len(data) > MAX_IMAGE_BYTES:
-        raise DetectionError(f"{path}: image is over 5 MB; downscale it first")
+        raise DetectionError(f"{path}: image is over 5 MB; install the vision extra "
+                             "(Pillow) to downscale it automatically")  # fmt: skip
     encoded = base64.standard_b64encode(data).decode("ascii")
     return {"type": "image", "source": {"type": "base64", "media_type": media_type,
                                         "data": encoded}}  # fmt: skip

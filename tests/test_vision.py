@@ -102,9 +102,9 @@ def test_missing_unsupported_and_oversized_photos(tmp_path):
     (tmp_path / "a.bmp").write_bytes(PNG)
     with pytest.raises(DetectionError, match="unsupported"):
         det.detect_photo("a.bmp")
-    (tmp_path / "big.jpg").write_bytes(b"\x00" * (5 * 1024 * 1024 + 1))
+    (tmp_path / "big.gif").write_bytes(b"\x00" * (5 * 1024 * 1024 + 1))
     with pytest.raises(DetectionError, match="5 MB"):
-        det.detect_photo("big.jpg")
+        det.detect_photo("big.gif")
 
 
 def test_schema_enums_match_domain_model():
@@ -188,3 +188,26 @@ def test_batch_submit_and_collect(tmp_path):
 def test_batch_not_finished_yet(tmp_path):
     det = ClaudeVisionDetector(tmp_path, client=batch_client([], status="in_progress"))
     assert det.collect_batch({"batch_id": "x", "photos": {}}) == ("in_progress", {}, {})
+
+
+def test_large_photos_are_downscaled_to_jpeg(tmp_path):
+    import base64
+    import io
+
+    import numpy as np
+
+    from underscope.vision import MAX_EDGE, image_block
+
+    Image = pytest.importorskip("PIL.Image")  # vision extra
+
+    Image.new("RGB", (3000, 1000), (200, 30, 30)).save(tmp_path / "wide.png")
+    noise = np.random.default_rng(0).integers(0, 255, (1500, 1500, 3), dtype=np.uint8)
+    Image.fromarray(noise).save(tmp_path / "heavy.png")
+    assert (tmp_path / "heavy.png").stat().st_size > 5 * 1024 * 1024
+    Image.new("RGB", (800, 600)).save(tmp_path / "small.png")
+    for name in ("wide.png", "heavy.png"):
+        block = image_block(tmp_path / name)
+        assert block["source"]["media_type"] == "image/jpeg"
+        img = Image.open(io.BytesIO(base64.b64decode(block["source"]["data"])))
+        assert max(img.size) <= MAX_EDGE
+    assert image_block(tmp_path / "small.png")["source"]["media_type"] == "image/png"

@@ -4,20 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path as FsPath
 
-from underscope.data import ROOT, SYNTHETIC_DIR, read_synthetic
+from underscope.data import BANDS, ROOT, SYNTHETIC_DIR, damage_band, read_synthetic
 from underscope.decision import PATHS, evaluate
 from underscope.models import DamageFinding, VehicleRecord
-from underscope.valuation import value_vehicle
-
-# Bands by true repair ratio (expected repair cost / clean value, engine's assumptions), so
-# hard cases aren't averaged away by the many light-damage vehicles.
-BANDS = (("light", 0.15), ("mid", 0.50), ("heavy", float("inf")))
-
-
-def damage_band(row: dict) -> str:
-    v = VehicleRecord(**row["vehicle"])
-    ratio = value_vehicle(v, [DamageFinding(**f) for f in row["truth"]["findings"]]).repair_ratio
-    return next(name for name, upper in BANDS if ratio < upper)
 
 
 def run_backtest(rows: list[dict]) -> dict:
@@ -134,8 +123,47 @@ def _unflagged_verdict(title: str, res: dict) -> str:
     )
 
 
+def _stratified_section(same: dict, mis: dict) -> list[str]:
+    names = (
+        "Accuracy (picked the oracle's path)",
+        "Average regret per vehicle",
+        "Human-review rate",
+        "Best fixed-policy regret",
+    )
+    lines = [
+        "## Stratified set: equal light, mid and heavy damage",
+        "",
+        f"{same['n']} vehicles, {same['n'] // len(BANDS)} per damage band, picked from a larger "
+        "synthetic pool so the hard cases have enough rows to judge. Same cars in both truths.",
+        "",
+        "| Metric | Same model | Misspecified |",
+        "|---|---|---|",
+        *(f"| {n} | {x} | {y} |" for n, x, y in zip(
+            names, _metrics(same), _metrics(mis), strict=True)),
+        "",
+        *(_verdict(t, r) for t, r in (("Same model", same), ("Misspecified", mis))),
+        *(_unflagged_verdict(t, r) for t, r in (("Same model", same), ("Misspecified", mis))),
+        "",
+    ]  # fmt: skip
+    for title, res in (("Same model", same), ("Misspecified", mis)):
+        lines += [
+            f"### {title}, stratified: by damage band",
+            "",
+            "| Band | Vehicles | Accuracy | UnderScope regret | Best fixed policy | Its regret |",
+            "|---|---|---|---|---|---|",
+            *(_band_row(name, upper, b) for (name, upper), b in zip(
+                BANDS, res["bands"].values(), strict=True)),
+            "",
+        ]  # fmt: skip
+    return lines
+
+
 def write_report(
-    same: dict, mis: dict, path: str | FsPath = ROOT / "reports" / "backtest.md"
+    same: dict,
+    mis: dict,
+    path: str | FsPath = ROOT / "reports" / "backtest.md",
+    strat_same: dict | None = None,
+    strat_mis: dict | None = None,
 ) -> FsPath:
     lines = [
         "# Backtest vs oracle (SYNTHETIC data)",
@@ -206,6 +234,8 @@ def write_report(
             f"| UnderScope | {_d(res['avg_regret_cents'])} |",
             "",
         ]
+    if strat_same and strat_mis:
+        lines += _stratified_section(strat_same, strat_mis)
     lines.append(
         "Regret is in dollars (integer cents internally). Regenerate with "
         "`.venv/bin/python -m underscope.data && .venv/bin/python -m underscope.backtest`."
@@ -221,5 +251,9 @@ if __name__ == "__main__":
         write_report(
             run_backtest(read_synthetic()),
             run_backtest(read_synthetic(SYNTHETIC_DIR / "vehicles_misspecified.jsonl")),
+            strat_same=run_backtest(read_synthetic(SYNTHETIC_DIR / "vehicles_stratified.jsonl")),
+            strat_mis=run_backtest(
+                read_synthetic(SYNTHETIC_DIR / "vehicles_stratified_misspecified.jsonl")
+            ),
         )
     )

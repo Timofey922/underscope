@@ -47,3 +47,15 @@ def test_truth_can_come_from_another_world():
     assert [r["truth"]["realized_net_cents"] for r in same] != [
         r["truth"]["realized_net_cents"] for r in other
     ]
+
+
+def test_stratified_indices_balance_bands():
+    from underscope.data import BANDS, damage_band, stratified_indices
+
+    rows = generate_synthetic(300, seed=8)
+    keep = stratified_indices(rows, 10)
+    assert len(keep) == 10 * len(BANDS) and keep == sorted(keep)
+    bands = [damage_band(rows[i]) for i in keep]
+    assert all(bands.count(name) == 10 for name, _ in BANDS)
+    with pytest.raises(ValueError):
+        stratified_indices(rows[:20], 10)

@@ -35,3 +35,11 @@ def test_review_buckets_carry_baselines():
         assert set(res[key]["baselines"]) == set(res["baseline_avg_regret_cents"])
     total = res["flagged"]["baselines"]["acv_as_is"] + res["unflagged"]["baselines"]["acv_as_is"]
     assert total == round(res["baseline_avg_regret_cents"]["acv_as_is"] * 30)
+
+
+def test_report_includes_stratified_section_when_given(tmp_path):
+    from underscope.backtest import write_report
+
+    res = run_backtest(generate_synthetic(12, seed=2))
+    text = write_report(res, res, tmp_path / "b.md", strat_same=res, strat_mis=res).read_text()
+    assert "## Stratified set" in text and "stratified: by damage band" in text

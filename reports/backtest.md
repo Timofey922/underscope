@@ -76,4 +76,36 @@ Average oracle net $7,923.
 | always part_out | $4,982 |
 | UnderScope | $84 |
 
+## Stratified set: equal light, mid and heavy damage
+
+600 vehicles, 200 per damage band, picked from a larger synthetic pool so the hard cases have enough rows to judge. Same cars in both truths.
+
+| Metric | Same model | Misspecified |
+|---|---|---|
+| Accuracy (picked the oracle's path) | 84.2% | 83.7% |
+| Average regret per vehicle | $84 | $80 |
+| Human-review rate | 11.3% | 11.3% |
+| Best fixed-policy regret | $202 | $90 |
+
+- Same model: UnderScope ($84) beats the best fixed policy, always acv_as_is ($202).
+- Misspecified: UnderScope ($80) beats the best fixed policy, always acv_as_is ($90).
+- Same model, the 89% of vehicles not flagged for review: UnderScope ($60) beats always acv_as_is ($184) on the same vehicles.
+- Misspecified, the 89% of vehicles not flagged for review: UnderScope ($50) beats always acv_as_is ($80) on the same vehicles.
+
+### Same model, stratified: by damage band
+
+| Band | Vehicles | Accuracy | UnderScope regret | Best fixed policy | Its regret |
+|---|---|---|---|---|---|
+| light (0%-15%) | 200 | 97.5% | $10 | always acv_as_is | $119 |
+| mid (15%-50%) | 200 | 94.5% | $25 | always acv_as_is | $27 |
+| heavy (>=50%) | 200 | 60.5% | $218 | always part_out | $317 |
+
+### Misspecified, stratified: by damage band
+
+| Band | Vehicles | Accuracy | UnderScope regret | Best fixed policy | Its regret |
+|---|---|---|---|---|---|
+| light (0%-15%) | 200 | 95.5% | $31 | always acv_as_is | $64 |
+| mid (15%-50%) | 200 | 93.0% | $29 | always acv_as_is | $18 |
+| heavy (>=50%) | 200 | 62.5% | $179 | always acv_as_is | $188 |
+
 Regret is in dollars (integer cents internally). Regenerate with `.venv/bin/python -m underscope.data && .venv/bin/python -m underscope.backtest`.

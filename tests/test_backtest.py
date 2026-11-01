@@ -17,3 +17,13 @@ def test_report_has_both_truths(tmp_path):
     res = run_backtest(generate_synthetic(10, seed=2))
     text = write_report(res, res, tmp_path / "b.md").read_text()
     assert "Same model" in text and "Misspecified" in text
+
+
+def test_damage_bands_partition_and_have_baselines():
+    res = run_backtest(generate_synthetic(60, seed=4))
+    bands = res["bands"]
+    assert list(bands) == ["light", "mid", "heavy"]
+    assert sum(b["n"] for b in bands.values()) == 60
+    assert sum(b["regret"] for b in bands.values()) == round(res["avg_regret_cents"] * 60)
+    for b in bands.values():
+        assert set(b["baselines"]) == set(res["baseline_avg_regret_cents"])

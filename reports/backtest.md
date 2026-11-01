@@ -24,6 +24,22 @@ Vehicles: 500. Oracle = best realized net per vehicle.
 - Same model: UnderScope ($59) beats the best fixed policy, always acv_as_is ($110).
 - Misspecified: UnderScope ($84) does not beat the best fixed policy, always acv_as_is ($78).
 
+## Same model: by damage band (true repair cost / clean value)
+
+| Band | Vehicles | Accuracy | UnderScope regret | Best fixed policy | Its regret |
+|---|---|---|---|---|---|
+| light (0%-15%) | 266 | 98.5% | $2 | always acv_as_is | $46 |
+| mid (15%-50%) | 187 | 87.7% | $89 | always acv_as_is | $123 |
+| heavy (>=50%) | 47 | 51.1% | $263 | always part_out | $346 |
+
+## Misspecified: by damage band (true repair cost / clean value)
+
+| Band | Vehicles | Accuracy | UnderScope regret | Best fixed policy | Its regret |
+|---|---|---|---|---|---|
+| light (0%-15%) | 266 | 97.4% | $16 | always acv_as_is | $18 |
+| mid (15%-50%) | 187 | 88.8% | $142 | always acv_as_is | $123 |
+| heavy (>=50%) | 47 | 55.3% | $231 | always acv_as_is | $242 |
+
 ## Same model
 
 Average oracle net $7,956.

@@ -7,6 +7,17 @@ from pathlib import Path as FsPath
 from underscope.data import ROOT, SYNTHETIC_DIR, read_synthetic
 from underscope.decision import PATHS, evaluate
 from underscope.models import DamageFinding, VehicleRecord
+from underscope.valuation import value_vehicle
+
+# Bands by true repair ratio (expected repair cost / clean value, engine's assumptions), so
+# hard cases aren't averaged away by the many light-damage vehicles.
+BANDS = (("light", 0.15), ("mid", 0.50), ("heavy", float("inf")))
+
+
+def damage_band(row: dict) -> str:
+    v = VehicleRecord(**row["vehicle"])
+    ratio = value_vehicle(v, [DamageFinding(**f) for f in row["truth"]["findings"]]).repair_ratio
+    return next(name for name, upper in BANDS if ratio < upper)
 
 
 def run_backtest(rows: list[dict]) -> dict:
@@ -18,6 +29,10 @@ def run_backtest(rows: list[dict]) -> dict:
     unflagged = {"n": 0, "regret": 0, "correct": 0}
     baselines = {p.value: 0 for p in PATHS}
     oracle_total = 0
+    bands = {
+        name: {"n": 0, "regret": 0, "correct": 0, "baselines": {p.value: 0 for p in PATHS}}
+        for name, _ in BANDS
+    }
     for r in rows:
         v = VehicleRecord(**r["vehicle"])
         rec = evaluate(v, [DamageFinding(**f) for f in r["vehicle"]["findings"]])
@@ -34,8 +49,13 @@ def run_backtest(rows: list[dict]) -> dict:
         bucket["n"] += 1
         bucket["regret"] += regret
         bucket["correct"] += ok
+        band = bands[damage_band(r)]
+        band["n"] += 1
+        band["regret"] += regret
+        band["correct"] += ok
         for p in PATHS:
             baselines[p.value] += best - net[p.value]
+            band["baselines"][p.value] += best - net[p.value]
     return {
         "n": n,
         "accuracy": correct / n,
@@ -45,6 +65,7 @@ def run_backtest(rows: list[dict]) -> dict:
         "unflagged": unflagged,
         "baseline_avg_regret_cents": {k: v / n for k, v in baselines.items()},
         "avg_oracle_net_cents": oracle_total / n,
+        "bands": bands,
     }
 
 
@@ -65,6 +86,21 @@ def _metrics(res: dict) -> list[str]:
         f"{res['review_rate']:.1%}",
         f"{_d(min(res['baseline_avg_regret_cents'].values()))}",
     ]
+
+
+def _band_row(name: str, upper: float, b: dict) -> str:
+    bounds = [0.0] + [u for _, u in BANDS]
+    lower = bounds[[n for n, _ in BANDS].index(name)]
+    span = f">={lower:.0%}" if upper == float("inf") else f"{lower:.0%}-{upper:.0%}"
+    label = f"{name} ({span})"
+    if not b["n"]:
+        return f"| {label} | 0 | - | - | - | - |"
+    n = b["n"]
+    policy, regret = min(b["baselines"].items(), key=lambda kv: kv[1])
+    return (
+        f"| {label} | {n} | {b['correct'] / n:.1%} | {_d(b['regret'] / n)} | "
+        f"always {policy} | {_d(regret / n)} |"
+    )
 
 
 def _verdict(title: str, res: dict) -> str:
@@ -117,6 +153,16 @@ def write_report(
         *(_verdict(title, res) for title, res in (("Same model", same), ("Misspecified", mis))),
         "",
     ]
+    for title, res in (("Same model", same), ("Misspecified", mis)):
+        lines += [
+            f"## {title}: by damage band (true repair cost / clean value)",
+            "",
+            "| Band | Vehicles | Accuracy | UnderScope regret | Best fixed policy | Its regret |",
+            "|---|---|---|---|---|---|",
+            *(_band_row(name, upper, b) for (name, upper), b in zip(
+                BANDS, res["bands"].values(), strict=True)),
+            "",
+        ]  # fmt: skip
     for title, res in (("Same model", same), ("Misspecified", mis)):
         base = res["baseline_avg_regret_cents"]
         lines += [

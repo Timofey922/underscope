@@ -36,6 +36,9 @@ detector's confidence must be calibrated for that to hold.
 - Under a misspecified world the engine does not beat "always sell as-is" on the synthetic mix
   ($84 vs $78 regret per vehicle). The synthetic mix is mostly light damage.
 - Part-out vs as-is on heavy damage depends on the parts placeholders.
+- By damage band (reports/backtest.md), the misspecified world shows the engine losing to
+  "always as-is" in the mid band (15-50% repair ratio, $142 vs $123), which is where dealer
+  repair decisions live. Heavy band has only 47 vehicles; its numbers are noisy.
 
 ## Decisions for humans
 - Haircut now scales with damage score (repair cost / clean value). 20% at full damage is
@@ -52,5 +55,6 @@ detector's confidence must be calibrated for that to hold.
 none
 
 ## Next step
-Make the synthetic damage mix and the misspecified world more realistic (more mid/heavy damage, correlated errors) before trusting
-any backtest number. Real data (docs/DATA_REQUIREMENTS.md) remains the main unlock.
+Find why the engine underperforms "always as-is" in the mid band under misspecification
+(likely the repair path's sensitivity to the as-is discount multiple); consider a stratified
+synthetic set with more mid/heavy vehicles. Real data (docs/DATA_REQUIREMENTS.md) remains the main unlock.

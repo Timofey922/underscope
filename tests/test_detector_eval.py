@@ -74,3 +74,12 @@ def test_type_only_matching_ignores_panel():
     assert by_panel.matched == 0
     assert by_type.matched == 1 and by_type.recall == 0.5 and by_type.type_accuracy == 1.0
     assert "matched on damage type only" in render_report(by_type)
+
+
+def test_match_prefers_same_side():
+    left = DamageFinding(panel="door", damage_type="dent", severity=0.2, confidence=1,
+                         side="left")
+    right = left.model_copy(update={"side": "right", "severity": 0.6})
+    pred = right.model_copy(update={"confidence": 0.9})
+    pairs, missed, _ = match([left, right], [pred])
+    assert pairs[0][0].side == "right" and missed[0].side == "left"

@@ -52,7 +52,11 @@ def match(
         if not same_panel:
             false_alarms.append(p)
             continue
-        best = next((t for t in same_panel if t.damage_type == p.damage_type), same_panel[0])
+        # Prefer the same damage type, then the same side (when both sides are known).
+        best = max(same_panel, key=lambda t: (
+            t.damage_type == p.damage_type,
+            t.side is not None and t.side == p.side,
+        ))  # fmt: skip
         left.remove(best)
         pairs.append((best, p))
     return pairs, left, false_alarms

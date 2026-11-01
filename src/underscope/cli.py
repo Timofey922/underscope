@@ -451,6 +451,54 @@ def detect_eval_cmd(
         report.write_text(text)
 
 
+@app.command("label")
+def label_cmd(
+    photo_dir: Annotated[
+        FsPath, typer.Argument(exists=True, file_okay=False, help="Folder of photos to label.")
+    ],
+    labels: Annotated[
+        FsPath, typer.Option("--labels", help="Labels file to create or extend.")
+    ] = FsPath("labels.json"),
+    prefill: Annotated[
+        FsPath | None,
+        typer.Option("--prefill", exists=True,
+                     help="Start each photo from saved predictions (faster, but can anchor "
+                          "the labeler on the model's answer)."),
+    ] = None,  # fmt: skip
+) -> None:
+    """Record the true damage in each photo, for scoring detectors. Resumable."""
+    from underscope import labeling
+    from underscope.detector_eval import load_findings, save_findings
+
+    done = load_findings(labels) if labels.exists() else {}
+    start = load_findings(prefill) if prefill else {}
+    todo = labeling.photos_to_label(photo_dir, done)
+    typer.echo(f"{len(done)} labeled, {len(todo)} to go. Labels file: {labels}")
+    typer.echo(labeling.HELP)
+    for i, ref in enumerate(todo, 1):
+        findings = [f.model_copy(update={"confidence": 1.0}) for f in start.get(ref, [])]
+        typer.echo(f"\n[{i}/{len(todo)}] {(photo_dir / ref).resolve()}")
+        typer.echo(labeling.describe(findings))
+        while True:
+            try:
+                action, msg = labeling.apply(findings, typer.prompt("label"), ref)
+            except ValueError as err:
+                typer.echo(f"Not applied: {err}")
+                continue
+            if action == "edit":
+                typer.echo(labeling.describe(findings))
+            elif action == "help":
+                typer.echo(msg or labeling.HELP)
+            else:
+                break
+        if action == "next":
+            done[ref] = findings
+            save_findings(done, labels)
+        elif action == "quit":
+            break
+    typer.echo(f"\n{len(done)} photos labeled in {labels}.")
+
+
 class _MockPhotoDetector:
     """Per-photo view of the label file; scores 100% by construction (pipeline check)."""
 

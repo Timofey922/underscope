@@ -22,11 +22,15 @@ class DetectorName(str, Enum):
     CLAUDE = "claude"
 
 
-def _make_detector(name: DetectorName, labels: FsPath | None, photo_root: FsPath):
+def _make_detector(
+    name: DetectorName, labels: FsPath | None, photo_root: FsPath, calibration: FsPath | None = None
+):
     if name == DetectorName.CLAUDE:
+        from underscope import calibration as cal
         from underscope.vision import ClaudeVisionDetector
 
-        return ClaudeVisionDetector(photo_root)
+        table = cal.load(calibration) if calibration else None
+        return ClaudeVisionDetector(photo_root, calibration=table)
     return MockDetector.from_file(labels) if labels else MockDetector()
 
 AWAITING_CONFIRMATION = 3  # exit code: findings written for a checker, decision not made yet
@@ -201,6 +205,10 @@ def evaluate_cmd(
     photo_root: Annotated[
         FsPath, typer.Option("--photo-root", help="Folder the vehicle's photo_refs are in.")
     ] = FsPath("."),
+    calibration: Annotated[
+        FsPath | None,
+        typer.Option("--calibration", exists=True, help="Confidence calibration from calibrate."),
+    ] = None,
 ) -> None:
     """Evaluate disposition paths for one vehicle, after a human checker confirms the damage."""
     try:
@@ -208,7 +216,7 @@ def evaluate_cmd(
     except ValueError as err:
         typer.echo(str(err), err=True)
         raise typer.Exit(2) from err
-    detector = _make_detector(detector_name, labels, photo_root)
+    detector = _make_detector(detector_name, labels, photo_root, calibration)
     status = "Findings NOT confirmed by a human checker."
     if confirmed:
         req = review.load(confirmed)
@@ -338,12 +346,16 @@ def batch_cmd(
     photo_root: Annotated[
         FsPath, typer.Option("--photo-root", help="Folder the vehicles' photo_refs are in.")
     ] = FsPath("."),
+    calibration: Annotated[
+        FsPath | None,
+        typer.Option("--calibration", exists=True, help="Confidence calibration from calibrate."),
+    ] = None,
 ) -> None:
     """Evaluate a folder of vehicles. Confirmed reviews are decided; the rest go to the queue.
 
     Exits 3 while any vehicle is still waiting for a checker.
     """
-    detector = _make_detector(detector_name, None, photo_root)
+    detector = _make_detector(detector_name, None, photo_root, calibration)
     decided, waiting, invalid = [], [], []
     for path in sorted(vehicle_dir.glob("*.json")):
         try:
@@ -436,6 +448,11 @@ def detect_eval_cmd(
     batch_state: Annotated[
         FsPath, typer.Option("--batch-state", help="Where --batch saves its state.")
     ] = FsPath("detect_batch.json"),
+    calibration: Annotated[
+        FsPath | None,
+        typer.Option("--calibration", exists=True,
+                     help="Apply a calibration (fit on different photos) before scoring."),
+    ] = None,  # fmt: skip
 ) -> None:
     """Score a damage detector against labeled photos."""
     from underscope import detector_eval as de
@@ -497,6 +514,12 @@ def detect_eval_cmd(
                        "and aren't in the file.")  # fmt: skip
     if match_by not in ("panel", "type"):
         raise typer.BadParameter("--match-by must be panel or type")
+    if calibration:
+        from underscope import calibration as cal
+
+        table = cal.load(calibration)
+        pred = {ref: [f.model_copy(update={"confidence": cal.apply(f.confidence, table)})
+                      for f in items] for ref, items in pred.items()}  # fmt: skip
     text = de.render_report(de.score(truth, pred, errors, by=match_by))
     if spent is not None:
         text += f"\nAPI cost of this run: ${spent:,.2f} (from reported token usage).\n"
@@ -580,6 +603,33 @@ def import_coco_cmd(
         f"  dropped, no panel: {counts['no_panel']}; ignored by mapping: {counts['ignored']}\n"
         f"  categories not in the mapping: {counts['unknown_category']}"
     )
+
+
+@app.command("calibrate")
+def calibrate_cmd(
+    labels: Annotated[FsPath, typer.Argument(exists=True, help="True labels JSON.")],
+    predictions: Annotated[
+        FsPath, typer.Argument(exists=True, help="Saved predictions (detect-eval --save).")
+    ],
+    out: Annotated[FsPath, typer.Option("--out", help="Calibration file to write.")] = FsPath(
+        "calibration.json"
+    ),
+    min_count: Annotated[
+        int, typer.Option("--min-count", min=1, help="Fewest predictions to correct a band.")
+    ] = 20,
+    match_by: Annotated[str, typer.Option("--match-by", help="panel or type.")] = "panel",
+) -> None:
+    """Learn how often each stated confidence is actually right, for --calibration."""
+    from underscope import calibration as cal
+    from underscope.detector_eval import load_findings
+
+    if match_by not in ("panel", "type"):
+        raise typer.BadParameter("--match-by must be panel or type")
+    table = cal.fit(load_findings(labels), load_findings(predictions), match_by, min_count)
+    cal.save(table, out)
+    typer.echo(cal.render(table))
+    typer.echo(f"\nSaved {out}. Score it on different photos than these: "
+               "detect-eval ... --calibration " + str(out))  # fmt: skip
 
 
 class _MockPhotoDetector:

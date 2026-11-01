@@ -195,11 +195,13 @@ class ClaudeVisionDetector:
         client: Any = None,
         model: str = MODEL,
         effort: str = "medium",
+        calibration: dict[str, Any] | None = None,
     ):
         self.photo_root = FsPath(photo_root)
         self._client = client
         self.model = model
         self.effort = effort
+        self.calibration = calibration  # from underscope.calibration.fit, applied to confidence
         self.notes: dict[str, list[str]] = {}  # photo_ref -> unmapped damage descriptions
         self.views: dict[str, str] = {}  # photo_ref -> which side of the car the photo shows
         self.usage: list[Any] = []  # response.usage per call, for cost reporting
@@ -242,7 +244,15 @@ class ClaudeVisionDetector:
         findings, self.notes[photo_ref], self.views[photo_ref] = parse_response(
             response, photo_ref
         )
-        return findings
+        return self._calibrated(findings)
+
+    def _calibrated(self, findings: list[DamageFinding]) -> list[DamageFinding]:
+        if not self.calibration:
+            return findings
+        from underscope.calibration import apply
+
+        return [f.model_copy(update={"confidence": apply(f.confidence, self.calibration)})
+                for f in findings]  # fmt: skip
 
     def spent_usd(self, batch: bool = False) -> float:
         """Cost of the calls made so far, from the API's reported token usage. Batch requests
@@ -286,6 +296,7 @@ class ClaudeVisionDetector:
             self.usage.append(getattr(message, "usage", None))
             try:
                 found[ref], self.notes[ref], self.views[ref] = parse_response(message, ref)
+                found[ref] = self._calibrated(found[ref])
             except DetectionError as err:
                 errors[ref] = str(err)
         for ref in state["photos"].values():

@@ -270,3 +270,22 @@ def test_detect_eval_batch_submit_then_collect(tmp_path, monkeypatch):
     client.messages.batches.status = "in_progress"
     r = runner.invoke(app, [*base, "--collect", str(state)])
     assert r.exit_code == AWAITING_CONFIRMATION and "still in_progress" in r.output
+
+
+def test_claude_views_reach_the_review_sheet(tmp_path, monkeypatch):
+    from test_vision import PNG, reply
+
+    (tmp_path / "left.jpg").write_bytes(PNG)
+    vfile = tmp_path / "car.json"
+    car = json.loads((FIXTURE_DIR / "dent_600.json").read_text())
+    vfile.write_text(json.dumps({**car, "findings": [], "photo_refs": ["left.jpg"]}))
+    _fake_claude(monkeypatch, reply({"view": "left", "findings": [], "unmapped_damage": []}))
+    rev = tmp_path / "rev"
+    r = runner.invoke(app, ["evaluate", str(vfile), "--detector", "claude", "--photo-root",
+                            str(tmp_path), "--no-interactive",
+                            "--review-dir", str(rev)])  # fmt: skip
+    assert r.exit_code == AWAITING_CONFIRMATION, r.output
+    saved = json.loads((rev / "FIXDENT0000000001.json").read_text())
+    assert saved["photo_views"] == {"left.jpg": "left"}
+    assert any("Photos don't show: front, rear, right side, roof" in x for x in saved["reasons"])
+    assert "not photographed" in r.output

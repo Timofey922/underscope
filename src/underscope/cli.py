@@ -96,6 +96,12 @@ def _detect(detector, vehicle: VehicleRecord):
         raise typer.Exit(2) from err
 
 
+def _views(detector, vehicle: VehicleRecord) -> dict[str, str]:
+    """Which side of the car each of this vehicle's photos shows, when the detector says."""
+    views = getattr(detector, "views", {})
+    return {ref: views[ref] for ref in vehicle.photo_refs if ref in views}
+
+
 def _unmapped_reasons(detector) -> list[str]:
     """Damage the detector saw but couldn't place on a panel goes to the checker."""
     notes = getattr(detector, "notes", {})
@@ -222,7 +228,7 @@ def evaluate_cmd(
         status = f"Findings confirmed by {req.checker} at {req.confirmed_at}."
     else:
         findings = _detect(detector, vehicle)
-        req = review.build_request(vehicle, findings, review_mode)
+        req = review.build_request(vehicle, findings, review_mode, views=_views(detector, vehicle))
         req.reasons += _unmapped_reasons(detector)
         if not skip_confirm and review.needs_confirmation(review_mode, req.reasons):
             json_path, html_path = review.save(req, review_dir)
@@ -354,7 +360,9 @@ def batch_cmd(
             rec, status = evaluate(req.vehicle, req.findings), f"confirmed by {req.checker}"
         else:
             if req is None:
-                req = review.build_request(vehicle, findings, review_mode)
+                req = review.build_request(
+                    vehicle, findings, review_mode, views=_views(detector, vehicle)
+                )
                 req.reasons += _unmapped_reasons(detector)
             if review.needs_confirmation(review_mode, req.reasons):
                 review.save(req, review_dir)

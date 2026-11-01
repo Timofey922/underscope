@@ -18,6 +18,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from underscope import coverage
 from underscope.config import Assumptions, default_assumptions
 from underscope.decision import evaluate
 from underscope.models import DamageFinding, DamageType, Panel, VehicleRecord
@@ -57,14 +58,30 @@ class ReviewRequest(BaseModel):
     # What the checker reviewed: vehicle data plus detector findings. If either changes, the
     # review no longer applies and the car goes back to the checker.
     source_fingerprint: str = ""
+    # photo_ref -> view (front, left, rear_right, ...) when the detector reports it. An area no
+    # photo shows is unknown, not clean, until the checker confirms it.
+    photo_views: dict[str, str] = Field(default_factory=dict)
+
+    def _unseen(self, panel: Panel) -> list[str]:
+        if not self.photo_views or self.status != "pending":
+            return []
+        return coverage.uncovered_sides(panel, list(self.photo_views.values()))
 
     def areas(self) -> list[Area]:
         out = []
         for panel in Panel:
             hits = [f for f in self.findings if f.panel == panel]
+            unseen = self._unseen(panel)
             if hits:
                 detail = "; ".join(_finding_text(f) for f in hits)
+                sides = [s for s in unseen if s != "center"]
+                if sides:
+                    detail += f"; {' and '.join(sides)} side not photographed"
                 out.append(Area(name=panel.value, status=AreaStatus.DAMAGED, detail=detail))
+            elif unseen:
+                what = ("not photographed" if unseen == ["center"]
+                        else f"not photographed: {' and '.join(unseen)} side")  # fmt: skip
+                out.append(Area(name=panel.value, status=AreaStatus.VERIFY, detail=what))
             elif panel in HIGH_RISK_PANELS and self.status == "pending":
                 out.append(
                     Area(name=panel.value, status=AreaStatus.VERIFY,
@@ -93,7 +110,10 @@ def _finding_text(f: DamageFinding) -> str:
 
 
 def risk_reasons(
-    vehicle: VehicleRecord, findings: list[DamageFinding], a: Assumptions | None = None
+    vehicle: VehicleRecord,
+    findings: list[DamageFinding],
+    a: Assumptions | None = None,
+    views: dict[str, str] | None = None,
 ) -> list[str]:
     """Signals that the findings may be wrong or that a mistake would be costly.
 
@@ -114,6 +134,12 @@ def risk_reasons(
         out.append("Structural (frame) damage detected.")
     if not findings:
         out.append("No damage detected at all; confirm the car is really clean.")
+    if views:
+        gaps = coverage.missing_views(list(views.values()))
+        if not coverage.covered(list(views.values())):
+            out.append("Couldn't tell which side of the car any photo shows.")
+        elif gaps:
+            out.append(f"Photos don't show: {', '.join(gaps)}.")
     rec = evaluate(vehicle, findings, a)
     out += [f"Decision: {r}" for r in rec.review_reasons]
     return out
@@ -144,11 +170,13 @@ def build_request(
     findings: list[DamageFinding],
     mode: ReviewMode = ReviewMode.ALL,
     a: Assumptions | None = None,
+    views: dict[str, str] | None = None,
 ) -> ReviewRequest:
     return ReviewRequest(
         vin=vehicle.vin,
         mode=mode,
-        reasons=risk_reasons(vehicle, findings, a),
+        reasons=risk_reasons(vehicle, findings, a, views),
+        photo_views=dict(views or {}),
         vehicle=vehicle.model_copy(update={"findings": []}),
         findings=list(findings),
         source_fingerprint=fingerprint(vehicle, findings),

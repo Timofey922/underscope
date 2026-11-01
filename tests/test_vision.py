@@ -79,9 +79,10 @@ def test_request_shape(tmp_path):
 
 
 def test_values_clamped_into_range():
-    out, _ = parse_response(reply({"findings": [finding(sev=1.4, conf=-0.2)],
+    out, _, view = parse_response(reply({"findings": [finding(sev=1.4, conf=-0.2)],
                                    "unmapped_damage": []}), "p")  # fmt: skip
     assert out[0].severity == 1.0 and out[0].confidence == 0.0
+    assert view == "unknown"  # missing view
 
 
 @pytest.mark.parametrize("resp", [
@@ -133,7 +134,7 @@ def test_same_damage_in_two_photos_is_counted_once(tmp_path):
 
 
 def test_unknown_side_is_none():
-    out, _ = parse_response(reply({"findings": [{**finding(), "side": "unknown"}],
+    out, _, _ = parse_response(reply({"findings": [{**finding(), "side": "unknown"}],
                                    "unmapped_damage": []}), "p")  # fmt: skip
     assert out[0].side is None
 
@@ -211,3 +212,14 @@ def test_large_photos_are_downscaled_to_jpeg(tmp_path):
         img = Image.open(io.BytesIO(base64.b64decode(block["source"]["data"])))
         assert max(img.size) <= MAX_EDGE
     assert image_block(tmp_path / "small.png")["source"]["media_type"] == "image/png"
+
+
+def test_photo_views_recorded(tmp_path):
+    (tmp_path / "a.png").write_bytes(PNG)
+    (tmp_path / "b.png").write_bytes(PNG)
+    client = FakeClient(reply({"view": "front_left", "findings": [], "unmapped_damage": []}),
+                        reply({"view": "sideways", "findings": [], "unmapped_damage": []}))
+    det = ClaudeVisionDetector(tmp_path, client=client)
+    det.detect(vehicle("a.png", "b.png"))
+    assert det.views == {"a.png": "front_left", "b.png": "unknown"}
+    assert SCHEMA["required"][0] == "view"

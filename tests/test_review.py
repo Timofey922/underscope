@@ -93,3 +93,33 @@ def test_fingerprint_tracks_vehicle_and_detected_findings():
     review.add_finding(req, "roof", "dent", 0.2)
     review.confirm(req, "admin")
     assert req.source_fingerprint == review.fingerprint(v, fi)
+
+
+def test_unphotographed_areas_go_to_verify():
+    req = review.build_request(veh(), [f("door")], views={"a.jpg": "left"})
+    areas = {a.name: a for a in req.areas()}
+    assert areas["hood"].status == review.AreaStatus.VERIFY
+    assert "not photographed" in areas["hood"].detail
+    assert areas["fender"].status == review.AreaStatus.VERIFY
+    assert "right side" in areas["fender"].detail
+    # Damaged on the photographed side, the other side still unseen.
+    assert areas["door"].status == review.AreaStatus.DAMAGED
+    assert "right side not photographed" in areas["door"].detail
+    assert any("Photos don't show: front, rear, right side, roof" in r for r in req.reasons)
+    review.confirm(req, "admin")
+    assert {a.name: a.status for a in req.areas()}["hood"] == review.AreaStatus.CLEAR
+
+
+def test_full_coverage_and_no_views_change_nothing():
+    four = {"a": "front_left", "b": "front_right", "c": "rear_left", "d": "rear_right", "e": "top"}
+    req = review.build_request(veh(), [f()], views=four)
+    assert {a.name: a.status for a in req.areas()}["hood"] == review.AreaStatus.CLEAR
+    assert not any("Photos don't show" in r for r in req.reasons)
+    plain = review.build_request(veh(), [f()])
+    assert {a.name: a.status for a in plain.areas()}["hood"] == review.AreaStatus.CLEAR
+    assert not any("Photos don't show" in r for r in plain.reasons)
+
+
+def test_unknown_views_are_a_risk_signal():
+    reasons = review.risk_reasons(veh(), [f()], views={"a": "unknown", "b": "close_up"})
+    assert any("Couldn't tell which side" in r for r in reasons)

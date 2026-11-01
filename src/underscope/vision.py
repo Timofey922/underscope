@@ -17,6 +17,7 @@ import json
 from pathlib import Path as FsPath
 from typing import Any
 
+from underscope.coverage import VIEWS
 from underscope.models import DamageFinding, DamageType, Panel, VehicleRecord
 from underscope.perception import merge_findings
 
@@ -68,6 +69,11 @@ the panel, 0.9 or more when the panel needs replacing.
 - confidence from 0 to 1 that this damage really exists as described. Lower it for glare, \
 reflections, dirt, shadows, distance, blur or a partial view.
 
+Also give the photo's view: which side of the car the camera faces (front, rear, left, \
+right, front_left, front_right, rear_left, rear_right, top for a view onto the roof), \
+close_up for a tight shot of one area, interior, or unknown. Left and right are as seen \
+from the driver's seat.
+
 Put damage that fits no panel above (wheels, tires, mirrors, interior, underbody you can \
 glimpse) in unmapped_damage as short descriptions. If the photo shows no vehicle or no \
 damage, return empty lists. Describe only what is visible; don't guess about hidden damage."""
@@ -92,8 +98,9 @@ SCHEMA: dict[str, Any] = {
             },
         },
         "unmapped_damage": {"type": "array", "items": {"type": "string"}},
+        "view": {"type": "string", "enum": list(VIEWS)},
     },
-    "required": ["findings", "unmapped_damage"],
+    "required": ["view", "findings", "unmapped_damage"],
     "additionalProperties": False,
 }
 
@@ -144,8 +151,10 @@ def image_block(path: FsPath) -> dict[str, Any]:
                                         "data": encoded}}  # fmt: skip
 
 
-def parse_response(response: Any, photo_ref: str) -> tuple[list[DamageFinding], list[str]]:
-    """Turn a Messages API response into findings plus unmapped-damage notes."""
+def parse_response(
+    response: Any, photo_ref: str
+) -> tuple[list[DamageFinding], list[str], str]:
+    """Turn a Messages API response into (findings, unmapped-damage notes, photo view)."""
     if response.stop_reason == "refusal":
         raise DetectionError(f"{photo_ref}: the model declined to analyze this photo")
     if response.stop_reason == "max_tokens":
@@ -166,7 +175,10 @@ def parse_response(response: Any, photo_ref: str) -> tuple[list[DamageFinding], 
         ]  # fmt: skip
     except (json.JSONDecodeError, KeyError, ValueError, TypeError) as err:
         raise DetectionError(f"{photo_ref}: unusable response ({err})") from err
-    return findings, [str(x) for x in data.get("unmapped_damage", [])]
+    view = data.get("view", "unknown")
+    return findings, [str(x) for x in data.get("unmapped_damage", [])], (
+        view if view in VIEWS else "unknown"
+    )
 
 
 class ClaudeVisionDetector:
@@ -189,6 +201,7 @@ class ClaudeVisionDetector:
         self.model = model
         self.effort = effort
         self.notes: dict[str, list[str]] = {}  # photo_ref -> unmapped damage descriptions
+        self.views: dict[str, str] = {}  # photo_ref -> which side of the car the photo shows
         self.usage: list[Any] = []  # response.usage per call, for cost reporting
 
     @property
@@ -226,8 +239,9 @@ class ClaudeVisionDetector:
             **params, betas=[FALLBACK_BETA], fallbacks="default"
         )
         self.usage.append(getattr(response, "usage", None))
-        findings, notes = parse_response(response, photo_ref)
-        self.notes[photo_ref] = notes
+        findings, self.notes[photo_ref], self.views[photo_ref] = parse_response(
+            response, photo_ref
+        )
         return findings
 
     def spent_usd(self, batch: bool = False) -> float:
@@ -271,7 +285,7 @@ class ClaudeVisionDetector:
             message = item.result.message
             self.usage.append(getattr(message, "usage", None))
             try:
-                found[ref], self.notes[ref] = parse_response(message, ref)
+                found[ref], self.notes[ref], self.views[ref] = parse_response(message, ref)
             except DetectionError as err:
                 errors[ref] = str(err)
         for ref in state["photos"].values():

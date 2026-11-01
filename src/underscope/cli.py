@@ -499,6 +499,34 @@ def label_cmd(
     typer.echo(f"\n{len(done)} photos labeled in {labels}.")
 
 
+@app.command("import-coco")
+def import_coco_cmd(
+    annotations: Annotated[FsPath, typer.Argument(exists=True, help="COCO annotations JSON.")],
+    mapping: Annotated[
+        FsPath, typer.Option("--mapping", exists=True, help="Category mapping YAML.")
+    ],
+    out: Annotated[FsPath, typer.Option("--out", help="Labels file to write.")] = FsPath(
+        "labels.json"
+    ),
+) -> None:
+    """Convert COCO damage annotations into labels for detect-eval."""
+    from underscope.coco_import import convert_file
+    from underscope.detector_eval import save_findings
+
+    try:
+        labels, counts = convert_file(annotations, mapping)
+    except (ValueError, KeyError) as err:
+        raise typer.BadParameter(f"mapping or annotations don't fit: {err}") from err
+    save_findings(labels, out)
+    typer.echo(
+        f"{counts['images']} images, {counts['damage']} damage labels written to {out}\n"
+        f"  placed on a labeled part: {counts['on_part']}\n"
+        f"  on the default panel (score with --match-by type): {counts['default_panel']}\n"
+        f"  dropped, no panel: {counts['no_panel']}; ignored by mapping: {counts['ignored']}\n"
+        f"  categories not in the mapping: {counts['unknown_category']}"
+    )
+
+
 class _MockPhotoDetector:
     """Per-photo view of the label file; scores 100% by construction (pipeline check)."""
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path as FsPath
 
-from underscope.data import ROOT, read_synthetic
+from underscope.data import ROOT, SYNTHETIC_DIR, read_synthetic
 from underscope.decision import PATHS, evaluate
 from underscope.models import DamageFinding, VehicleRecord
 
@@ -58,43 +58,87 @@ def _row(name: str, b: dict) -> str:
     return f"| {name} | {b['n']} | {b['correct'] / b['n']:.1%} | {_d(b['regret'] / b['n'])} |"
 
 
-def write_report(res: dict, path: str | FsPath = ROOT / "reports" / "backtest.md") -> FsPath:
-    base = res["baseline_avg_regret_cents"]
+def _metrics(res: dict) -> list[str]:
+    return [
+        f"{res['accuracy']:.1%}",
+        f"{_d(res['avg_regret_cents'])}",
+        f"{res['review_rate']:.1%}",
+        f"{_d(min(res['baseline_avg_regret_cents'].values()))}",
+    ]
+
+
+def _verdict(title: str, res: dict) -> str:
+    policy, best = min(res["baseline_avg_regret_cents"].items(), key=lambda kv: kv[1])
+    ours = res["avg_regret_cents"]
+    word = "beats" if ours < best else "does not beat"
+    return (
+        f"- {title}: UnderScope ({_d(ours)}) {word} the best fixed policy, "
+        f"always {policy} ({_d(best)})."
+    )
+
+
+def write_report(
+    same: dict, mis: dict, path: str | FsPath = ROOT / "reports" / "backtest.md"
+) -> FsPath:
     lines = [
         "# Backtest vs oracle (SYNTHETIC data)",
         "",
-        "**Read this first:** the 500 vehicles and their 'true' outcomes are synthetic and are",
-        "drawn from the same PLACEHOLDER model the engine uses. The engine sees noisy findings",
-        "(severity noise, 5% missed findings, imperfect confidence); the oracle sees the true",
-        "findings and one realized outcome per path. These numbers show decision quality under",
-        "perception noise and outcome variance, not accuracy on real auction data.",
+        "**Read this first:** the vehicles and their 'true' outcomes are synthetic. The engine",
+        "sees noisy findings (severity noise, 5% missed findings, imperfect confidence); the",
+        "oracle sees the true findings and one realized outcome per path. Two truths:",
         "",
-        f"Vehicles: {res['n']}. Oracle = best realized net per vehicle "
-        f"(average {_d(res['avg_oracle_net_cents'])}).",
+        "- **Same model:** outcomes drawn from the engine's own placeholder model. This only",
+        "  measures perception noise and outcome variance; it is circular by construction.",
+        "- **Misspecified:** outcomes drawn from a perturbed world where every placeholder is",
+        "  off by up to 25% and market noise is 1.5x wider (`data.perturbed`). The gap between",
+        "  the two columns shows how much results lean on the engine's own assumptions.",
         "",
-        "| Metric | Value |",
-        "|---|---|",
-        f"| Accuracy (picked the oracle's path) | {res['accuracy']:.1%} |",
-        f"| Average regret (oracle net - chosen net) | {_d(res['avg_regret_cents'])} per vehicle |",
-        f"| Human-review rate | {res['review_rate']:.1%} |",
+        "Neither is accuracy on real auction data.",
         "",
-        "## By review flag",
+        f"Vehicles: {same['n']}. Oracle = best realized net per vehicle.",
         "",
-        "| Group | Vehicles | Accuracy | Avg regret |",
-        "|---|---|---|---|",
-        _row("Flagged for review", res["flagged"]),
-        _row("Not flagged", res["unflagged"]),
+        "| Metric | Same model | Misspecified |",
+        "|---|---|---|",
+        *(
+            f"| {name} | {x} | {y} |"
+            for name, x, y in zip(
+                (
+                    "Accuracy (picked the oracle's path)",
+                    "Average regret per vehicle",
+                    "Human-review rate",
+                    "Best fixed-policy regret",
+                ),
+                _metrics(same),
+                _metrics(mis),
+                strict=True,
+            )
+        ),
         "",
-        "## Baselines: always pick one path (average regret)",
+        *(_verdict(title, res) for title, res in (("Same model", same), ("Misspecified", mis))),
         "",
-        "| Policy | Avg regret |",
-        "|---|---|",
-        *(f"| always {k} | {_d(v)} |" for k, v in base.items()),
-        f"| UnderScope | {_d(res['avg_regret_cents'])} |",
-        "",
-        "Regret is in dollars (integer cents internally). Regenerate with "
-        "`.venv/bin/python -m underscope.backtest`.",
     ]
+    for title, res in (("Same model", same), ("Misspecified", mis)):
+        base = res["baseline_avg_regret_cents"]
+        lines += [
+            f"## {title}",
+            "",
+            f"Average oracle net {_d(res['avg_oracle_net_cents'])}.",
+            "",
+            "| Group | Vehicles | Accuracy | Avg regret |",
+            "|---|---|---|---|",
+            _row("Flagged for review", res["flagged"]),
+            _row("Not flagged", res["unflagged"]),
+            "",
+            "| Policy | Avg regret |",
+            "|---|---|",
+            *(f"| always {k} | {_d(v)} |" for k, v in base.items()),
+            f"| UnderScope | {_d(res['avg_regret_cents'])} |",
+            "",
+        ]
+    lines.append(
+        "Regret is in dollars (integer cents internally). Regenerate with "
+        "`.venv/bin/python -m underscope.data && .venv/bin/python -m underscope.backtest`."
+    )
     p = FsPath(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text("\n".join(lines) + "\n")
@@ -102,4 +146,9 @@ def write_report(res: dict, path: str | FsPath = ROOT / "reports" / "backtest.md
 
 
 if __name__ == "__main__":
-    print(write_report(run_backtest(read_synthetic())))
+    print(
+        write_report(
+            run_backtest(read_synthetic()),
+            run_backtest(read_synthetic(SYNTHETIC_DIR / "vehicles_misspecified.jsonl")),
+        )
+    )

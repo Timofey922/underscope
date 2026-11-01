@@ -9,3 +9,11 @@ def test_backtest_metrics_sane():
     assert res["flagged"]["n"] + res["unflagged"]["n"] == 40
     # Engine should not be worse than the worst fixed policy.
     assert res["avg_regret_cents"] <= max(res["baseline_avg_regret_cents"].values())
+
+
+def test_report_has_both_truths(tmp_path):
+    from underscope.backtest import write_report
+
+    res = run_backtest(generate_synthetic(10, seed=2))
+    text = write_report(res, res, tmp_path / "b.md").read_text()
+    assert "Same model" in text and "Misspecified" in text

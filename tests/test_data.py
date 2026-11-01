@@ -1,6 +1,7 @@
 import pytest
 
-from underscope.data import ACVSource, CopartSource, FixtureSource, generate_synthetic
+from underscope.config import default_assumptions
+from underscope.data import ACVSource, CopartSource, FixtureSource, generate_synthetic, perturbed
 
 
 def test_fixtures_load():
@@ -24,3 +25,25 @@ def test_synthetic_seeded_and_labeled():
     r = a[0]
     assert r["truth"]["best_path"] in r["truth"]["realized_net_cents"]
     assert all(isinstance(v, int) for v in r["truth"]["realized_net_cents"].values())
+
+
+def test_perturbed_world_is_valid_seeded_and_different():
+    a = default_assumptions()
+    w = perturbed(a, seed=5)
+    assert w.data == perturbed(a, seed=5).data
+    assert w.data != a.data
+    assert w["title"]["factor"]["clean"] == 1.0
+    assert max(w["parts"]["sell_through"]) <= 1.0
+    assert w["total_loss"] == a["total_loss"]  # statutory, not uncertain
+    assert w["simulation"]["value_noise_sigma"] > a["simulation"]["value_noise_sigma"]
+
+
+def test_truth_can_come_from_another_world():
+    a = default_assumptions()
+    same = generate_synthetic(10, seed=3)
+    other = generate_synthetic(10, seed=3, world=perturbed(a, seed=5))
+    # Same vehicles and perceived findings; different realized outcomes.
+    assert [r["vehicle"] for r in same] == [r["vehicle"] for r in other]
+    assert [r["truth"]["realized_net_cents"] for r in same] != [
+        r["truth"]["realized_net_cents"] for r in other
+    ]

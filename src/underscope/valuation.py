@@ -90,7 +90,7 @@ def value_vehicle(
     clean = clean_value(vehicle, a)
     rep = Range(*(round(x * repair_cost_scale) for x in repair_cost(findings, a)))
     m = a["market"]
-    title = a["title"]["factor"]
+    title = {k: r[1] for k, r in a["title"]["factor"].items()}  # expected factor per status
 
     as_is = max(
         round(clean * m["as_is_floor_fraction"]),

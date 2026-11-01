@@ -32,7 +32,7 @@ def test_perturbed_world_is_valid_seeded_and_different():
     w = perturbed(a, seed=5)
     assert w.data == perturbed(a, seed=5).data
     assert w.data != a.data
-    assert w["title"]["factor"]["clean"] == 1.0
+    assert w["title"]["factor"]["clean"] == [1.0, 1.0, 1.0]
     assert max(w["parts"]["sell_through"]) <= 1.0
     assert w["total_loss"] == a["total_loss"]  # statutory, not uncertain
     assert w["simulation"]["value_noise_sigma"] > a["simulation"]["value_noise_sigma"]

@@ -82,11 +82,12 @@ timing:
 title:
   status: PLACEHOLDER
   replace_with: Observed price discount of branded vs clean titles in auction results.
-  # Multiplier applied to repaired value, keyed by resulting title status.
+  # Multiplier on value, keyed by title status, as [low, expected, high]. Uncertain like any
+  # market input; ranges are symmetric so the expected value is the middle number.
   factor:
-    clean: 1.0
-    rebuilt: 0.78
-    salvage: 0.60
+    clean: [1.0, 1.0, 1.0]
+    rebuilt: [0.66, 0.78, 0.90]
+    salvage: [0.48, 0.60, 0.72]
   # A repaired vehicle whose repair cost crosses the total-loss threshold gets this brand.
   brand_after_total_loss_repair: rebuilt
 

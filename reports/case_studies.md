@@ -41,7 +41,7 @@ Path                          Expected       P10       P50       P90
 part out                        $1,873      $794    $1,831    $3,098
 sell as-is on ACV                 $597      $311      $607      $858
 sell as salvage on Copart         $226     -$362      $207      $844
-repair then sell on ACV        -$3,459   -$7,115   -$4,013       $70
+repair then sell on ACV        -$3,457   -$7,234   -$3,887       $70
 
 Best path: part out, expected net $1,873 (P10 $794, P90 $3,098). Next best is sell as-is on ACV at $597, $1,276 behind; it wins in 6% of simulated outcomes. Expected repair cost is $6,887 (72% of a $9,500 clean value; total-loss threshold 75% in NY).
 
@@ -68,7 +68,7 @@ Path                          Expected       P10       P50       P90
 part out                        $4,628    $2,948    $4,536    $6,459
 sell as-is on ACV               $2,029    $1,646    $2,031    $2,402
 sell as salvage on Copart       $1,566      $604    $1,529    $2,580
-repair then sell on ACV       -$12,196  -$19,197  -$12,134   -$3,575
+repair then sell on ACV       -$12,156  -$19,356  -$12,178   -$3,575
 
 Best path: part out, expected net $4,628 (P10 $2,948, P90 $6,459). Next best is sell as-is on ACV at $2,029, $2,599 behind; it wins in 1% of simulated outcomes. Expected repair cost is $16,368 (91% of a $18,000 clean value; total-loss threshold 75% in NY). Repair is past the total-loss threshold, so a repaired car would carry a brand.
 

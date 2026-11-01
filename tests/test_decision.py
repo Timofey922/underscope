@@ -1,6 +1,7 @@
 import copy
 
 import numpy as np
+import pytest
 
 from underscope.config import Assumptions, default_assumptions
 from underscope.decision import PATHS, _winner, evaluate, repair_cost_flip, simulate
@@ -167,3 +168,28 @@ def test_repair_cost_flip_reproduces():
     assert short == base
     r = evaluate(v, fi, a)
     assert any("repair cost" in c and "$" in c for c in r.flip_conditions)
+
+
+def test_title_discount_uncertainty_widens_rebuilt_repair_outcomes():
+    # Title discounts are uncertain market facts; a point value hides the risk of repairing
+    # a salvage car to a rebuilt title.
+    a = default_assumptions()
+    point = _with(a, title={**a["title"], "factor": {
+        k: [r[1]] * 3 for k, r in a["title"]["factor"].items()}})  # fmt: skip
+    v = veh(title_status="salvage")
+    fi = [f(sev=0.5)]
+    wide = simulate(v, value_vehicle(v, fi, a), a).nets[Path.REPAIR_THEN_ACV]
+    narrow = simulate(v, value_vehicle(v, fi, point), point).nets[Path.REPAIR_THEN_ACV]
+    assert wide.std() > 1.2 * narrow.std()
+    # Symmetric ranges leave the expected net about where it was.
+    assert abs(wide.mean() - narrow.mean()) < 0.03 * abs(narrow.mean())
+
+
+def test_tri_ppf_matches_range():
+    from underscope.decision import _tri_ppf
+
+    u = np.linspace(0, 1, 1001)
+    x = _tri_ppf(u, [0.66, 0.78, 0.90])
+    assert x[0] == pytest.approx(0.66) and x[-1] == pytest.approx(0.90)
+    assert (np.diff(x) >= 0).all()
+    assert x.mean() == pytest.approx(0.78, abs=0.002)

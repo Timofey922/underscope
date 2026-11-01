@@ -40,6 +40,17 @@ def _tri(rng: np.random.Generator, r: Range | list[int] | tuple, n: int) -> np.n
     return rng.triangular(lo, mode, hi, n)
 
 
+def _tri_ppf(u: np.ndarray, r: Range | list[float]) -> np.ndarray:
+    """Triangular inverse CDF: maps shared uniforms onto (low, mode, high)."""
+    lo, mode, hi = (float(x) for x in r)
+    if hi <= lo:
+        return np.full(u.shape, lo)
+    c = (mode - lo) / (hi - lo)
+    left = lo + np.sqrt(u * (hi - lo) * (mode - lo))
+    right = hi - np.sqrt((1 - u) * (hi - lo) * (hi - mode))
+    return np.where(u < c, left, right)
+
+
 def _cents(x: np.ndarray) -> np.ndarray:
     return np.rint(x).astype(np.int64)
 
@@ -54,12 +65,12 @@ def simulate(
     a: Assumptions,
     draws: int | None = None,
     seed: int | None = None,
-    force_title_factor: float | None = None,
+    force_title: TitleStatus | None = None,
 ) -> SimResult:
     """Draw net proceeds for every path.
 
-    force_title_factor overrides the title multiplier on the repair path (used to test
-    whether the total-loss threshold decides the outcome).
+    force_title sets the repaired title on the repair path (used to test whether the
+    total-loss threshold decides the outcome).
     """
     sim = a["simulation"]
     n = draws or sim["draws"]
@@ -79,6 +90,10 @@ def simulate(
     t_parts = _cents(_tri(rng, tr["parts_cents"], n))
     repair_days = np.rint(_tri(rng, tm["repair_days"], n)).astype(np.int64)
     days = {p: np.rint(_tri(rng, tm["days_to_sell"][p.value], n)).astype(np.int64) for p in PATHS}
+    # Title discounts are uncertain too. One shared uniform per draw moves every status's
+    # factor together (a soft or strong branded-title market), so paths stay comparable.
+    u_title = rng.random(n)
+    factors = {t: _tri_ppf(u_title, a["title"]["factor"][t.value]) for t in TitleStatus}
 
     hold = tm["holding_cost_per_day_cents"]
     nets: dict[Path, np.ndarray] = {}
@@ -86,19 +101,18 @@ def simulate(
 
     # 1. Repair, then sell on ACV.
     clean_shocked = val.clean_value * market
-    if force_title_factor is not None:
-        title_factor = np.full(n, force_title_factor)
+    if force_title is not None:
+        title_factor = factors[force_title]
         branded = np.zeros(n, dtype=bool)
     elif vehicle.title_status != TitleStatus.CLEAN or not vehicle.insurance_claim:
-        title_factor = np.full(n, val.title_factor_after_repair)
+        title_factor = factors[val.title_after_repair]
         branded = np.zeros(n, dtype=bool)
     else:
         # Insurance claim on a clean title: the insurer totals the car when repair cost crosses
         # the threshold, evaluated per draw against the (shocked) clean value.
         branded = rep >= val.total_loss_threshold * clean_shocked
-        factors = a["title"]["factor"]
-        brand = factors[a["title"]["brand_after_total_loss_repair"]]
-        title_factor = np.where(branded, brand, factors["clean"])
+        brand = TitleStatus(a["title"]["brand_after_total_loss_repair"])
+        title_factor = np.where(branded, factors[brand], factors[TitleStatus.CLEAN])
     sale = _cents(val.repaired_value * market * title_factor)
     fee = _cents(fees["acv"]["flat_cents"] + _pct(sale, fees["acv"]["pct_of_price"]))
     holding = (repair_days + days[Path.REPAIR_THEN_ACV]) * hold
@@ -115,8 +129,9 @@ def simulate(
         "holding": -holding, "hidden_damage_reserve": -reserve,
     }  # fmt: skip
 
-    # 2. Sell as-is on ACV.
-    sale = _cents(val.as_is_value * market)
+    # 2. Sell as-is on ACV. as_is_value carries the expected title factor; rescale per draw.
+    expected_tf = a["title"]["factor"][vehicle.title_status.value][1]
+    sale = _cents(val.as_is_value * market * factors[vehicle.title_status] / expected_tf)
     fee = _cents(fees["acv"]["flat_cents"] + _pct(sale, fees["acv"]["pct_of_price"]))
     holding = days[Path.ACV_AS_IS] * hold
     nets[Path.ACV_AS_IS] = sale - fee - t_acv - holding
@@ -295,10 +310,9 @@ def evaluate(
     tl_flip: tuple[Path, Path] | None = None
     # Only relevant on insurance claims where a material share of draws crosses the threshold.
     if sim.branded_share >= sim_cfg["total_loss_min_branded_share"]:
-        factors = a["title"]["factor"]
-        brand = factors[a["title"]["brand_after_total_loss_repair"]]
-        w_clean = _winner(simulate(vehicle, val, a, force_title_factor=factors["clean"]).nets)
-        w_brand = _winner(simulate(vehicle, val, a, force_title_factor=brand).nets)
+        brand = TitleStatus(a["title"]["brand_after_total_loss_repair"])
+        w_clean = _winner(simulate(vehicle, val, a, force_title=TitleStatus.CLEAN).nets)
+        w_brand = _winner(simulate(vehicle, val, a, force_title=brand).nets)
         if w_clean != w_brand:
             tl_flip = (w_clean, w_brand)
             reasons.append(

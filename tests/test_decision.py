@@ -3,7 +3,7 @@ import copy
 import numpy as np
 
 from underscope.config import Assumptions, default_assumptions
-from underscope.decision import PATHS, evaluate, simulate
+from underscope.decision import PATHS, _winner, evaluate, repair_cost_flip, simulate
 from underscope.models import DamageFinding, Path, VehicleRecord
 from underscope.valuation import value_vehicle
 
@@ -133,3 +133,21 @@ def test_total_loss_decides_needs_material_branding_and_says_what_flips():
     far = evaluate(veh(clean_value_cents=3_000_000, insurance_claim=True, region="ZZ"), fi, a)
     assert not far.total_loss_decides
     assert "decides" not in far.explanation
+
+
+def test_repair_cost_flip_reproduces():
+    # Dent case: winner is coupled to repair cost through as-is value, so search, don't guess.
+    v, fi = veh(), [f(sev=0.5)]
+    a = default_assumptions()
+    flip = repair_cost_flip(v, fi, a)
+    base = _winner(simulate(v, value_vehicle(v, fi, a), a).nets)
+    # Cheaper repair means buyers discount the as-is car less, so as-is takes over.
+    assert flip.down is not None
+    scale, new_winner = flip.down
+    assert scale < 1
+    past = _winner(simulate(v, value_vehicle(v, fi, a, repair_cost_scale=scale * 0.99), a).nets)
+    short = _winner(simulate(v, value_vehicle(v, fi, a, repair_cost_scale=scale * 1.01), a).nets)
+    assert past == new_winner != base
+    assert short == base
+    r = evaluate(v, fi)
+    assert any("repair cost" in c and "$" in c for c in r.flip_conditions)

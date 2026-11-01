@@ -82,10 +82,13 @@ def value_vehicle(
     vehicle: VehicleRecord,
     findings: list[DamageFinding],
     a: Assumptions | None = None,
+    repair_cost_scale: float = 1.0,
 ) -> Valuation:
+    """repair_cost_scale rescales the repair estimate everywhere it feeds in (as-is value,
+    repair ratio, title brand); used to find where the decision flips."""
     a = a or default_assumptions()
     clean = clean_value(vehicle, a)
-    rep = repair_cost(findings, a)
+    rep = Range(*(round(x * repair_cost_scale) for x in repair_cost(findings, a)))
     m = a["market"]
     title = a["title"]["factor"]
 

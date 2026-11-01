@@ -7,6 +7,7 @@ the arithmetic is integer, so component sums are exact per draw.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import NamedTuple
 
 import numpy as np
 
@@ -179,39 +180,86 @@ def _options(sim: SimResult) -> list[DispositionOption]:
     return sorted(opts, key=lambda o: (-o.expected_cents, PATHS.index(o.path)))
 
 
+class RepairFlip(NamedTuple):
+    # (repair-cost scale, new winner) at the nearest flip below and above 1x; None if no flip.
+    down: tuple[float, Path] | None
+    up: tuple[float, Path] | None
+
+
+FLIP_SCALE_MAX = 3.0
+
+
+def repair_cost_flip(
+    vehicle: VehicleRecord, findings: list[DamageFinding], a: Assumptions, iters: int = 14
+) -> RepairFlip:
+    """Find where rescaling the repair estimate changes the winner, by bisection.
+
+    Repair cost moves several paths at once (repair net, as-is value, title brand), so the
+    flip point is found by re-running valuation and simulation, not by a closed form.
+    """
+
+    def winner(k: float) -> Path:
+        return _winner(simulate(vehicle, value_vehicle(vehicle, findings, a, k), a).nets)
+
+    base = winner(1.0)
+
+    def search(lo: float, hi: float) -> tuple[float, Path] | None:
+        # lo keeps the base winner; returns the scale nearest lo where it changes.
+        if winner(hi) == base:
+            return None
+        for _ in range(iters):
+            mid = (lo + hi) / 2
+            if winner(mid) == base:
+                lo = mid
+            else:
+                hi = mid
+        return hi, winner(hi)
+
+    return RepairFlip(search(1.0, 0.0), search(1.0, FLIP_SCALE_MAX))
+
+
 def _flip_conditions(
-    ranked: list[DispositionOption], a: Assumptions, vehicle: VehicleRecord
+    ranked: list[DispositionOption],
+    a: Assumptions,
+    vehicle: VehicleRecord,
+    val: Valuation,
+    flip: RepairFlip,
 ) -> list[str]:
     win, run = ranked[0], ranked[1]
     gap = win.expected_cents - run.expected_cents
     out = []
-    reserve = 1 + a["hidden_damage"]["reserve_pct_of_repair"] / 100
+    est = val.repair_cost.expected
+    if est > 0:
+        for side, verb in ((flip.down, "fell"), (flip.up, "rose")):
+            if side:
+                k, new = side
+                out.append(
+                    f"If expected repair cost {verb} from {_dollars(est)} to about "
+                    f"{_dollars(round(est * k))} ({k - 1:+.0%}), {LABEL[new]} would win."
+                )
+        if not flip.down and not flip.up:
+            out.append(
+                f"No repair cost between $0 and {FLIP_SCALE_MAX:.0f}x the estimate changes "
+                "the winner."
+            )
+
+    # Price levers move one path's sale price only, so the closed form is exact there.
     fee_pct = {
         Path.ACV_AS_IS: a["fees"]["acv"]["pct_of_price"],
         Path.COPART_SALVAGE: a["fees"]["copart"]["pct_of_price"],
     }
-
-    def lever(opt: DispositionOption, direction: str) -> str | None:
-        # direction "worse": what would have to get worse for this option to lose the gap.
-        # direction "better": what would have to improve for it to catch up.
-        if opt.path == Path.REPAIR_THEN_ACV:
-            shift = round(gap / reserve)
-            verb = "rise" if direction == "worse" else "fall"
-            return f"expected repair cost would have to {verb} by about {_dollars(shift)}"
+    for opt, verb in ((win, "fall"), (run, "rise")):
         if opt.path in fee_pct:
-            net_share = 1 - fee_pct[opt.path] / 100
-            shift = round(gap / net_share)
-            verb = "fall" if direction == "worse" else "rise"
-            return f"the sale price would have to {verb} by about {_dollars(shift)}"
-        if opt.path == Path.PART_OUT:
-            verb = "fall" if direction == "worse" else "rise"
-            return f"net parts revenue would have to {verb} by about {_dollars(gap)}"
-        return None
-
-    for opt, direction in ((win, "worse"), (run, "better")):
-        text = lever(opt, direction)
-        if text:
-            out.append(f"For {LABEL[opt.path]}: {text} to flip the ranking.")
+            shift = round(gap / (1 - fee_pct[opt.path] / 100))
+            out.append(
+                f"For {LABEL[opt.path]}: the sale price would have to {verb} by about "
+                f"{_dollars(shift)} to flip the ranking."
+            )
+        elif opt.path == Path.PART_OUT:
+            out.append(
+                f"For {LABEL[opt.path]}: net parts revenue would have to {verb} by about "
+                f"{_dollars(gap)} to flip the ranking."
+            )
     if vehicle.undercarriage_damage is None or vehicle.engine_audio_abnormal is None:
         out.append(
             "Missing undercarriage/engine-audio inspection flags add a hidden-damage "
@@ -269,7 +317,9 @@ def evaluate(
         review_reasons=reasons,
         total_loss_decides=total_loss_decides,
         explanation=explanation,
-        flip_conditions=_flip_conditions(ranked, a, vehicle),
+        flip_conditions=_flip_conditions(
+            ranked, a, vehicle, val, repair_cost_flip(vehicle, findings, a)
+        ),
     )
 
 

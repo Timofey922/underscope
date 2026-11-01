@@ -56,8 +56,6 @@ findings become verified with confidence 1.0. Exit code 3 = awaiting confirmatio
 in the approved edit list).
 
 ## Decisions for humans
-- `reviews/` (default output dir) is not in .gitignore; .gitignore wasn't in the approved
-  edit list. Add it if review files shouldn't be committed.
 - Panels aren't left/right in the model, so the diagram colors both sides of a sided panel.
   Real detector output with sides or pixel boxes would let the sheet highlight exact spots
   on the photos.

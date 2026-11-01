@@ -40,9 +40,9 @@ repair_cost:
 market:
   status: PLACEHOLDER
   replace_with: Observed as-is vs repaired vs salvage sale prices from ACV and Copart results.
-  as_is_discount_multiple_of_repair: 1.3   # buyers deduct this multiple of expected repair cost
+  as_is_discount_multiple_of_repair: 3.0   # buyers deduct this multiple of expected repair cost
   as_is_floor_fraction: 0.10
-  repaired_value_haircut_pct: 6            # accident-history haircut on clean value
+  repaired_value_haircut_pct: 1            # accident-history haircut on clean value
   salvage_fraction_of_clean: [0.10, 0.22, 0.34]   # before damage adjustment
   salvage_damage_adjust_pct_per_unit_severity: 20 # extra % off salvage value per unit of damage score (cap 1)
 
@@ -66,7 +66,7 @@ transport:
 timing:
   status: PLACEHOLDER
   replace_with: Observed days-on-lot and repair turnaround by path.
-  holding_cost_per_day_cents: 4000
+  holding_cost_per_day_cents: 2000
   repair_days: [3, 7, 20]
   days_to_sell:
     repair_then_acv: [7, 14, 30]
@@ -120,6 +120,5 @@ simulation:
   draws: 1000
   seed: 20260101
   value_noise_sigma: 0.08      # lognormal sigma on market values
-  review_overlap_threshold: 0.60   # P(second beats first) above this -> human review
+  review_overlap_threshold: 0.35   # P(runner-up beats winner in a paired draw) at/above this -> human review
   low_confidence_threshold: 0.60   # mean finding confidence below this -> human review
-  total_loss_band_pct: 10          # +/- points around threshold treated as "decided by threshold"

@@ -5,7 +5,7 @@
 - [x] M2 Domain model
 - [x] M3 config/assumptions.yaml
 - [x] M4 Valuation
-- [ ] M5 Decision engine (subagent review before commit)
+- [x] M5 Decision engine (subagent review before commit)
 - [ ] M6 Data (fixtures, stubs, synthetic generator)
 - [ ] M7 CLI
 - [ ] M8 Proof (backtest, case studies)
@@ -14,8 +14,16 @@
 ## Decisions for humans
 - Project-local .venv created; installs are inside it only.
 
+- Placeholder calibration: raised as_is_discount_multiple_of_repair to 3.0, lowered repaired-value haircut to 1% and holding to $20/day so a ~$690 dent repair pays back. Replace all with real data.
+- Repair path holding cost covers repair days + days to sell (more conservative than TASK.md literal).
+- Part-out path also deducts a tow cost (transport.parts_cents), beyond the TASK.md formula.
+- review_overlap_threshold = P(runner-up beats winner in a paired draw) >= 0.35.
+- total_loss_decides is only evaluated when some draws cross the threshold (clean title).
+- Unknown inspection flags each add an allowance, so both missing adds it twice (reviewer noted; intended).
+- M5 subagent review (math/units/signs): no findings.
+
 ## Blockers
 none
 
 ## Next step
-M5: decision engine src/underscope/decision.py (Monte Carlo, ranking, review flags, explanation); subagent review before commit.
+M6: FixtureSource, ACVSource/CopartSource stubs, seeded synthetic generator (src/underscope/data.py) -> data/fixtures, data/synthetic.

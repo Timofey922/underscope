@@ -113,3 +113,26 @@ def test_schema_enums_match_domain_model():
     items = SCHEMA["properties"]["findings"]["items"]["properties"]
     assert items["panel"]["enum"] == [p.value for p in Panel]
     assert items["damage_type"]["enum"] == [t.value for t in DamageType]
+
+
+def test_same_damage_in_two_photos_is_counted_once(tmp_path):
+    (tmp_path / "a.png").write_bytes(PNG)
+    (tmp_path / "b.png").write_bytes(PNG)
+    client = FakeClient(
+        reply({"findings": [{**finding("door", "dent", 0.4, 0.7), "side": "left"}],
+               "unmapped_damage": []}),
+        reply({"findings": [{**finding("door", "dent", 0.6, 0.9), "side": "left"},
+                            {**finding("door", "dent", 0.3, 0.8), "side": "right"}],
+               "unmapped_damage": []}),
+    )  # fmt: skip
+    out = ClaudeVisionDetector(tmp_path, client=client).detect(vehicle("a.png", "b.png"))
+    by_side = {f.side: f for f in out}
+    assert set(by_side) == {"left", "right"}
+    left = by_side["left"]
+    assert (left.severity, left.confidence, left.photo_ref) == (0.6, 0.9, "b.png")
+
+
+def test_unknown_side_is_none():
+    out, _ = parse_response(reply({"findings": [{**finding(), "side": "unknown"}],
+                                   "unmapped_damage": []}), "p")  # fmt: skip
+    assert out[0].side is None

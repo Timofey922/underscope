@@ -23,3 +23,19 @@ def test_mock_detector_reads_labels_and_inline():
     det: DamageDetector = MockDetector(LABELS)
     out = det.detect(v)
     assert [f.panel for f in out] == ["hood", "door"]
+
+
+def test_merge_findings_keeps_worst_view_per_area():
+    from underscope.models import DamageFinding
+    from underscope.perception import merge_findings
+
+    def f(side, sev, conf, ref, t="dent"):
+        return DamageFinding(panel="door", damage_type=t, severity=sev, confidence=conf,
+                             side=side, photo_ref=ref)  # fmt: skip
+
+    merged = merge_findings([f("left", 0.3, 0.9, "a"), f("left", 0.5, 0.6, "b"),
+                             f("right", 0.2, 0.5, "a"), f("left", 0.2, 0.5, "a", "scratch")])
+    key = {(m.side, m.damage_type.value): m for m in merged}
+    assert len(merged) == 3
+    assert (key["left", "dent"].severity, key["left", "dent"].confidence) == (0.5, 0.9)
+    assert key["left", "dent"].photo_ref == "b"

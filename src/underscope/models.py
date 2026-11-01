@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -67,6 +68,9 @@ class DamageFinding(BaseModel):
     severity: float = Field(ge=0, le=1)
     confidence: float = Field(ge=0, le=1)
     photo_ref: str | None = None  # photo the finding came from, when known
+    # Which side of the car, when the source can tell. Panels aren't sided in the cost model,
+    # but side separates two damaged doors from one door seen in two photos.
+    side: Literal["left", "right", "center"] | None = None
     verified: bool = False  # confirmed (or added) by a human checker
 
 

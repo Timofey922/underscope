@@ -17,6 +17,7 @@ from pathlib import Path as FsPath
 from typing import Any
 
 from underscope.models import DamageFinding, DamageType, Panel, VehicleRecord
+from underscope.perception import merge_findings
 
 MODEL = "claude-opus-5-5"
 # Server-side refusal fallback ("default" routes by refusal category). Car photos shouldn't
@@ -55,6 +56,9 @@ pillars, buckled floor, misaligned panel gaps from structural deformation.
 only; dent = deformed metal or plastic without tearing; crack = split or fractured part or \
 glass; crush = heavy deformation that collapses the panel's shape; broken = missing, \
 detached or shattered part.
+- side: left or right as seen from the driver's seat, center for parts on the car's \
+midline (hood, roof, windshield, bumper centers), unknown if you can't tell. The same damage \
+seen in several photos should get the same panel, side and damage type.
 - severity from 0 to 1 for how much of that panel's full repair the damage needs: about 0.1 \
 for a small ding or scuff, 0.3 for a dent a hand could cover, 0.6 for damage over most of \
 the panel, 0.9 or more when the panel needs replacing.
@@ -75,10 +79,12 @@ SCHEMA: dict[str, Any] = {
                 "properties": {
                     "panel": {"type": "string", "enum": [p.value for p in Panel]},
                     "damage_type": {"type": "string", "enum": [t.value for t in DamageType]},
+                    "side": {"type": "string",
+                             "enum": ["left", "right", "center", "unknown"]},
                     "severity": {"type": "number"},
                     "confidence": {"type": "number"},
                 },
-                "required": ["panel", "damage_type", "severity", "confidence"],
+                "required": ["panel", "damage_type", "side", "severity", "confidence"],
                 "additionalProperties": False,
             },
         },
@@ -124,6 +130,7 @@ def parse_response(response: Any, photo_ref: str) -> tuple[list[DamageFinding], 
             DamageFinding(
                 panel=Panel(f["panel"]), damage_type=DamageType(f["damage_type"]),
                 severity=_clamp(f["severity"]), confidence=_clamp(f["confidence"]),
+                side=None if f.get("side", "unknown") == "unknown" else f["side"],
                 photo_ref=photo_ref,
             )
             for f in data["findings"]
@@ -198,4 +205,5 @@ class ClaudeVisionDetector:
         found: list[DamageFinding] = []
         for ref in vehicle.photo_refs:
             found.extend(self.detect_photo(ref))
-        return found
+        # Photos overlap: the same dent seen twice must not be costed twice.
+        return merge_findings(found)

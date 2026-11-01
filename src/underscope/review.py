@@ -88,7 +88,8 @@ class ReviewRequest(BaseModel):
 def _finding_text(f: DamageFinding) -> str:
     src = "checker" if f.verified else f"conf {f.confidence:.2f}"
     photo = f", photo {f.photo_ref}" if f.photo_ref else ""
-    return f"{f.damage_type.value} severity {f.severity:.2f} ({src}{photo})"
+    side = f"{f.side} " if f.side else ""
+    return f"{side}{f.damage_type.value} severity {f.severity:.2f} ({src}{photo})"
 
 
 def risk_reasons(

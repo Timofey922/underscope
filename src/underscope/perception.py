@@ -9,6 +9,22 @@ from typing import Protocol
 from underscope.models import DamageFinding, VehicleRecord
 
 
+def merge_findings(findings: list[DamageFinding]) -> list[DamageFinding]:
+    """One finding per (panel, side, damage type): the same damage seen in several photos
+    counts once, at its worst severity and the most confident view. Order of first sighting
+    is kept."""
+    merged: dict[tuple, DamageFinding] = {}
+    for f in findings:
+        key = (f.panel, f.side, f.damage_type)
+        prev = merged.get(key)
+        if prev is None:
+            merged[key] = f
+            continue
+        worst = f if f.severity > prev.severity else prev
+        merged[key] = worst.model_copy(update={"confidence": max(f.confidence, prev.confidence)})
+    return list(merged.values())
+
+
 class DamageDetector(Protocol):
     def detect(self, vehicle: VehicleRecord) -> list[DamageFinding]: ...
 

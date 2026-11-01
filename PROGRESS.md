@@ -8,7 +8,7 @@
 - [x] M5 Decision engine (subagent review before commit)
 - [x] M6 Data (fixtures, stubs, synthetic generator)
 - [x] M7 CLI
-- [ ] M8 Proof (backtest, case studies)
+- [x] M8 Proof (backtest, case studies)
 - [ ] M9 Docs
 
 ## Decisions for humans
@@ -26,4 +26,4 @@
 none
 
 ## Next step
-M8: backtest (src/underscope/backtest.py -> reports/backtest.md) and case studies (reports/case_studies.md); need a borderline fixture (data/fixtures/borderline.json).
+M9: README (setup, usage, Mermaid) and docs/DATA_REQUIREMENTS.md; then Morning summary + STATUS: DONE.

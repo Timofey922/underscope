@@ -27,10 +27,13 @@ def f(panel="door", t="dent", sev=0.3, conf=0.95):
     return DamageFinding(panel=panel, damage_type=t, severity=sev, confidence=conf)
 
 
-def test_small_dent_repairs():
-    r = evaluate(veh(), [f(sev=0.5)])  # ~$690 door dent
-    assert r.winner == Path.REPAIR_THEN_ACV
-    assert not r.total_loss_decides
+def test_small_dent_follows_buyer_discount():
+    # Whether a ~$650 dent repair pays back depends on how hard buyers discount the damage.
+    fi = [f(sev=0.5)]
+    assert evaluate(veh(), fi, repair_friendly()).winner == Path.REPAIR_THEN_ACV
+    mild = _with(repair_friendly(), market={
+        **repair_friendly()["market"], "as_is_discount_multiple_of_repair": 1.0})
+    assert evaluate(veh(), fi, mild).winner == Path.ACV_AS_IS
 
 
 def test_severe_damage_goes_to_salvage_or_parts():
@@ -80,17 +83,29 @@ def test_low_confidence_triggers_review():
     assert any("confidence" in x for x in r.review_reasons)
 
 
-def _with(section, **kw):
-    a = default_assumptions()
-    data = copy.deepcopy(a.data)
-    data[section].update(kw)
+def _with(a=None, **sections):
+    data = copy.deepcopy((a or default_assumptions()).data)
+    for section, kw in sections.items():
+        data[section].update(kw)
     return Assumptions(data)
+
+
+def repair_friendly():
+    # Test world where buyers discount visible damage steeply and repairs leave little stigma,
+    # so repair can win. Not a calibration; config/assumptions.yaml stays untuned.
+    a = default_assumptions()
+    return _with(
+        market={**a["market"], "as_is_discount_multiple_of_repair": 3.0,
+                "repaired_value_haircut_pct": 1},
+        timing={**a["timing"], "holding_cost_per_day_cents": 2000},
+    )  # fmt: skip
 
 
 def test_close_call_needs_review():
     # Overlap review fires exactly when P(runner-up beats winner) reaches the threshold.
-    always = _with("simulation", review_overlap_threshold=0.0)
-    never = _with("simulation", review_overlap_threshold=1.01)
+    sim = default_assumptions()["simulation"]
+    always = _with(simulation={**sim, "review_overlap_threshold": 0.0})
+    never = _with(simulation={**sim, "review_overlap_threshold": 1.01})
     assert any("overlap" in x for x in evaluate(veh(), [f()], always).review_reasons)
     assert not any("overlap" in x for x in evaluate(veh(), [f()], never).review_reasons)
 
@@ -123,7 +138,8 @@ def test_total_loss_only_decides_on_insurance_claims():
 
 def test_total_loss_decides_needs_material_branding_and_says_what_flips():
     # Low threshold so the repair ratio (~43%) straddles it; repair wins only if unbranded.
-    a = _with("total_loss", default_threshold_pct=45)
+    w = repair_friendly()
+    a = _with(w, total_loss={**w["total_loss"], "default_threshold_pct": 45})
     v = veh(clean_value_cents=1_600_000, insurance_claim=True, region="ZZ")
     fi = [f("frame", "crush", 0.4, 0.9), f("door", "dent", 0.6, 0.9)]
     r = evaluate(v, fi, a)
@@ -138,7 +154,7 @@ def test_total_loss_decides_needs_material_branding_and_says_what_flips():
 def test_repair_cost_flip_reproduces():
     # Dent case: winner is coupled to repair cost through as-is value, so search, don't guess.
     v, fi = veh(), [f(sev=0.5)]
-    a = default_assumptions()
+    a = repair_friendly()
     flip = repair_cost_flip(v, fi, a)
     base = _winner(simulate(v, value_vehicle(v, fi, a), a).nets)
     # Cheaper repair means buyers discount the as-is car less, so as-is takes over.
@@ -149,5 +165,5 @@ def test_repair_cost_flip_reproduces():
     short = _winner(simulate(v, value_vehicle(v, fi, a, repair_cost_scale=scale * 1.01), a).nets)
     assert past == new_winner != base
     assert short == base
-    r = evaluate(v, fi)
+    r = evaluate(v, fi, a)
     assert any("repair cost" in c and "$" in c for c in r.flip_conditions)

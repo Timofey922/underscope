@@ -68,8 +68,8 @@ work; CLAUDE.md, .gitignore and pyproject.toml were left alone. Added:
   findings; a changed car is refused by `--confirmed` and re-queued by `batch`. Invalid vehicle
   files give a one-line error (`evaluate` exits 2, `batch` skips them).
 
-GitHub's main has 2 commits local main doesn't (PR #1 merge and a CLAUDE.md edit restoring
-"within 15 seconds"); not pulled or merged. Expect a CLAUDE.md conflict when syncing.
+origin/main (PR #1 merge and a CLAUDE.md edit restoring "within 15 seconds") was merged into
+local main on user request, keeping the local CLAUDE.md rule. Not pushed.
 
 ## Decisions for humans
 - Panels aren't left/right in the model, so the diagram colors both sides of a sided panel.

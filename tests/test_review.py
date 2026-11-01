@@ -81,3 +81,15 @@ def test_fragment_mode_has_no_document_wrapper():
     full = review.render_html(req)
     assert full.startswith("<!doctype html>")
     assert frag[frag.index("<main>"):] in full
+
+
+def test_fingerprint_tracks_vehicle_and_detected_findings():
+    v, fi = veh(), [f()]
+    req = review.build_request(v, fi)
+    assert req.source_fingerprint == review.fingerprint(v, fi)
+    assert review.fingerprint(v.model_copy(update={"mileage": 9}), fi) != req.source_fingerprint
+    assert review.fingerprint(v, [f(sev=0.9)]) != req.source_fingerprint
+    # Checker edits don't change what the detector saw.
+    review.add_finding(req, "roof", "dent", 0.2)
+    review.confirm(req, "admin")
+    assert req.source_fingerprint == review.fingerprint(v, fi)

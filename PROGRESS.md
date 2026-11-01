@@ -64,6 +64,9 @@ work; CLAUDE.md, .gitignore and pyproject.toml were left alone. Added:
 - `underscope queue` (reviews list + reviews/index.html) and `underscope batch DIR` (decide
   confirmed, queue the rest, `--out` JSONL, exit 3 while any wait).
 - Stratified synthetic sets and a stratified section in reports/backtest.md.
+- Stale-review protection: requests store a fingerprint of the vehicle data + detected
+  findings; a changed car is refused by `--confirmed` and re-queued by `batch`. Invalid vehicle
+  files give a one-line error (`evaluate` exits 2, `batch` skips them).
 
 GitHub's main has 2 commits local main doesn't (PR #1 merge and a CLAUDE.md edit restoring
 "within 15 seconds"); not pulled or merged. Expect a CLAUDE.md conflict when syncing.

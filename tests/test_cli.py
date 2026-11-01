@@ -128,3 +128,41 @@ def test_queue_lists_pending_first_and_links_sheets(tmp_path):
 def test_queue_with_no_reviews(tmp_path):
     r = runner.invoke(app, ["queue", "--review-dir", str(tmp_path / "none")])
     assert r.exit_code == 0 and "No reviews." in r.output
+
+
+def test_confirmed_review_refused_when_vehicle_changed(tmp_path):
+    runner.invoke(app, ["evaluate", DENT, "--no-interactive", "--review-dir", str(tmp_path)])
+    req = tmp_path / "FIXDENT0000000001.json"
+    runner.invoke(app, ["confirm", str(req), "--checker", "admin"])
+    changed = json.loads((FIXTURE_DIR / "dent_600.json").read_text())
+    changed["mileage"] += 1000
+    vfile = tmp_path / "dent_changed.json"
+    vfile.write_text(json.dumps(changed))
+    r = runner.invoke(app, ["evaluate", str(vfile), "--confirmed", str(req)])
+    assert r.exit_code == AWAITING_CONFIRMATION
+    assert "changed since" in r.output
+
+
+def test_batch_rereviews_changed_vehicle_and_skips_bad_files(tmp_path):
+    vehicles, reviews = tmp_path / "v", tmp_path / "r"
+    vehicles.mkdir()
+    dent = json.loads((FIXTURE_DIR / "dent_600.json").read_text())
+    (vehicles / "dent.json").write_text(json.dumps(dent))
+    (vehicles / "broken.json").write_text('{"vin": "X"}')
+    args = ["batch", str(vehicles), "--review-dir", str(reviews)]
+    runner.invoke(app, args)
+    runner.invoke(app, ["confirm", str(reviews / "FIXDENT0000000001.json"), "--checker", "Lee"])
+    r = runner.invoke(app, args)
+    assert "1 decided" in r.output and "broken.json" in r.output and "invalid" in r.output
+    dent["mileage"] += 5000
+    (vehicles / "dent.json").write_text(json.dumps(dent))
+    r = runner.invoke(app, args)
+    assert "0 decided, 1 awaiting" in r.output
+    assert json.loads((reviews / "FIXDENT0000000001.json").read_text())["status"] == "pending"
+
+
+def test_evaluate_reports_invalid_vehicle_cleanly(tmp_path):
+    bad = tmp_path / "bad.json"
+    bad.write_text('{"vin": "X"}')
+    r = runner.invoke(app, ["evaluate", str(bad), "--skip-confirm"])
+    assert r.exit_code == 2 and "invalid" in r.output and "Traceback" not in r.output

@@ -154,6 +154,10 @@ outlined with dashes, the findings table with photo refs, and the reasons for re
   any edits, then `underscope evaluate ... --confirmed <file>` makes the decision. Resuming
   refuses a review that is still pending or belongs to a different VIN.
 
+Each request stores a fingerprint of what the checker reviewed (the vehicle data and the
+detector's findings). If either changes later, `--confirmed` refuses to decide and `batch` sends
+the car back to the queue, so a decision never rests on a review of different data.
+
 Confirming marks every finding `verified` with confidence 1.0 and records the checker and time.
 The output says who confirmed the findings. `--skip-confirm` bypasses the gate and the output
 says the findings were not confirmed.
@@ -161,7 +165,8 @@ says the findings were not confirmed.
 **Many vehicles.** `underscope batch DIR` goes through a folder of vehicle files. A vehicle with
 a confirmed review is decided; one without gets a pending review (an in-progress review is kept,
 not overwritten). It prints one line per vehicle, can write the decisions as JSONL (`--out`),
-and exits 3 while any vehicle is waiting. `underscope queue` lists every review, pending first,
+and exits 3 while any vehicle is waiting. Invalid vehicle files are reported and skipped.
+`underscope queue` lists every review, pending first,
 and writes `reviews/index.html`, a page linking each car's sheet with its damaged and
 to-verify areas.
 

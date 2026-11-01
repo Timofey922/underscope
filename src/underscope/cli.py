@@ -8,6 +8,7 @@ from pathlib import Path as FsPath
 from typing import Annotated
 
 import typer
+from pydantic import ValidationError
 
 from underscope import review
 from underscope.decision import LABEL, evaluate
@@ -54,6 +55,18 @@ def render(vehicle: VehicleRecord, rec: Recommendation) -> str:
 @app.callback()
 def main() -> None:
     """UnderScope command line."""
+
+
+def _load_vehicle(path: FsPath) -> VehicleRecord:
+    """Parse a vehicle file; raises ValueError with a readable message when it's invalid."""
+    try:
+        return VehicleRecord(**json.loads(path.read_text()))
+    except json.JSONDecodeError as err:
+        raise ValueError(f"invalid vehicle file {path}: not JSON ({err.msg})") from err
+    except (ValidationError, TypeError) as err:
+        first = err.errors()[0] if isinstance(err, ValidationError) else {"msg": str(err)}
+        where = ".".join(str(x) for x in first.get("loc", ())) or "file"
+        raise ValueError(f"invalid vehicle file {path}: {where}: {first['msg']}") from err
 
 
 def _yes_no(text: str) -> bool:
@@ -142,12 +155,24 @@ def evaluate_cmd(
     ] = FsPath("reviews"),
 ) -> None:
     """Evaluate disposition paths for one vehicle, after a human checker confirms the damage."""
-    vehicle = VehicleRecord(**json.loads(vehicle_file.read_text()))
+    try:
+        vehicle = _load_vehicle(vehicle_file)
+    except ValueError as err:
+        typer.echo(str(err), err=True)
+        raise typer.Exit(2) from err
+    detector = MockDetector.from_file(labels) if labels else MockDetector()
     status = "Findings NOT confirmed by a human checker."
     if confirmed:
         req = review.load(confirmed)
         if req.vin != vehicle.vin:
             raise typer.BadParameter(f"review is for VIN {req.vin}, not {vehicle.vin}")
+        if review.is_stale(req, vehicle, detector.detect(vehicle)):
+            typer.echo(
+                f"The vehicle data or its detected damage changed since {confirmed} was "
+                f"reviewed. Send it back to a checker:\n  underscope evaluate {vehicle_file}",
+                err=True,
+            )
+            raise typer.Exit(AWAITING_CONFIRMATION)
         if req.status != "confirmed":
             typer.echo(f"{confirmed} is still pending; confirm it first:", err=True)
             typer.echo(f"  underscope confirm {confirmed} --checker NAME", err=True)
@@ -155,7 +180,6 @@ def evaluate_cmd(
         vehicle, findings = req.vehicle, req.findings
         status = f"Findings confirmed by {req.checker} at {req.confirmed_at}."
     else:
-        detector = MockDetector.from_file(labels) if labels else MockDetector()
         findings = detector.detect(vehicle)
         req = review.build_request(vehicle, findings, review_mode)
         if not skip_confirm and review.needs_confirmation(review_mode, req.reasons):
@@ -260,15 +284,21 @@ def batch_cmd(
 
     Exits 3 while any vehicle is still waiting for a checker.
     """
-    decided, waiting = [], []
+    decided, waiting, invalid = [], [], []
     for path in sorted(vehicle_dir.glob("*.json")):
-        vehicle = VehicleRecord(**json.loads(path.read_text()))
+        try:
+            vehicle = _load_vehicle(path)
+        except ValueError as err:
+            invalid.append(str(err))
+            continue
+        findings = MockDetector().detect(vehicle)
         existing = review_dir / f"{vehicle.vin}.json"
         req = review.load(existing) if existing.exists() else None
+        if req and review.is_stale(req, vehicle, findings):
+            req = None  # vehicle changed since review: start a fresh one
         if req and req.status == "confirmed":
             rec, status = evaluate(req.vehicle, req.findings), f"confirmed by {req.checker}"
         else:
-            findings = MockDetector().detect(vehicle)
             req = req or review.build_request(vehicle, findings, review_mode)
             if review.needs_confirmation(review_mode, req.reasons):
                 review.save(req, review_dir)
@@ -280,6 +310,8 @@ def batch_cmd(
         typer.echo(f"{rec.vin:<20}{LABEL[rec.winner]:<28}{status}")
     for vin in waiting:
         typer.echo(f"{vin:<20}{'(awaiting checker)':<28}")
+    for msg in invalid:
+        typer.echo(f"skipped: {msg}")
     if out:
         out.write_text("".join(
             json.dumps({**json.loads(rec.model_dump_json()), "findings_status": status}) + "\n"

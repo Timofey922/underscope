@@ -8,7 +8,9 @@ sheet that highlights every damaged area. "risky" mode only asks when risk signa
 
 from __future__ import annotations
 
+import hashlib
 import html
+import json
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path as FsPath
@@ -52,6 +54,9 @@ class ReviewRequest(BaseModel):
     findings: list[DamageFinding]
     checker: str | None = None
     confirmed_at: str | None = None
+    # What the checker reviewed: vehicle data plus detector findings. If either changes, the
+    # review no longer applies and the car goes back to the checker.
+    source_fingerprint: str = ""
 
     def areas(self) -> list[Area]:
         out = []
@@ -113,6 +118,22 @@ def risk_reasons(
     return out
 
 
+def fingerprint(vehicle: VehicleRecord, detected: list[DamageFinding]) -> str:
+    payload = {
+        "vehicle": vehicle.model_dump(mode="json", exclude={"findings"}),
+        "detected": [f.model_dump(mode="json") for f in detected],
+    }
+    blob = json.dumps(payload, sort_keys=True).encode()
+    return hashlib.sha256(blob).hexdigest()[:16]
+
+
+def is_stale(req: ReviewRequest, vehicle: VehicleRecord, detected: list[DamageFinding]) -> bool:
+    """True when the vehicle or its detector findings changed since the review was made."""
+    return bool(req.source_fingerprint) and req.source_fingerprint != fingerprint(
+        vehicle, detected
+    )
+
+
 def needs_confirmation(mode: ReviewMode, reasons: list[str]) -> bool:
     return mode == ReviewMode.ALL or bool(reasons)
 
@@ -129,6 +150,7 @@ def build_request(
         reasons=risk_reasons(vehicle, findings, a),
         vehicle=vehicle.model_copy(update={"findings": []}),
         findings=list(findings),
+        source_fingerprint=fingerprint(vehicle, findings),
     )
 
 

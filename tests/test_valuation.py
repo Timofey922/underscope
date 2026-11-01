@@ -56,3 +56,21 @@ def test_clean_value_depreciates():
     new = clean_value(veh(clean_value_cents=None, year=2026, mileage=0), a)
     old = clean_value(veh(clean_value_cents=None, year=2016, mileage=0), a)
     assert old < new
+
+
+def test_more_damage_never_raises_parts_value():
+    light = value_vehicle(veh(), [f("door", "dent", 0.2)]).parts_gross_value
+    heavy = value_vehicle(
+        veh(), [f("frame", "crush", 1.0), f("hood", "crush", 0.9)]
+    ).parts_gross_value
+    none = value_vehicle(veh(), []).parts_gross_value
+    assert heavy.expected < light.expected <= none.expected
+    assert heavy.low <= heavy.expected <= heavy.high
+
+
+def test_as_is_never_below_salvage():
+    # A buyer can always send the car to salvage, so as-is can't price below it.
+    for findings in ([f(sev=0.6)], [f("frame", "crush", 0.4), f()], [f("frame", "crush", 1.0)]):
+        for title in ("clean", "salvage", "rebuilt"):
+            v = value_vehicle(veh(clean_value_cents=1_800_000, title_status=title), findings)
+            assert v.as_is_value >= v.salvage_value.expected

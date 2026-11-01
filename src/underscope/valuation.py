@@ -55,6 +55,17 @@ def repair_cost(findings: list[DamageFinding], a: Assumptions) -> Range:
     return Range(round(lo), round(ex), round(hi))
 
 
+def parts_damage_loss(findings: list[DamageFinding], a: Assumptions) -> float:
+    """Fraction of parts value lost to damage (0-1). Each panel loses at most its share."""
+    p = a["parts"]
+    lost: dict[str, float] = {}
+    for f in findings:
+        share = p["panel_share_of_parts_value"][f.panel.value]
+        frac = p["damage_type_loss_factor"][f.damage_type.value] * f.severity * f.confidence
+        lost[f.panel.value] = min(share, lost.get(f.panel.value, 0.0) + share * frac)
+    return min(1.0, sum(lost.values()))
+
+
 def title_after_repair(
     vehicle: VehicleRecord, repair_ratio: float, threshold: float, a: Assumptions
 ) -> TitleStatus:
@@ -89,10 +100,13 @@ def value_vehicle(
     adj = 1 - m["salvage_damage_adjust_pct_per_unit_severity"] / 100 * damage_score
     salvage = Range(*(round(clean * frac * adj) for frac in m["salvage_fraction_of_clean"]))
 
+    # A buyer can always send the car to salvage, so as-is never prices below it.
+    as_is = max(as_is, salvage.expected)
+
     p = a["parts"]
-    penalty = 1.0
+    penalty = 1.0 - parts_damage_loss(findings, a)
     if vehicle.engine_audio_abnormal:
-        penalty = 1 - p["engine_audio_abnormal_value_penalty_pct"] / 100
+        penalty *= 1 - p["engine_audio_abnormal_value_penalty_pct"] / 100
     parts = Range(*(round(clean * frac * penalty) for frac in p["gross_value_fraction_of_clean"]))
 
     ratio = rep.expected / clean if clean else 1.0

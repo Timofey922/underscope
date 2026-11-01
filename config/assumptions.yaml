@@ -105,6 +105,24 @@ parts:
   teardown_labor_cents: [80000, 120000, 180000]
   storage_cents_per_day: 1500
   engine_audio_abnormal_value_penalty_pct: 12   # engine parts worth less if audio flags a problem
+  # Share of whole-vehicle parts value that sits in each panel's area (damaged parts don't sell).
+  panel_share_of_parts_value:
+    front_bumper: 0.04
+    rear_bumper: 0.03
+    hood: 0.03
+    fender: 0.03
+    door: 0.04
+    quarter_panel: 0.03
+    roof: 0.02
+    windshield: 0.02
+    frame: 0.15
+  # Fraction of a panel's parts value destroyed at severity 1.0, by damage type.
+  damage_type_loss_factor:
+    scratch: 0.1
+    dent: 0.3
+    crack: 0.6
+    crush: 1.0
+    broken: 1.0
 
 hidden_damage:
   status: PLACEHOLDER

@@ -205,3 +205,27 @@ def test_p_not_best_counts_every_rival():
             Path.COPART_SALVAGE: np.zeros(10, dtype=int)}  # fmt: skip
     # Each rival alone wins 30% of draws; together the winner isn't best in 60%.
     assert p_not_best(nets, Path.REPAIR_THEN_ACV) == pytest.approx(0.6)
+
+
+def test_totaled_claim_sells_as_is_on_a_salvage_title():
+    # An insurer totals the car: the as-is buyer gets a salvage certificate, not a clean title.
+    a = default_assumptions()
+    fi = [f("frame", "crush", 1.0, 0.95), f("hood", "crush", 0.9, 0.95)]
+    claim = veh(clean_value_cents=1_200_000, insurance_claim=True)
+    dealer = veh(clean_value_cents=1_200_000)
+    s_claim = simulate(claim, value_vehicle(claim, fi, a), a)
+    s_dealer = simulate(dealer, value_vehicle(dealer, fi, a), a)
+    assert s_claim.branded_share > 0.9
+    claim_sale = s_claim.components[Path.ACV_AS_IS]["sale_price"].mean()
+    dealer_sale = s_dealer.components[Path.ACV_AS_IS]["sale_price"].mean()
+    assert claim_sale < dealer_sale
+
+
+def test_as_is_sale_never_below_salvage_sale_in_any_draw():
+    a = default_assumptions()
+    for v in (veh(insurance_claim=True, clean_value_cents=1_000_000), veh(title_status="salvage")):
+        fi = [f("frame", "crush", 0.9), f("door", "dent", 0.5)]
+        s = simulate(v, value_vehicle(v, fi, a), a)
+        as_is = s.components[Path.ACV_AS_IS]["sale_price"]
+        salvage = s.components[Path.COPART_SALVAGE]["sale_price"]
+        assert (as_is >= salvage).all()

@@ -41,7 +41,7 @@ Break-even: repair does not win at any as-is discount multiple up to 6x.
 
 | Placeholder | 0.5x | 0.75x | 1x | 1.25x | 1.5x |
 |---|---|---|---|---|---|
-| `market.as_is_discount_multiple_of_repair` | **as-is** | parts | parts | parts | parts |
+| `market.as_is_discount_multiple_of_repair` | parts | parts | parts | parts | parts |
 | `market.repaired_value_haircut_pct_at_total_damage` | parts | parts | parts | parts | parts |
 | `market.salvage_fraction_of_clean` | parts | parts | parts | parts | parts |
 | `timing.holding_cost_per_day_cents` | parts | parts | parts | parts | parts |

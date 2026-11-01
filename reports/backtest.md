@@ -16,64 +16,64 @@ Vehicles: 500. Oracle = best realized net per vehicle.
 
 | Metric | Same model | Misspecified |
 |---|---|---|
-| Accuracy (picked the oracle's path) | 90.4% | 90.2% |
-| Average regret per vehicle | $57 | $80 |
-| Human-review rate | 6.0% | 6.0% |
-| Best fixed-policy regret | $110 | $76 |
+| Accuracy (picked the oracle's path) | 90.6% | 90.6% |
+| Average regret per vehicle | $60 | $84 |
+| Human-review rate | 5.4% | 5.4% |
+| Best fixed-policy regret | $106 | $71 |
 
-- Same model: UnderScope ($57) beats the best fixed policy, always acv_as_is ($110).
-- Misspecified: UnderScope ($80) does not beat the best fixed policy, always acv_as_is ($76).
-- Same model, the 94% of vehicles not flagged for review: UnderScope ($39) beats always acv_as_is ($84) on the same vehicles.
-- Misspecified, the 94% of vehicles not flagged for review: UnderScope ($55) beats always acv_as_is ($57) on the same vehicles.
+- Same model: UnderScope ($60) beats the best fixed policy, always acv_as_is ($106).
+- Misspecified: UnderScope ($84) does not beat the best fixed policy, always acv_as_is ($71).
+- Same model, the 95% of vehicles not flagged for review: UnderScope ($35) beats always acv_as_is ($78) on the same vehicles.
+- Misspecified, the 95% of vehicles not flagged for review: UnderScope ($53) ties always acv_as_is ($53) on the same vehicles.
 
 ## Same model: by damage band (true repair cost / clean value)
 
 | Band | Vehicles | Accuracy | UnderScope regret | Best fixed policy | Its regret |
 |---|---|---|---|---|---|
 | light (0%-15%) | 266 | 98.5% | $2 | always acv_as_is | $47 |
-| mid (15%-50%) | 187 | 88.8% | $85 | always acv_as_is | $122 |
-| heavy (>=50%) | 47 | 51.1% | $258 | always part_out | $344 |
+| mid (15%-50%) | 187 | 88.8% | $91 | always acv_as_is | $121 |
+| heavy (>=50%) | 47 | 53.2% | $259 | always part_out | $374 |
 
 ## Misspecified: by damage band (true repair cost / clean value)
 
 | Band | Vehicles | Accuracy | UnderScope regret | Best fixed policy | Its regret |
 |---|---|---|---|---|---|
 | light (0%-15%) | 266 | 97.4% | $12 | always acv_as_is | $15 |
-| mid (15%-50%) | 187 | 88.8% | $140 | always acv_as_is | $123 |
-| heavy (>=50%) | 47 | 55.3% | $225 | always acv_as_is | $236 |
+| mid (15%-50%) | 187 | 88.8% | $148 | always acv_as_is | $116 |
+| heavy (>=50%) | 47 | 59.6% | $236 | always acv_as_is | $212 |
 
 ## Same model
 
-Average oracle net $7,957.
+Average oracle net $7,960.
 
 | Group | Vehicles | Accuracy | Avg regret |
 |---|---|---|---|
-| Flagged for review | 30 | 46.7% | $348 |
-| Not flagged | 470 | 93.2% | $39 |
+| Flagged for review | 27 | 48.1% | $485 |
+| Not flagged | 473 | 93.0% | $35 |
 
 | Policy | Avg regret |
 |---|---|
-| always repair_then_acv | $1,755 |
-| always acv_as_is | $110 |
-| always copart_salvage | $7,000 |
-| always part_out | $4,682 |
-| UnderScope | $57 |
+| always repair_then_acv | $1,758 |
+| always acv_as_is | $106 |
+| always copart_salvage | $7,003 |
+| always part_out | $4,685 |
+| UnderScope | $60 |
 
 ## Misspecified
 
-Average oracle net $7,920.
+Average oracle net $7,923.
 
 | Group | Vehicles | Accuracy | Avg regret |
 |---|---|---|---|
-| Flagged for review | 30 | 43.3% | $472 |
-| Not flagged | 470 | 93.2% | $55 |
+| Flagged for review | 27 | 44.4% | $624 |
+| Not flagged | 473 | 93.2% | $53 |
 
 | Policy | Avg regret |
 |---|---|
-| always repair_then_acv | $2,075 |
-| always acv_as_is | $76 |
-| always copart_salvage | $6,506 |
-| always part_out | $4,979 |
-| UnderScope | $80 |
+| always repair_then_acv | $2,078 |
+| always acv_as_is | $71 |
+| always copart_salvage | $6,509 |
+| always part_out | $4,982 |
+| UnderScope | $84 |
 
 Regret is in dollars (integer cents internally). Regenerate with `.venv/bin/python -m underscope.data && .venv/bin/python -m underscope.backtest`.

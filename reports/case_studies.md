@@ -39,16 +39,16 @@ RECOMMENDATION: part out
 
 Path                          Expected       P10       P50       P90
 part out                        $1,873      $794    $1,831    $3,098
-sell as-is on ACV                 $597      $311      $607      $858
+sell as-is on ACV                 $664      $121      $663    $1,183
 sell as salvage on Copart         $226     -$362      $207      $844
 repair then sell on ACV        -$3,457   -$7,234   -$3,887       $70
 
-Best path: part out, expected net $1,873 (P10 $794, P90 $3,098). Next best is sell as-is on ACV at $597, $1,276 behind; it wins in 6% of simulated outcomes. Expected repair cost is $6,887 (72% of a $9,500 clean value; total-loss threshold 75% in NY).
+Best path: part out, expected net $1,873 (P10 $794, P90 $3,098). Next best is sell as-is on ACV at $664, $1,209 behind; it wins in 9% of simulated outcomes. Expected repair cost is $6,887 (72% of a $9,500 clean value; total-loss threshold 75% in NY).
 
 What would flip it:
-  - If expected repair cost fell from $6,887 to about $4,937 (-28%), sell as-is on ACV would win.
-  - For part out: net parts revenue would have to fall by about $1,276 to flip the ranking.
-  - For sell as-is on ACV: the sale price would have to rise by about $1,302 to flip the ranking.
+  - If expected repair cost fell from $6,887 to about $4,863 (-29%), sell as-is on ACV would win.
+  - For part out: net parts revenue would have to fall by about $1,209 to flip the ranking.
+  - For sell as-is on ACV: the sale price would have to rise by about $1,234 to flip the ranking.
 
 (Values use PLACEHOLDER assumptions in config/assumptions.yaml.)
 ```
@@ -66,16 +66,16 @@ RECOMMENDATION: part out
 
 Path                          Expected       P10       P50       P90
 part out                        $4,628    $2,948    $4,536    $6,459
-sell as-is on ACV               $2,029    $1,646    $2,031    $2,402
+sell as-is on ACV               $2,071    $1,080    $2,063    $3,044
 sell as salvage on Copart       $1,566      $604    $1,529    $2,580
 repair then sell on ACV       -$12,156  -$19,356  -$12,178   -$3,575
 
-Best path: part out, expected net $4,628 (P10 $2,948, P90 $6,459). Next best is sell as-is on ACV at $2,029, $2,599 behind; it wins in 1% of simulated outcomes. Expected repair cost is $16,368 (91% of a $18,000 clean value; total-loss threshold 75% in NY). Repair is past the total-loss threshold, so a repaired car would carry a brand.
+Best path: part out, expected net $4,628 (P10 $2,948, P90 $6,459). Next best is sell as-is on ACV at $2,071, $2,558 behind; it wins in 3% of simulated outcomes. Expected repair cost is $16,368 (91% of a $18,000 clean value; total-loss threshold 75% in NY). Repair is past the total-loss threshold, so a repaired car would carry a brand.
 
 What would flip it:
-  - If expected repair cost fell from $16,368 to about $9,325 (-43%), sell as-is on ACV would win.
-  - For part out: net parts revenue would have to fall by about $2,599 to flip the ranking.
-  - For sell as-is on ACV: the sale price would have to rise by about $2,653 to flip the ranking.
+  - If expected repair cost fell from $16,368 to about $9,189 (-44%), sell as-is on ACV would win.
+  - For part out: net parts revenue would have to fall by about $2,558 to flip the ranking.
+  - For sell as-is on ACV: the sale price would have to rise by about $2,610 to flip the ranking.
 
 (Values use PLACEHOLDER assumptions in config/assumptions.yaml.)
 ```

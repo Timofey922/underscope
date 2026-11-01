@@ -70,7 +70,8 @@ def simulate(
     """Draw net proceeds for every path.
 
     force_title sets the repaired title on the repair path (used to test whether the
-    total-loss threshold decides the outcome).
+    total-loss threshold decides the outcome). On an insurance claim, forcing a branded
+    title also means the insurer totaled the car, so the as-is sale carries a salvage title.
     """
     sim = a["simulation"]
     n = draws or sim["draws"]
@@ -103,7 +104,7 @@ def simulate(
     clean_shocked = val.clean_value * market
     if force_title is not None:
         title_factor = factors[force_title]
-        branded = np.zeros(n, dtype=bool)
+        branded = np.full(n, vehicle.insurance_claim and force_title != TitleStatus.CLEAN)
     elif vehicle.title_status != TitleStatus.CLEAN or not vehicle.insurance_claim:
         title_factor = factors[val.title_after_repair]
         branded = np.zeros(n, dtype=bool)
@@ -130,8 +131,12 @@ def simulate(
     }  # fmt: skip
 
     # 2. Sell as-is on ACV. as_is_value carries the expected title factor; rescale per draw.
+    # In draws where the insurer totals the car, the buyer gets a salvage certificate. A buyer
+    # can always salvage the car, so the as-is sale never falls below the salvage sale.
     expected_tf = a["title"]["factor"][vehicle.title_status.value][1]
-    sale = _cents(val.as_is_value * market * factors[vehicle.title_status] / expected_tf)
+    as_is_tf = np.where(branded, factors[TitleStatus.SALVAGE], factors[vehicle.title_status])
+    salvage_sale = _cents(salv * market)
+    sale = np.maximum(_cents(val.as_is_value * market * as_is_tf / expected_tf), salvage_sale)
     fee = _cents(fees["acv"]["flat_cents"] + _pct(sale, fees["acv"]["pct_of_price"]))
     holding = days[Path.ACV_AS_IS] * hold
     nets[Path.ACV_AS_IS] = sale - fee - t_acv - holding
@@ -140,7 +145,7 @@ def simulate(
     }  # fmt: skip
 
     # 3. Sell as salvage on Copart.
-    sale = _cents(salv * market)
+    sale = salvage_sale
     fee = _cents(fees["copart"]["flat_cents"] + _pct(sale, fees["copart"]["pct_of_price"]))
     holding = days[Path.COPART_SALVAGE] * hold
     nets[Path.COPART_SALVAGE] = sale - fee - t_cop - holding

@@ -104,10 +104,17 @@ def _band_row(name: str, upper: float, b: dict) -> str:
     )
 
 
+def _compare(ours: float, best: float) -> str:
+    """Regret comparison in words; under $1 apart counts as a tie."""
+    if abs(ours - best) < 100:
+        return "ties"
+    return "beats" if ours < best else "does not beat"
+
+
 def _verdict(title: str, res: dict) -> str:
     policy, best = min(res["baseline_avg_regret_cents"].items(), key=lambda kv: kv[1])
     ours = res["avg_regret_cents"]
-    word = "beats" if ours < best else "does not beat"
+    word = _compare(ours, best)
     return (
         f"- {title}: UnderScope ({_d(ours)}) {word} the best fixed policy, "
         f"always {policy} ({_d(best)})."
@@ -120,7 +127,7 @@ def _unflagged_verdict(title: str, res: dict) -> str:
         return f"- {title}: every vehicle was flagged for review."
     policy, best = min(u["baselines"].items(), key=lambda kv: kv[1])
     ours = u["regret"] / u["n"]
-    word = "beats" if ours < best else "does not beat"
+    word = _compare(ours, best / u["n"])
     return (
         f"- {title}, the {u['n'] / res['n']:.0%} of vehicles not flagged for review: UnderScope "
         f"({_d(ours)}) {word} always {policy} ({_d(best / u['n'])}) on the same vehicles."

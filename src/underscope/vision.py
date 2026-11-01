@@ -174,32 +174,81 @@ class ClaudeVisionDetector:
             self._client = anthropic.Anthropic()
         return self._client
 
-    def detect_photo(self, photo_ref: str) -> list[DamageFinding]:
+    def request_params(self, photo_ref: str) -> dict[str, Any]:
+        """Messages API parameters for one photo (shared by live and batch requests)."""
         path = self.photo_root / photo_ref
         if not path.is_file():
             raise DetectionError(f"{photo_ref}: photo not found under {self.photo_root}")
-        response = self.client.beta.messages.create(
-            model=self.model,
-            max_tokens=16000,
-            betas=[FALLBACK_BETA],
-            fallbacks="default",
-            system=SYSTEM,
-            output_config={"effort": self.effort,
-                           "format": {"type": "json_schema", "schema": SCHEMA}},
-            messages=[{"role": "user", "content": [
+        return {
+            "model": self.model,
+            "max_tokens": 16000,
+            "system": SYSTEM,
+            "output_config": {"effort": self.effort,
+                              "format": {"type": "json_schema", "schema": SCHEMA}},
+            "messages": [{"role": "user", "content": [
                 image_block(path),
                 {"type": "text", "text": "Report the damage in this photo."},
             ]}],
-        )  # fmt: skip
+        }  # fmt: skip
+
+    def detect_photo(self, photo_ref: str) -> list[DamageFinding]:
+        params = self.request_params(photo_ref)
+        response = self.client.beta.messages.create(
+            **params, betas=[FALLBACK_BETA], fallbacks="default"
+        )
         self.usage.append(getattr(response, "usage", None))
         findings, notes = parse_response(response, photo_ref)
         self.notes[photo_ref] = notes
         return findings
 
-    def spent_usd(self) -> float:
-        """Cost of the calls made so far, from the API's reported token usage."""
+    def spent_usd(self, batch: bool = False) -> float:
+        """Cost of the calls made so far, from the API's reported token usage. Batch requests
+        are billed at half price."""
         used = [u for u in self.usage if u is not None]
-        return cost_usd(sum(u.input_tokens for u in used), sum(u.output_tokens for u in used))
+        full = cost_usd(sum(u.input_tokens for u in used), sum(u.output_tokens for u in used))
+        return full / 2 if batch else full
+
+    # ------------------------------------------------------------ batches (half price, async)
+
+    def submit_batch(self, photo_refs: list[str]) -> dict[str, Any]:
+        """Submit one Message Batch for these photos. Returns state to save for collect_batch.
+
+        Batches don't take the server-side fallback, so a declined photo comes back as a
+        per-photo error instead.
+        """
+        ids = {f"p{i}": ref for i, ref in enumerate(photo_refs)}  # custom_id must be simple
+        batch = self.client.messages.batches.create(requests=[
+            {"custom_id": cid, "params": self.request_params(ref)} for cid, ref in ids.items()
+        ])  # fmt: skip
+        return {"batch_id": batch.id, "photos": ids, "model": self.model}
+
+    def collect_batch(
+        self, state: dict[str, Any]
+    ) -> tuple[str, dict[str, list[DamageFinding]], dict[str, str]]:
+        """(processing status, findings per photo, errors per photo). Findings and errors are
+        empty until the status is "ended"."""
+        batch = self.client.messages.batches.retrieve(state["batch_id"])
+        if batch.processing_status != "ended":
+            return batch.processing_status, {}, {}
+        found: dict[str, list[DamageFinding]] = {}
+        errors: dict[str, str] = {}
+        for item in self.client.messages.batches.results(state["batch_id"]):
+            ref = state["photos"].get(item.custom_id)
+            if ref is None:
+                continue
+            if item.result.type != "succeeded":
+                errors[ref] = f"{ref}: batch request {item.result.type}"
+                continue
+            message = item.result.message
+            self.usage.append(getattr(message, "usage", None))
+            try:
+                found[ref], self.notes[ref] = parse_response(message, ref)
+            except DetectionError as err:
+                errors[ref] = str(err)
+        for ref in state["photos"].values():
+            if ref not in found and ref not in errors:
+                errors[ref] = f"{ref}: missing from batch results"
+        return "ended", found, errors
 
     def detect(self, vehicle: VehicleRecord) -> list[DamageFinding]:
         found: list[DamageFinding] = []

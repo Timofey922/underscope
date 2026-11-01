@@ -136,3 +136,55 @@ def test_unknown_side_is_none():
     out, _ = parse_response(reply({"findings": [{**finding(), "side": "unknown"}],
                                    "unmapped_damage": []}), "p")  # fmt: skip
     assert out[0].side is None
+
+
+class FakeBatches:
+    """Stands in for client.messages.batches."""
+
+    def __init__(self, results, status="ended"):
+        self.results_list, self.status, self.created = results, status, None
+
+    def create(self, requests):
+        self.created = requests
+        return SimpleNamespace(id="msgbatch_1")
+
+    def retrieve(self, batch_id):
+        return SimpleNamespace(processing_status=self.status)
+
+    def results(self, batch_id):
+        return iter(self.results_list)
+
+
+def batch_client(results, status="ended"):
+    return SimpleNamespace(messages=SimpleNamespace(batches=FakeBatches(results, status)))
+
+
+def ok(cid, payload):
+    return SimpleNamespace(custom_id=cid, result=SimpleNamespace(type="succeeded",
+                                                                 message=reply(payload)))
+
+
+def test_batch_submit_and_collect(tmp_path):
+    for name in ("a.png", "b.png", "c.png"):
+        (tmp_path / name).write_bytes(PNG)
+    client = batch_client([
+        ok("p0", {"findings": [{**finding(), "side": "left"}], "unmapped_damage": []}),
+        ok("p1", "not json"),  # unusable
+        SimpleNamespace(custom_id="p2", result=SimpleNamespace(type="expired")),
+    ])  # fmt: skip
+    det = ClaudeVisionDetector(tmp_path, client=client)
+    state = det.submit_batch(["a.png", "b.png", "c.png"])
+    assert state == {"batch_id": "msgbatch_1", "model": MODEL,
+                     "photos": {"p0": "a.png", "p1": "b.png", "p2": "c.png"}}
+    sent = client.messages.batches.created
+    assert [r["custom_id"] for r in sent] == ["p0", "p1", "p2"]
+    assert "fallbacks" not in sent[0]["params"] and "betas" not in sent[0]["params"]
+    status, found, errors = det.collect_batch(state)
+    assert status == "ended" and list(found) == ["a.png"]
+    assert set(errors) == {"b.png", "c.png"} and "expired" in errors["c.png"]
+    assert det.spent_usd(batch=True) == det.spent_usd() / 2 > 0
+
+
+def test_batch_not_finished_yet(tmp_path):
+    det = ClaudeVisionDetector(tmp_path, client=batch_client([], status="in_progress"))
+    assert det.collect_batch({"batch_id": "x", "photos": {}}) == ("in_progress", {}, {})

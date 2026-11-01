@@ -240,3 +240,33 @@ def test_evaluate_reports_detection_failure_cleanly(tmp_path, monkeypatch):
     r = runner.invoke(app, ["evaluate", str(vfile), "--detector", "claude", "--photo-root",
                             str(tmp_path), "--skip-confirm"])  # fmt: skip
     assert r.exit_code == 2 and "Damage detection failed" in r.output
+
+
+def test_detect_eval_batch_submit_then_collect(tmp_path, monkeypatch):
+    import underscope.vision as vision
+    from test_vision import PNG, batch_client, ok
+
+    (tmp_path / "a.jpg").write_bytes(PNG)
+    (tmp_path / "b.jpg").write_bytes(PNG)
+    client = batch_client([ok("p0", {"findings": [
+        {"panel": "door", "damage_type": "dent", "severity": 0.4, "confidence": 0.9,
+         "side": "left"}], "unmapped_damage": []}), ok("p1", {"findings": [],
+         "unmapped_damage": []})])  # fmt: skip
+    real = vision.ClaudeVisionDetector
+    monkeypatch.setattr(vision, "ClaudeVisionDetector",
+                        lambda root, **kw: real(root, client=client, **kw))  # fmt: skip
+    labels, state = _labels(tmp_path), tmp_path / "state.json"
+    base = ["detect-eval", str(labels), "--photo-root", str(tmp_path)]
+    r = runner.invoke(app, [*base, "--batch"])
+    assert r.exit_code == 1 and "half price" in r.output
+    r = runner.invoke(app, [*base, "--batch", "--yes", "--batch-state", str(state)])
+    assert r.exit_code == 0, r.output
+    assert json.loads(state.read_text())["batch_id"] == "msgbatch_1"
+    pred = tmp_path / "pred.json"
+    r = runner.invoke(app, [*base, "--collect", str(state), "--save", str(pred)])
+    assert r.exit_code == 0, r.output
+    assert "| Panel F1 | 100.0% |" in r.output and "API cost" in r.output
+    assert json.loads(pred.read_text())["a.jpg"][0]["side"] == "left"
+    client.messages.batches.status = "in_progress"
+    r = runner.invoke(app, [*base, "--collect", str(state)])
+    assert r.exit_code == AWAITING_CONFIRMATION and "still in_progress" in r.output

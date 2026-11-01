@@ -412,6 +412,18 @@ def detect_eval_cmd(
         str,
         typer.Option("--match-by", help="panel (default), or type for labels without panels."),
     ] = "panel",
+    batch: Annotated[
+        bool,
+        typer.Option("--batch", help="Submit as a Message Batch: half price, results within "
+                                     "24 hours. Collect them later with --collect."),
+    ] = False,  # fmt: skip
+    collect: Annotated[
+        FsPath | None,
+        typer.Option("--collect", exists=True, help="Batch state file from --batch."),
+    ] = None,
+    batch_state: Annotated[
+        FsPath, typer.Option("--batch-state", help="Where --batch saves its state.")
+    ] = FsPath("detect_batch.json"),
 ) -> None:
     """Score a damage detector against labeled photos."""
     from underscope import detector_eval as de
@@ -423,23 +435,54 @@ def detect_eval_cmd(
     spent = None
     if predictions:
         pred = de.load_findings(predictions)
+    elif collect:
+        from underscope.vision import ClaudeVisionDetector
+
+        state = json.loads(collect.read_text())
+        detector = ClaudeVisionDetector(photo_root, model=state.get("model", "claude-opus-5-5"))
+        status, pred, errors = detector.collect_batch(state)
+        if status != "ended":
+            typer.echo(f"Batch {state['batch_id']} is still {status}; try again later.")
+            raise typer.Exit(AWAITING_CONFIRMATION)
+        truth = {r: truth[r] for r in truth if r in state["photos"].values()}
+        spent = detector.spent_usd(batch=True)
     elif detector_name == DetectorName.CLAUDE:
         from underscope.vision import ClaudeVisionDetector, estimated_cost_usd
 
-        estimate = estimated_cost_usd(len(refs))
+        estimate = estimated_cost_usd(len(refs)) / (2 if batch else 1)
         if not yes:
+            how = "as a batch (half price)" if batch else ""
             typer.echo(
-                f"This sends {len(refs)} photos to Claude, roughly ${estimate:,.2f}. "
+                f"This sends {len(refs)} photos to Claude {how}, roughly ${estimate:,.2f}. "
                 "Re-run with --yes to go ahead (use --limit to try a few first)."
             )
             raise typer.Exit(1)
         detector = ClaudeVisionDetector(photo_root)
+        if batch:
+            try:
+                state = detector.submit_batch(refs)
+            except Exception as err:
+                from underscope.vision import DetectionError
+
+                if not isinstance(err, DetectionError):
+                    raise
+                raise typer.BadParameter(str(err)) from err
+            batch_state.write_text(json.dumps(state, indent=2))
+            typer.echo(
+                f"Submitted batch {state['batch_id']} with {len(refs)} photos. State saved to "
+                f"{batch_state}.\nCollect: underscope detect-eval {labels} --photo-root "
+                f"{photo_root} --collect {batch_state} [--save predictions.json]"
+            )
+            return
         pred, errors = de.run_detector(detector, refs)
         spent = detector.spent_usd()
     else:
         pred, errors = de.run_detector(_MockPhotoDetector(labels), refs)
     if save and not predictions:
         de.save_findings(pred, save)
+        if errors:
+            typer.echo(f"Saved predictions for {len(pred)} photos; {len(errors)} failed "
+                       "and aren't in the file.")  # fmt: skip
     if match_by not in ("panel", "type"):
         raise typer.BadParameter("--match-by must be panel or type")
     text = de.render_report(de.score(truth, pred, errors, by=match_by))

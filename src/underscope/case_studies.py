@@ -15,25 +15,32 @@ CASES = [
     (
         "dent_600.json",
         "Case 1: the $600 dent",
-        "Dealer persona. A door dent on a clean-title car, repair estimate in the $600-700 range.",
-        "Repairing wins narrowly because buyers discount the visible damage by more than the "
-        "repair costs. The margin is thin, so the result is sensitive to the placeholder "
-        "as-is discount multiple and holding cost.",
+        "Dealer persona (no insurance claim). A door dent on a clean-title car, repair estimate "
+        "around $650.",
+        "Selling as-is wins under the untuned placeholders: a flat 6% accident-history haircut "
+        "on the repaired car ($1,500 here) outweighs a $650 repair. Repair only wins if buyers "
+        "discount the visible damage by about 4.5x the repair cost (reports/sensitivity.md). "
+        "The answer to the dealer's question depends on two unknowns, the as-is discount and "
+        "the haircut for a minor cosmetic repair, and real ACV sale data should settle both.",
     ),
     (
         "borderline_writeoff.json",
         "Case 2: a borderline write-off",
-        "Adjuster persona. Frame crush plus a door dent; repair cost sits near the NY "
-        "total-loss threshold.",
-        "Whether the repair crosses the total-loss threshold (and brands the title) changes the "
-        "best path, so the engine flags the threshold as decisive and asks for human review.",
+        "Adjuster persona (insurance claim). Frame crush plus a door dent; repair cost is 72% "
+        "of clean value against the 75% NY total-loss threshold.",
+        "The threshold doesn't decide this case. With these placeholders, repair stops paying "
+        "well below the threshold (repair bears the hidden-damage reserve, haircut and "
+        "holding), so near 75% it already loses. Parts vs as-is depends on the parts "
+        "placeholders (gross value fraction, sell-through).",
     ),
     (
         "total_loss.json",
         "Case 3: an obvious total loss",
-        "Adjuster persona. Severe frame, hood and bumper damage with undercarriage damage flagged.",
-        "Repair costs exceed the clean value, so repair loses money in nearly every draw. Parts "
-        "and salvage dominate; no review flag is needed.",
+        "Adjuster persona (insurance claim). Severe frame, hood and bumper damage with "
+        "undercarriage damage flagged.",
+        "Repair costs about 90% of the clean value and loses money in nearly every draw. Part-out "
+        "leads salvage and as-is, but by an amount that the parts placeholders could erase "
+        "(halving gross parts value or sell-through hands it to as-is).",
     ),
 ]
 

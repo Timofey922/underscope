@@ -4,82 +4,80 @@ All vehicles are fixtures (fake VINs, makes); all values use PLACEHOLDER assumpt
 
 ## Case 1: the $600 dent
 
-Dealer persona. A door dent on a clean-title car, repair estimate in the $600-700 range. (`data/fixtures/dent_600.json`)
+Dealer persona (no insurance claim). A door dent on a clean-title car, repair estimate around $650. (`data/fixtures/dent_600.json`)
 
 ```
 2022 SynthA Alpha Base  VIN FIXDENT0000000001  (NY, 28,000 mi, clean)
 
-RECOMMENDATION: repair then sell on ACV
+RECOMMENDATION: sell as-is on ACV
 
 Path                          Expected       P10       P50       P90
-repair then sell on ACV        $22,325   $20,000   $22,265   $24,738
-sell as-is on ACV              $22,011   $19,820   $21,936   $24,307
-part out                        $9,794    $6,970    $9,598   $12,919
-sell as salvage on Copart       $4,563    $2,981    $4,539    $6,160
+sell as-is on ACV              $22,632   $20,290   $22,540   $25,035
+repair then sell on ACV        $20,547   $18,288   $20,493   $22,885
+part out                        $9,724    $6,917    $9,529   $12,833
+sell as salvage on Copart       $3,624    $2,060    $3,579    $5,273
 
-Best path: repair then sell on ACV, expected net $22,325 (P10 $20,000, P90 $24,738). Next best is sell as-is on ACV at $22,011, $314 behind; it wins in 9% of simulated outcomes. Expected repair cost is $656 (3% of a $25,000 clean value; total-loss threshold 75% in NY).
+Best path: sell as-is on ACV, expected net $22,632 (P10 $20,290, P90 $25,035). Next best is repair then sell on ACV at $20,547, $2,084 behind; it wins in 0% of simulated outcomes. Expected repair cost is $656 (3% of a $25,000 clean value; total-loss threshold 75% in NY).
 
 What would flip it:
-  - For repair then sell on ACV: expected repair cost would have to rise by about $273 to flip the ranking.
-  - For sell as-is on ACV: the sale price would have to rise by about $320 to flip the ranking.
+  - No repair cost between $0 and 3x the estimate changes the winner.
+  - For sell as-is on ACV: the sale price would have to fall by about $2,127 to flip the ranking.
 
 (Values use PLACEHOLDER assumptions in config/assumptions.yaml.)
 ```
 
-**Takeaway:** Repairing wins narrowly because buyers discount the visible damage by more than the repair costs. The margin is thin, so the result is sensitive to the placeholder as-is discount multiple and holding cost.
+**Takeaway:** Selling as-is wins under the untuned placeholders: a flat 6% accident-history haircut on the repaired car ($1,500 here) outweighs a $650 repair. Repair only wins if buyers discount the visible damage by about 4.5x the repair cost (reports/sensitivity.md). The answer to the dealer's question depends on two unknowns, the as-is discount and the haircut for a minor cosmetic repair, and real ACV sale data should settle both.
 
 ## Case 2: a borderline write-off
 
-Adjuster persona. Frame crush plus a door dent; repair cost sits near the NY total-loss threshold. (`data/fixtures/borderline_writeoff.json`)
+Adjuster persona (insurance claim). Frame crush plus a door dent; repair cost is 72% of clean value against the 75% NY total-loss threshold. (`data/fixtures/borderline_writeoff.json`)
 
 ```
-2019 SynthC Eps Base  VIN FIXBORDER00000001  (NY, 70,000 mi, clean)
-
-RECOMMENDATION: repair then sell on ACV
-** NEEDS HUMAN REVIEW **
-
-Path                          Expected       P10       P50       P90
-repair then sell on ACV         $7,603    $4,574    $7,730   $10,568
-part out                        $6,345    $4,299    $6,228    $8,595
-sell as salvage on Copart       $2,889    $1,830    $2,868    $3,965
-sell as-is on ACV               $1,087      $879    $1,084    $1,303
-
-Best path: repair then sell on ACV, expected net $7,603 (P10 $4,574, P90 $10,568). Next best is part out at $6,345, $1,258 behind; it wins in 32% of simulated outcomes. Expected repair cost is $6,887 (38% of a $18,000 clean value; total-loss threshold 75% in NY). In 0% of draws the repair crosses the threshold and the title is branded. The total-loss threshold decides this outcome.
-
-Review reasons:
-  - The total-loss threshold decides the outcome: the best path differs depending on whether a repair would brand the title.
-
-What would flip it:
-  - For repair then sell on ACV: expected repair cost would have to rise by about $1,094 to flip the ranking.
-  - For part out: net parts revenue would have to rise by about $1,258 to flip the ranking.
-
-(Values use PLACEHOLDER assumptions in config/assumptions.yaml.)
-```
-
-**Takeaway:** Whether the repair crosses the total-loss threshold (and brands the title) changes the best path, so the engine flags the threshold as decisive and asks for human review.
-
-## Case 3: an obvious total loss
-
-Adjuster persona. Severe frame, hood and bumper damage with undercarriage damage flagged. (`data/fixtures/total_loss.json`)
-
-```
-2020 SynthB Gamma Base  VIN FIXTOTAL000000001  (NY, 61,000 mi, clean)
+2019 SynthC Eps Base  VIN FIXBORDER00000001  (NY, 70,000 mi, clean, insurance claim)
 
 RECOMMENDATION: part out
 
 Path                          Expected       P10       P50       P90
-part out                        $6,345    $4,299    $6,228    $8,595
-sell as salvage on Copart       $2,504    $1,564    $2,484    $3,458
-sell as-is on ACV               $1,087      $879    $1,084    $1,303
-repair then sell on ACV        -$9,181  -$16,189   -$9,173      $107
+part out                        $1,873      $794    $1,831    $3,098
+sell as-is on ACV                 $597      $311      $607      $858
+sell as salvage on Copart         $226     -$362      $207      $844
+repair then sell on ACV        -$2,759   -$6,506   -$3,393      $889
 
-Best path: part out, expected net $6,345 (P10 $4,299, P90 $8,595). Next best is sell as salvage on Copart at $2,504, $3,841 behind; it wins in 1% of simulated outcomes. Expected repair cost is $16,368 (91% of a $18,000 clean value; total-loss threshold 75% in NY). Repair is past the total-loss threshold, so a repaired car would carry a brand.
+Best path: part out, expected net $1,873 (P10 $794, P90 $3,098). Next best is sell as-is on ACV at $597, $1,276 behind; it wins in 6% of simulated outcomes. Expected repair cost is $6,887 (72% of a $9,500 clean value; total-loss threshold 75% in NY).
 
 What would flip it:
-  - For part out: net parts revenue would have to fall by about $3,841 to flip the ranking.
-  - For sell as salvage on Copart: the sale price would have to rise by about $4,175 to flip the ranking.
+  - If expected repair cost fell from $6,887 to about $4,937 (-28%), sell as-is on ACV would win.
+  - For part out: net parts revenue would have to fall by about $1,276 to flip the ranking.
+  - For sell as-is on ACV: the sale price would have to rise by about $1,302 to flip the ranking.
 
 (Values use PLACEHOLDER assumptions in config/assumptions.yaml.)
 ```
 
-**Takeaway:** Repair costs exceed the clean value, so repair loses money in nearly every draw. Parts and salvage dominate; no review flag is needed.
+**Takeaway:** The threshold doesn't decide this case. With these placeholders, repair stops paying well below the threshold (repair bears the hidden-damage reserve, haircut and holding), so near 75% it already loses. Parts vs as-is depends on the parts placeholders (gross value fraction, sell-through).
+
+## Case 3: an obvious total loss
+
+Adjuster persona (insurance claim). Severe frame, hood and bumper damage with undercarriage damage flagged. (`data/fixtures/total_loss.json`)
+
+```
+2020 SynthB Gamma Base  VIN FIXTOTAL000000001  (NY, 61,000 mi, clean, insurance claim)
+
+RECOMMENDATION: part out
+
+Path                          Expected       P10       P50       P90
+part out                        $4,628    $2,948    $4,536    $6,459
+sell as-is on ACV               $2,029    $1,646    $2,031    $2,402
+sell as salvage on Copart       $1,566      $604    $1,529    $2,580
+repair then sell on ACV       -$10,445  -$17,499  -$10,483   -$1,366
+
+Best path: part out, expected net $4,628 (P10 $2,948, P90 $6,459). Next best is sell as-is on ACV at $2,029, $2,599 behind; it wins in 1% of simulated outcomes. Expected repair cost is $16,368 (91% of a $18,000 clean value; total-loss threshold 75% in NY). Repair is past the total-loss threshold, so a repaired car would carry a brand.
+
+What would flip it:
+  - If expected repair cost fell from $16,368 to about $9,325 (-43%), sell as-is on ACV would win.
+  - For part out: net parts revenue would have to fall by about $2,599 to flip the ranking.
+  - For sell as-is on ACV: the sale price would have to rise by about $2,653 to flip the ranking.
+
+(Values use PLACEHOLDER assumptions in config/assumptions.yaml.)
+```
+
+**Takeaway:** Repair costs about 90% of the clean value and loses money in nearly every draw. Part-out leads salvage and as-is, but by an amount that the parts placeholders could erase (halving gross parts value or sell-through hands it to as-is).

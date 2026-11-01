@@ -2,52 +2,56 @@ STATUS: DONE
 
 # PROGRESS
 
+`STATUS: DONE` refers to the TASK.md milestones (M1-M9) and keeps `run.sh` from restarting
+them. Current work is interactive; see the review log below.
+
 ## Checklist
-- [x] M1 Scaffold
-- [x] M2 Domain model
-- [x] M3 config/assumptions.yaml
-- [x] M4 Valuation
-- [x] M5 Decision engine (subagent review before commit)
-- [x] M6 Data (fixtures, stubs, synthetic generator)
-- [x] M7 CLI
-- [x] M8 Proof (backtest, case studies)
-- [x] M9 Docs
+- [x] M1-M9 prototype (unattended run, branch agent/2026-11-01-103713, fast-forwarded to main)
+- [x] Review and hardening pass (2026-11-01, interactive)
+
+## Review log (2026-11-01)
+
+| # | Finding | Fix |
+|---|---|---|
+| F1 | Backtest truth came from the engine's own model (circular) | `data.perturbed` world; report shows same-model and misspecified results |
+| F2 | Holding cost charged only on the repair path; as-is/Copart sell days drawn but unused | Holding on every sale path |
+| F3 | Part-out value ignored damage | PLACEHOLDER `parts.panel_share_of_parts_value`, `damage_type_loss_factor` |
+| F4 | As-is value could price below salvage | Floor as-is at expected salvage |
+| F5 | Placeholders tuned so the dent case would favor repair | Reverted to untuned values (1.3x, 6%, $40/day); added `underscope.sensitivity` |
+| F6 | Any repair past the total-loss threshold branded the title, even a dealer's own | `VehicleRecord.insurance_claim`; branding only on claims |
+| F7 | Flip conditions used a closed form that ignored coupling (wrong amount and direction) | Bisection over a repair-cost scale |
+| F8 | "Threshold decides" fired at 0.1% branded draws; explanation said "0%" and "decides" together | PLACEHOLDER `simulation.total_loss_min_branded_share` (5%), counterfactual wording |
+| F9 | Config had no schema checks | Ordered ranges, percents, cents, enum coverage, draws |
+| F10 | "Borderline write-off" fixture sat at 38% repair ratio vs a 75% threshold | Clean value lowered so it sits at 72% |
+
+Checked and fine: integer-cents arithmetic, common random numbers, seeding, fee signs.
+Confidence-weighted expected repair cost assumes confidence = P(damage exists); a real
+detector's confidence must be calibrated for that to hold.
+
+## What the honest numbers say
+- With the untuned placeholders, repair rarely wins. It bears ~1.15x repair (hidden-damage
+  reserve) plus a flat 6% haircut and extra holding, while buyers only discount as-is cars by
+  1.3x repair. The dent case needs a ~4.5x discount for repair to win.
+- Under a misspecified world the engine does not beat "always sell as-is" on the synthetic mix
+  ($80 vs $76 regret per vehicle). The synthetic mix is mostly light damage.
+- Part-out vs as-is on heavy damage depends on the parts placeholders.
 
 ## Decisions for humans
-- Project-local .venv created; installs are inside it only.
-
-- Placeholder calibration: raised as_is_discount_multiple_of_repair to 3.0, lowered repaired-value haircut to 1% and holding to $20/day so a ~$690 dent repair pays back. Replace all with real data.
-- Repair path holding cost covers repair days + days to sell (more conservative than TASK.md literal).
-- Part-out path also deducts a tow cost (transport.parts_cents), beyond the TASK.md formula.
-- review_overlap_threshold = P(runner-up beats winner in a paired draw) >= 0.35.
-- total_loss_decides is only evaluated when some draws cross the threshold (clean title).
-- Unknown inspection flags each add an allowance, so both missing adds it twice (reviewer noted; intended).
-- M5 subagent review (math/units/signs): no findings.
+- The repaired-value haircut is a flat % of clean value regardless of damage size. A cosmetic
+  dent fix probably carries little or no accident-history stigma; a frame repair a lot. Should it
+  scale with damage (structural vs cosmetic)? This is a modeling change, not a calibration, and
+  it decides the dealer persona's headline question.
+- `insurance_claim` defaults to false (dealer). On a claim, branding = `rebuilt` after repair;
+  the as-is/Copart paths don't yet model the insurer's salvage title on a total loss.
+- Review overlap threshold stays 0.35: P(runner-up beats winner) is about 0.5 at most, so the
+  original 0.60 could never fire.
+- Part-out still deducts a tow cost (transport.parts_cents), beyond the TASK.md formula.
+- Unknown inspection flags each add an allowance (both missing adds it twice).
 
 ## Blockers
 none
 
 ## Next step
-All milestones done. See Morning summary.
-
-## Morning summary
-**Built:** scaffold, pydantic domain model + MockDetector, placeholder assumptions config,
-valuation, seeded Monte Carlo decision engine (ranking, review flags, total-loss flag,
-explanations, flip conditions), fixtures + ACV/Copart stubs + 500-vehicle synthetic set, typer CLI,
-backtest and case-study reports, README and data requirements.
-
-**Run:** `python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'`, then `make test`,
-`.venv/bin/underscope evaluate data/fixtures/dent_600.json [--json]`. See README.
-
-**Results (synthetic, circular by construction):** 85.6% accuracy vs oracle, $114 average regret
-per vehicle (best fixed policy: $539), 7.2% human-review rate. Details in reports/backtest.md.
-
-**Decisions to review:** see "Decisions for humans" above, especially the placeholder
-recalibration (as-is discount multiple, holding cost, haircut), the repair-path holding cost, the
-part-out tow cost, and the review overlap threshold of 0.35.
-
-**Next three steps:**
-1. Replace placeholders with real data once a partnership exists (docs/DATA_REQUIREMENTS.md).
-2. Build a real DamageDetector behind the protocol and score it on labeled photos.
-3. Calibrate simulation uncertainty and review thresholds on real outcomes; add sensitivity to
-   repair cost near the total-loss threshold in the flip conditions.
+Decide the haircut modeling question above, then make the synthetic damage mix and the
+misspecified world more realistic (more mid/heavy damage, correlated errors) before trusting
+any backtest number. Real data (docs/DATA_REQUIREMENTS.md) remains the main unlock.

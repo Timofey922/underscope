@@ -30,12 +30,14 @@ make lint   # ruff
 .venv/bin/underscope evaluate vehicle.json --labels labels.json    # MockDetector labels per photo ref
 
 .venv/bin/python -m underscope.data          # regenerate data/synthetic/ (500 vehicles, seed 7)
-.venv/bin/python -m underscope.backtest      # -> reports/backtest.md
+.venv/bin/python -m underscope.backtest      # -> reports/backtest.md (same-model + misspecified)
 .venv/bin/python -m underscope.case_studies  # -> reports/case_studies.md
+.venv/bin/python -m underscope.sensitivity   # -> reports/sensitivity.md
 ```
 
 Vehicle JSON fields: `vin, year, make, model, trim, mileage, region, title_status, photo_refs,
-undercarriage_damage, engine_audio_abnormal`, optional `clean_value_cents`, and optional inline
+undercarriage_damage, engine_audio_abnormal`, `insurance_claim` (adjuster persona; only then can
+repair cost past the total-loss threshold brand the title), optional `clean_value_cents`, and optional inline
 `findings` (`panel, damage_type, severity 0-1, confidence 0-1`).
 
 ## How it works
@@ -59,10 +61,20 @@ Notes:
 - `needs_human_review` is set when the top two paths overlap heavily, when finding confidence
   is low, or when the total-loss threshold decides the outcome.
 - Results are deterministic for a given seed (`simulation.seed`).
+- "What would flip it" finds the repair-cost flip point by search, because repair cost moves
+  several paths at once (repair net, as-is price, title brand).
+- `config/assumptions.yaml` is schema-checked on load (ordered ranges, 0-100 percents,
+  non-negative cents, complete panel/damage/path tables).
 
 ## Results (synthetic only)
 
-See `reports/backtest.md` (accuracy, regret vs oracle, review rate) and
-`reports/case_studies.md`. The synthetic truth shares the engine's placeholder model, so these
-show behavior under noise, not real-world accuracy. Data we would need from ACV and Copart:
+- `reports/backtest.md`: accuracy, regret vs oracle and review rate against two synthetic
+  truths, one drawn from the engine's own model (circular) and one from a misspecified world
+  where every placeholder is off by up to 25%. Under misspecification the engine does not
+  beat the trivial "always sell as-is" policy on this synthetic mix.
+- `reports/sensitivity.md`: which placeholders flip each fixture's recommendation. The dent
+  case hinges on the as-is discount multiple and the repaired-value haircut.
+- `reports/case_studies.md`: the three fixtures, explained.
+
+The placeholders are deliberately untuned. Data we would need from ACV and Copart:
 `docs/DATA_REQUIREMENTS.md`.

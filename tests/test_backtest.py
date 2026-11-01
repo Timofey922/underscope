@@ -27,3 +27,11 @@ def test_damage_bands_partition_and_have_baselines():
     assert sum(b["regret"] for b in bands.values()) == round(res["avg_regret_cents"] * 60)
     for b in bands.values():
         assert set(b["baselines"]) == set(res["baseline_avg_regret_cents"])
+
+
+def test_review_buckets_carry_baselines():
+    res = run_backtest(generate_synthetic(30, seed=6))
+    for key in ("flagged", "unflagged"):
+        assert set(res[key]["baselines"]) == set(res["baseline_avg_regret_cents"])
+    total = res["flagged"]["baselines"]["acv_as_is"] + res["unflagged"]["baselines"]["acv_as_is"]
+    assert total == round(res["baseline_avg_regret_cents"]["acv_as_is"] * 30)

@@ -159,6 +159,12 @@ def simulate(
     return SimResult(nets, comps, float(branded.mean()))
 
 
+def p_not_best(nets: dict[Path, np.ndarray], winner: Path) -> float:
+    """Share of paired draws in which some other path nets more than the winner."""
+    rivals = np.max(np.stack([nets[p] for p in PATHS if p != winner]), axis=0)
+    return float(np.mean(rivals > nets[winner]))
+
+
 def _winner(nets: dict[Path, np.ndarray]) -> Path:
     return max(PATHS, key=lambda p: (int(round(nets[p].mean())), -PATHS.index(p)))
 
@@ -298,9 +304,11 @@ def evaluate(
     reasons: list[str] = []
     # Paired draws share market shocks, so this is the chance the runner-up truly beats the winner.
     overlap = float(np.mean(sim.nets[run.path] > sim.nets[win.path]))
-    if overlap >= sim_cfg["review_overlap_threshold"]:
+    # Review looks at every rival, not just the runner-up: a third path can be the real threat.
+    not_best = p_not_best(sim.nets, win.path)
+    if not_best >= sim_cfg["review_overlap_threshold"]:
         reasons.append(
-            f"Top two paths overlap heavily: the runner-up beat the winner in {overlap:.0%} of "
+            f"Paths overlap heavily: another path beat the winner in {not_best:.0%} of "
             "simulated outcomes."
         )
     if val.mean_confidence < sim_cfg["low_confidence_threshold"]:

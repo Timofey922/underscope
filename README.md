@@ -58,8 +58,10 @@ flowchart LR
 
 Notes:
 - Money is integer cents in the decision layer.
-- `needs_human_review` is set when the top two paths overlap heavily, when finding confidence
-  is low, or when the total-loss threshold decides the outcome.
+- `needs_human_review` is set when another path beats the winner in many simulated draws,
+  when finding confidence is low, or when the total-loss threshold decides the outcome.
+- Title discounts (clean/rebuilt/salvage) are uncertain ranges drawn together, so repairing a
+  salvage car to a rebuilt title shows its real risk.
 - Results are deterministic for a given seed (`simulation.seed`).
 - "What would flip it" finds the repair-cost flip point by search, because repair cost moves
   several paths at once (repair net, as-is price, title brand).
@@ -70,8 +72,9 @@ Notes:
 
 - `reports/backtest.md`: accuracy, regret vs oracle and review rate against two synthetic
   truths, one drawn from the engine's own model (circular) and one from a misspecified world
-  where every placeholder is off by up to 25%. Under misspecification the engine does not
-  beat the trivial "always sell as-is" policy on this synthetic mix.
+  where every placeholder is off by up to 25%, broken down by damage band and review flag.
+  Under misspecification the engine does not beat "always sell as-is" overall; on the cars
+  it doesn't flag it only barely does. Its current value is triage.
 - `reports/sensitivity.md`: which placeholders flip each fixture's recommendation. The dent
   case hinges on the as-is discount multiple and the repaired-value haircut.
 - `reports/case_studies.md`: the three fixtures, explained.

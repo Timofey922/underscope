@@ -193,3 +193,15 @@ def test_tri_ppf_matches_range():
     assert x[0] == pytest.approx(0.66) and x[-1] == pytest.approx(0.90)
     assert (np.diff(x) >= 0).all()
     assert x.mean() == pytest.approx(0.78, abs=0.002)
+
+
+def test_p_not_best_counts_every_rival():
+    from underscope.decision import p_not_best
+
+    win = np.full(10, 10)
+    b = np.array([11, 11, 11, 0, 0, 0, 0, 0, 0, 0])
+    c = np.array([0, 0, 0, 11, 11, 11, 0, 0, 0, 0])
+    nets = {Path.REPAIR_THEN_ACV: win, Path.ACV_AS_IS: b, Path.PART_OUT: c,
+            Path.COPART_SALVAGE: np.zeros(10, dtype=int)}  # fmt: skip
+    # Each rival alone wins 30% of draws; together the winner isn't best in 60%.
+    assert p_not_best(nets, Path.REPAIR_THEN_ACV) == pytest.approx(0.6)

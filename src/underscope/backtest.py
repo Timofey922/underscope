@@ -25,8 +25,8 @@ def run_backtest(rows: list[dict]) -> dict:
     correct = 0
     regret_cents = 0
     reviewed = 0
-    flagged = {"n": 0, "regret": 0, "correct": 0}
-    unflagged = {"n": 0, "regret": 0, "correct": 0}
+    flagged = {"n": 0, "regret": 0, "correct": 0, "baselines": {p.value: 0 for p in PATHS}}
+    unflagged = {"n": 0, "regret": 0, "correct": 0, "baselines": {p.value: 0 for p in PATHS}}
     baselines = {p.value: 0 for p in PATHS}
     oracle_total = 0
     bands = {
@@ -56,6 +56,7 @@ def run_backtest(rows: list[dict]) -> dict:
         for p in PATHS:
             baselines[p.value] += best - net[p.value]
             band["baselines"][p.value] += best - net[p.value]
+            bucket["baselines"][p.value] += best - net[p.value]
     return {
         "n": n,
         "accuracy": correct / n,
@@ -113,6 +114,19 @@ def _verdict(title: str, res: dict) -> str:
     )
 
 
+def _unflagged_verdict(title: str, res: dict) -> str:
+    u = res["unflagged"]
+    if not u["n"]:
+        return f"- {title}: every vehicle was flagged for review."
+    policy, best = min(u["baselines"].items(), key=lambda kv: kv[1])
+    ours = u["regret"] / u["n"]
+    word = "beats" if ours < best else "does not beat"
+    return (
+        f"- {title}, the {u['n'] / res['n']:.0%} of vehicles not flagged for review: UnderScope "
+        f"({_d(ours)}) {word} always {policy} ({_d(best / u['n'])}) on the same vehicles."
+    )
+
+
 def write_report(
     same: dict, mis: dict, path: str | FsPath = ROOT / "reports" / "backtest.md"
 ) -> FsPath:
@@ -151,6 +165,10 @@ def write_report(
         ),
         "",
         *(_verdict(title, res) for title, res in (("Same model", same), ("Misspecified", mis))),
+        *(
+            _unflagged_verdict(title, res)
+            for title, res in (("Same model", same), ("Misspecified", mis))
+        ),
         "",
     ]
     for title, res in (("Same model", same), ("Misspecified", mis)):

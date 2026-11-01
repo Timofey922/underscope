@@ -18,11 +18,13 @@ Vehicles: 500. Oracle = best realized net per vehicle.
 |---|---|---|
 | Accuracy (picked the oracle's path) | 90.4% | 90.2% |
 | Average regret per vehicle | $57 | $80 |
-| Human-review rate | 3.8% | 3.8% |
+| Human-review rate | 6.0% | 6.0% |
 | Best fixed-policy regret | $110 | $76 |
 
 - Same model: UnderScope ($57) beats the best fixed policy, always acv_as_is ($110).
 - Misspecified: UnderScope ($80) does not beat the best fixed policy, always acv_as_is ($76).
+- Same model, the 94% of vehicles not flagged for review: UnderScope ($39) beats always acv_as_is ($84) on the same vehicles.
+- Misspecified, the 94% of vehicles not flagged for review: UnderScope ($55) beats always acv_as_is ($57) on the same vehicles.
 
 ## Same model: by damage band (true repair cost / clean value)
 
@@ -46,8 +48,8 @@ Average oracle net $7,957.
 
 | Group | Vehicles | Accuracy | Avg regret |
 |---|---|---|---|
-| Flagged for review | 19 | 57.9% | $210 |
-| Not flagged | 481 | 91.7% | $51 |
+| Flagged for review | 30 | 46.7% | $348 |
+| Not flagged | 470 | 93.2% | $39 |
 
 | Policy | Avg regret |
 |---|---|
@@ -63,8 +65,8 @@ Average oracle net $7,920.
 
 | Group | Vehicles | Accuracy | Avg regret |
 |---|---|---|---|
-| Flagged for review | 19 | 52.6% | $359 |
-| Not flagged | 481 | 91.7% | $69 |
+| Flagged for review | 30 | 43.3% | $472 |
+| Not flagged | 470 | 93.2% | $55 |
 
 | Policy | Avg regret |
 |---|---|

@@ -144,6 +144,6 @@ simulation:
   draws: 1000
   seed: 20260101
   value_noise_sigma: 0.08      # lognormal sigma on market values
-  review_overlap_threshold: 0.35   # P(runner-up beats winner in a paired draw) at/above this -> human review
+  review_overlap_threshold: 0.35   # P(some other path beats winner in a paired draw) at/above this -> human review
   low_confidence_threshold: 0.60   # mean finding confidence below this -> human review
   total_loss_min_branded_share: 0.05   # threshold only "decides" if at least this share of draws cross it

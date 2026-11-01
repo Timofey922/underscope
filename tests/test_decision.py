@@ -111,3 +111,11 @@ def test_holding_cost_charged_on_every_sale_path():
     sim = simulate(v, value_vehicle(v, [f()], a), a)
     for p in (Path.REPAIR_THEN_ACV, Path.ACV_AS_IS, Path.COPART_SALVAGE):
         assert (sim.components[p]["holding"] < 0).all()
+
+
+def test_total_loss_only_decides_on_insurance_claims():
+    v = veh(clean_value_cents=1_800_000)
+    fi = [f("frame", "crush", 0.4, 0.9), f("door", "dent", 0.6, 0.9)]
+    a = default_assumptions()
+    assert simulate(v, value_vehicle(v, fi, a), a).branded_share == 0
+    assert not evaluate(v, fi).total_loss_decides

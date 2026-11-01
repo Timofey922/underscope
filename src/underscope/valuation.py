@@ -73,7 +73,7 @@ def title_after_repair(
         return TitleStatus.REBUILT
     if vehicle.title_status == TitleStatus.REBUILT:
         return TitleStatus.REBUILT
-    if repair_ratio >= threshold:
+    if vehicle.insurance_claim and repair_ratio >= threshold:
         return TitleStatus(a["title"]["brand_after_total_loss_repair"])
     return TitleStatus.CLEAN
 

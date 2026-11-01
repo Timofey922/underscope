@@ -40,7 +40,9 @@ def test_as_is_below_clean_and_salvage_below_as_is():
 
 
 def test_total_loss_brands_repaired_title():
-    v = value_vehicle(veh(clean_value_cents=1_000_000), [f("frame", "crush", 1.0)])
+    v = value_vehicle(
+        veh(clean_value_cents=1_000_000, insurance_claim=True), [f("frame", "crush", 1.0)]
+    )
     assert v.repair_ratio >= v.total_loss_threshold
     assert v.title_after_repair == TitleStatus.REBUILT
 
@@ -74,3 +76,13 @@ def test_as_is_never_below_salvage():
         for title in ("clean", "salvage", "rebuilt"):
             v = value_vehicle(veh(clean_value_cents=1_800_000, title_status=title), findings)
             assert v.as_is_value >= v.salvage_value.expected
+
+
+def test_dealer_repair_does_not_brand_title():
+    # Branding follows an insurer's total-loss declaration, not repair cost on its own.
+    heavy = [f("frame", "crush", 1.0)]
+    dealer = value_vehicle(veh(clean_value_cents=1_000_000), heavy)
+    claim = value_vehicle(veh(clean_value_cents=1_000_000, insurance_claim=True), heavy)
+    assert dealer.repair_ratio >= dealer.total_loss_threshold
+    assert dealer.title_after_repair == TitleStatus.CLEAN
+    assert claim.title_after_repair == TitleStatus.REBUILT

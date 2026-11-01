@@ -25,7 +25,7 @@ def render(vehicle: VehicleRecord, rec: Recommendation) -> str:
     lines = [
         f"{vehicle.year} {vehicle.make} {vehicle.model} {vehicle.trim}".strip()
         + f"  VIN {vehicle.vin}  ({vehicle.region}, {vehicle.mileage:,} mi, "
-        f"{vehicle.title_status})",
+        f"{vehicle.title_status}{', insurance claim' if vehicle.insurance_claim else ''})",
         "",
         f"RECOMMENDATION: {LABEL[rec.winner]}",
     ]

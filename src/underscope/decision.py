@@ -88,11 +88,12 @@ def simulate(
     if force_title_factor is not None:
         title_factor = np.full(n, force_title_factor)
         branded = np.zeros(n, dtype=bool)
-    elif vehicle.title_status != TitleStatus.CLEAN:
+    elif vehicle.title_status != TitleStatus.CLEAN or not vehicle.insurance_claim:
         title_factor = np.full(n, val.title_factor_after_repair)
         branded = np.zeros(n, dtype=bool)
     else:
-        # The threshold is evaluated per draw: repair cost vs (shocked) clean value.
+        # Insurance claim on a clean title: the insurer totals the car when repair cost crosses
+        # the threshold, evaluated per draw against the (shocked) clean value.
         branded = rep >= val.total_loss_threshold * clean_shocked
         factors = a["title"]["factor"]
         brand = factors[a["title"]["brand_after_total_loss_repair"]]
@@ -243,8 +244,8 @@ def evaluate(
         reasons.append(f"Damage findings have low average confidence ({val.mean_confidence:.2f}).")
 
     total_loss_decides = False
-    # Only relevant if some draws actually cross the threshold (clean-title vehicles).
-    if vehicle.title_status == TitleStatus.CLEAN and sim.branded_share > 0:
+    # Only relevant on insurance claims where some draws actually cross the threshold.
+    if sim.branded_share > 0:
         factors = a["title"]["factor"]
         brand = factors[a["title"]["brand_after_total_loss_repair"]]
         w_clean = _winner(simulate(vehicle, val, a, force_title_factor=factors["clean"]).nets)
@@ -293,7 +294,11 @@ def _explain(
             f" In {sim.branded_share:.0%} of draws the repair crosses the threshold "
             "and the title is branded."
         )
-    if win.path != Path.REPAIR_THEN_ACV and val.repair_ratio >= val.total_loss_threshold:
+    if (
+        vehicle.insurance_claim
+        and win.path != Path.REPAIR_THEN_ACV
+        and val.repair_ratio >= val.total_loss_threshold
+    ):
         text += " Repair is past the total-loss threshold, so a repaired car would carry a brand."
     if total_loss_decides:
         text += " The total-loss threshold decides this outcome."

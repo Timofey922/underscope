@@ -52,6 +52,9 @@ class VehicleRecord(BaseModel):
     photo_refs: list[str] = Field(default_factory=list)
     undercarriage_damage: bool | None = None
     engine_audio_abnormal: bool | None = None
+    # True when an insurer is handling a claim (adjuster persona). Only then can repair cost
+    # past the total-loss threshold trigger a title brand; a dealer's own repair does not.
+    insurance_claim: bool = False
     # Optional market anchor supplied by caller (cents); real source: ACV/Copart data.
     clean_value_cents: int | None = Field(default=None, ge=0)
     # Optional findings supplied inline (used when no detector labels exist).

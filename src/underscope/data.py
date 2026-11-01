@@ -125,6 +125,7 @@ def generate_synthetic(n: int = 500, seed: int = 7, a: Assumptions | None = None
             photo_refs=[f"synthetic/{i:04d}_{j}.jpg" for j in range(k)],
             undercarriage_damage=[None, False, True][int(rng.choice(3, p=[0.3, 0.55, 0.15]))],
             engine_audio_abnormal=[None, False, True][int(rng.choice(3, p=[0.4, 0.5, 0.1]))],
+            insurance_claim=bool(rng.random() < 0.5),
         )
         # What the detector reports: noisy severity, 5% missed, imperfect confidence.
         perceived = []

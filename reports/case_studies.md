@@ -10,6 +10,7 @@ Dealer persona (no insurance claim). A door dent on a clean-title car, repair es
 2022 SynthA Alpha Base  VIN FIXDENT0000000001  (NY, 28,000 mi, clean)
 
 RECOMMENDATION: sell as-is on ACV
+Repair does not pay back: selling as-is nets $736 more than repairing on average; repair comes out ahead in only 1% of draws.
 
 Path                          Expected       P10       P50       P90
 sell as-is on ACV              $22,632   $20,290   $22,540   $25,035
@@ -36,6 +37,7 @@ Adjuster persona (insurance claim). Frame crush plus a door dent; repair cost is
 2019 SynthC Eps Base  VIN FIXBORDER00000001  (NY, 70,000 mi, clean, insurance claim)
 
 RECOMMENDATION: part out
+Borderline total loss: repair estimate is 72% of clean value, below the 75% threshold in NY; repair cost crosses it in 56% of draws. A firm repair estimate settles it. Best path on current numbers: part out.
 
 Path                          Expected       P10       P50       P90
 part out                        $1,873      $794    $1,831    $3,098
@@ -63,6 +65,7 @@ Adjuster persona (insurance claim). Severe frame, hood and bumper damage with un
 2020 SynthB Gamma Base  VIN FIXTOTAL000000001  (NY, 61,000 mi, clean, insurance claim)
 
 RECOMMENDATION: part out
+Total loss: repair estimate is 91% of clean value, above the 75% threshold in NY; repair cost crosses it in 87% of draws. Best path for the totaled car: part out.
 
 Path                          Expected       P10       P50       P90
 part out                        $4,628    $2,948    $4,536    $6,459

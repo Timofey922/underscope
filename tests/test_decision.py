@@ -229,3 +229,33 @@ def test_as_is_sale_never_below_salvage_sale_in_any_draw():
         as_is = s.components[Path.ACV_AS_IS]["sale_price"]
         salvage = s.components[Path.COPART_SALVAGE]["sale_price"]
         assert (as_is >= salvage).all()
+
+
+def test_dealer_answer_says_whether_repair_pays_back():
+    r = evaluate(veh(), [f(sev=0.5)])
+    assert r.answer.startswith("Repair does not pay back") or r.answer.startswith(
+        "Repair pays back"
+    )
+    assert "as-is" in r.answer and "$" in r.answer
+    r2 = evaluate(veh(), [f(sev=0.5)], repair_friendly())
+    assert r2.answer.startswith("Repair pays back")
+
+
+def test_adjuster_answer_says_total_loss_or_not():
+    heavy = [f("frame", "crush", 1.0, 0.95), f("hood", "crush", 0.9, 0.95)]
+    total = evaluate(veh(clean_value_cents=1_200_000, insurance_claim=True), heavy)
+    assert total.answer.startswith("Total loss")
+    assert "75%" in total.answer
+    light = evaluate(veh(insurance_claim=True), [f(sev=0.3)])
+    assert light.answer.startswith("Not a total loss")
+
+
+def test_adjuster_borderline_answer_is_not_contradictory():
+    import json
+
+    from underscope.data import FIXTURE_DIR
+
+    v = VehicleRecord(**json.loads((FIXTURE_DIR / "borderline_writeoff.json").read_text()))
+    r = evaluate(v, v.findings)
+    assert r.answer.startswith("Borderline total loss")
+    assert "below the 75%" in r.answer

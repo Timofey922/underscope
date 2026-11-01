@@ -339,6 +339,7 @@ def evaluate(
     return Recommendation(
         vin=vehicle.vin,
         winner=win.path,
+        answer=persona_answer(vehicle, val, sim, win.path),
         options=ranked,
         needs_human_review=bool(reasons),
         review_reasons=reasons,
@@ -347,6 +348,48 @@ def evaluate(
         flip_conditions=_flip_conditions(
             ranked, a, vehicle, val, repair_cost_flip(vehicle, findings, a)
         ),
+    )
+
+
+# Share of draws past the threshold at which the adjuster answer is a clear yes (or, mirrored,
+# a clear no). A wording cut-off for the answer line, not a market assumption.
+TOTAL_LOSS_CLEAR = 0.8
+
+
+def persona_answer(
+    vehicle: VehicleRecord, val: Valuation, sim: SimResult, winner: Path
+) -> str:
+    """One-line answer to the question each persona actually asks."""
+    if vehicle.insurance_claim:
+        where = f"the {val.total_loss_threshold:.0%} threshold in {vehicle.region}"
+        ratio = f"repair estimate is {val.repair_ratio:.0%} of clean value"
+        if vehicle.title_status != TitleStatus.CLEAN:
+            return (
+                f"Title is already {vehicle.title_status.value}; {ratio}. "
+                f"Best path: {LABEL[winner]}."
+            )
+        crossed = sim.branded_share
+        side = "above" if val.repair_ratio >= val.total_loss_threshold else "below"
+        facts = f"{ratio}, {side} {where}; repair cost crosses it in {crossed:.0%} of draws"
+        if crossed >= TOTAL_LOSS_CLEAR:
+            return f"Total loss: {facts}. Best path for the totaled car: {LABEL[winner]}."
+        if crossed > 1 - TOTAL_LOSS_CLEAR:
+            return (
+                f"Borderline total loss: {facts}. A firm repair estimate settles it. "
+                f"Best path on current numbers: {LABEL[winner]}."
+            )
+        return f"Not a total loss: {facts}. Best path: {LABEL[winner]}."
+    diff = sim.nets[Path.REPAIR_THEN_ACV] - sim.nets[Path.ACV_AS_IS]
+    margin = int(round(diff.mean()))
+    share = float(np.mean(diff > 0))
+    if margin > 0:
+        return (
+            f"Repair pays back: repairing then selling on ACV nets {_dollars(margin)} more than "
+            f"selling as-is on average, and comes out ahead in {share:.0%} of draws."
+        )
+    return (
+        f"Repair does not pay back: selling as-is nets {_dollars(-margin)} more than repairing "
+        f"on average; repair comes out ahead in only {share:.0%} of draws."
     )
 
 

@@ -83,6 +83,9 @@ class DispositionOption(BaseModel):
 class Recommendation(BaseModel):
     vin: str
     winner: Path
+    # Direct answer to the persona's question: dealer "does the repair pay back?",
+    # adjuster "is it a total loss?".
+    answer: str = ""
     options: list[DispositionOption]  # ranked best first by expected_cents
     needs_human_review: bool
     review_reasons: list[str] = Field(default_factory=list)

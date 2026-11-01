@@ -32,6 +32,7 @@ def render(vehicle: VehicleRecord, rec: Recommendation) -> str:
         f"{vehicle.title_status}{', insurance claim' if vehicle.insurance_claim else ''})",
         "",
         f"RECOMMENDATION: {LABEL[rec.winner]}",
+        rec.answer,
     ]
     if rec.needs_human_review:
         lines.append("** NEEDS HUMAN REVIEW **")

@@ -21,7 +21,7 @@ uses fixtures and clearly labeled synthetic data.
 - Never push, change git remotes, or open PRs. Work stays on the local branch.
 - Never scrape or call ACV, Copart, or any site whose terms forbid automated access.
 - Never read, print, or commit secrets (.env, keys, tokens).
-- Never delete or rewrite files that existed before the current branch was created.
+- Never delete or rewrite files files you didn't create in this session, unless the user approves within 15 seconds.
 - Stay inside this repo. Use a project-local .venv; don't install anything globally.
 - Never invent real-world market numbers. Every numeric assumption lives in
   config/assumptions.yaml labeled PLACEHOLDER with a note on what real data would replace it.

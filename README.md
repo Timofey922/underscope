@@ -86,6 +86,9 @@ flowchart LR
 | `perception.py` | `DamageDetector` protocol and `MockDetector`, which reads labels from fixtures instead of pixels |
 | `vision.py` | `ClaudeVisionDetector`: Claude looks at each photo and returns findings (optional `vision` extra) |
 | `detector_eval.py` | Scores any detector against labeled photos |
+| `coverage.py` | Which panel sides a set of photo views shows |
+| `calibration.py` | Learns and applies a confidence correction for a detector |
+| `labeling.py`, `coco_import.py` | Ground-truth labels: by hand, or converted from COCO |
 | `review.py` | Human-in-the-loop review: risk signals, the area checklist, the review request JSON, checker edits, the HTML sheet |
 | `config.py` | Loads and schema-checks `config/assumptions.yaml` |
 | `valuation.py` | Damage + vehicle to values and repair-cost ranges (integer cents) |
@@ -138,6 +141,12 @@ door seen in two photos.
   dent visible from two angles would be costed twice. Photos over 5 MB or longer than 1568 px
   are shrunk (upright, JPEG) before sending, which needs Pillow from the `vision` extra.
 
+  The detector also reports each photo's view (front, left, rear_right, top, close_up, ...).
+  `coverage.py` maps views to the panel sides they show. A panel side no photo shows isn't
+  clean, it's unknown: on the review it becomes **verify: not photographed**, and the review
+  reasons name the missing views ("Photos don't show: right side, roof"). The roof only counts
+  as covered by a top view, and the frame never counts as covered by exterior photos.
+
 **Scoring a detector.** `underscope detect-eval LABELS --photo-root DIR` runs a detector on
 labeled photos and reports:
 
@@ -154,6 +163,12 @@ a cost estimate and needs `--yes`; afterwards it reports the actual cost from to
 `--save` keeps the predictions and `--predictions` re-scores them later without new API calls.
 `--batch` submits the photos as one Message Batch at half price (results within 24 hours) and
 saves a state file; `--collect STATE` scores the results once the batch has ended.
+
+**Calibrating confidence.** Confidence scales expected repair cost and triggers review, so it
+should mean what it says. `underscope calibrate LABELS PREDICTIONS` learns, per confidence band,
+how often predictions were right (smoothed; bands under 20 predictions left alone; rates made
+non-decreasing). `--calibration FILE` applies it in `evaluate`, `batch` and `detect-eval`. Fit
+on one set of photos and score on another.
 
 **Getting labels.**
 
@@ -194,11 +209,14 @@ marked as one of:
 
 The terminal shows this checklist. `reviews/<VIN>.html` shows a top-down car diagram with every
 damaged area colored by severity (minor below 0.33, moderate to 0.66, severe above), verify areas
-outlined with dashes, the findings table with photo refs, and the reasons for review.
+(including sides no photo shows) outlined with dashes, the findings table with photo refs, and
+the reasons for review. Fenders, doors and quarter panels are drawn left and right and colored
+per side; a finding without a known side colors both.
 
 **How the checker answers.**
 
-- *Interactive* (default when a terminal is attached): `a` accept, `+ panel type severity` add,
+- *Interactive* (default when a terminal is attached): `a` accept, `+ panel type severity
+  [side]` add,
   `- N` remove, `s N severity` re-score, `u yes|no` and `e yes|no` set the inspection flags,
   `q` quit and leave it pending. After `a` and a checker name, the decision runs.
 - *File handoff* (`--no-interactive`, for agents and batch): the CLI writes the request JSON and
@@ -397,8 +415,8 @@ Reports: `reports/backtest.md`, `reports/sensitivity.md`, `reports/case_studies.
 - Every number is a placeholder. `docs/DATA_REQUIREMENTS.md` lists the fields, volumes and labels
   needed from ACV and Copart (via a data partnership; the project never scrapes).
 - The Claude detector hasn't been scored on real labeled photos yet; see "Detector test data"
-  in `PROGRESS.md` for the dataset decision. It also doesn't report left/right side or the
-  damage's location in the photo, so the review sheet can't mark exact spots yet.
+  in `PROGRESS.md` for the dataset decision. It reports side and photo view, but
+  not the damage's position within the photo, so the sheet can't mark exact spots yet.
 - Synthetic outcomes are a single realized draw per path, so per-vehicle results are noisy;
   the heavy band's 66% ceiling is mostly that noise.
 - On a totaled claim the model doesn't yet include the insurer's own costs (payout to the

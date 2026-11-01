@@ -88,6 +88,11 @@ ground-truth labeling, `--prefill` from predictions); side-aware matching in the
 names; `detect-eval --batch/--collect` (Message Batches, half price); Pillow in the vision
 extra to downscale photos over 5 MB or 1568 px.
 
+Stage 3 (autonomous hour, 2026-11-01): photo views and coverage (a panel side no photo shows is
+"verify: not photographed" on a pending review, with the missing views listed as a reason);
+per-side coloring on the review diagram and sided checker edits; confidence calibration
+(`underscope calibrate`, `--calibration` on evaluate/batch/detect-eval).
+
 ### Detector test data (needs the user)
 | Dataset | Labels | License / access | Verdict |
 |---|---|---|---|

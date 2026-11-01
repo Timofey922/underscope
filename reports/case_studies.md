@@ -55,7 +55,7 @@ What would flip it:
 (Values use PLACEHOLDER assumptions in config/assumptions.yaml.)
 ```
 
-**Takeaway:** The threshold doesn't decide this case. With these placeholders, repair stops paying well below the threshold (repair bears the hidden-damage reserve, haircut and holding), so near 75% it already loses. Parts vs as-is depends on the parts placeholders (gross value fraction, sell-through).
+**Takeaway:** The adjuster answer is 'borderline total loss': the expected repair is just under the threshold, but repair cost crosses it in about half the draws, so a firm repair estimate settles whether the car is totaled. It doesn't change the disposition: repair loses either way (it bears the hidden-damage reserve, haircut and holding), and parts vs as-is depends on the parts placeholders.
 
 ## Case 3: an obvious total loss
 
@@ -83,4 +83,4 @@ What would flip it:
 (Values use PLACEHOLDER assumptions in config/assumptions.yaml.)
 ```
 
-**Takeaway:** Repair costs about 90% of the clean value and loses money in nearly every draw. Part-out leads salvage and as-is, but by an amount that the parts placeholders could erase (halving gross parts value or sell-through hands it to as-is).
+**Takeaway:** Repair costs about 90% of the clean value and loses money in nearly every draw. Once the insurer totals the car, an as-is buyer gets a salvage title, so as-is is worth about the salvage value. Part-out leads both, by an amount the parts placeholders could erase (halving gross parts value or sell-through hands it to as-is).

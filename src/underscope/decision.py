@@ -243,21 +243,24 @@ def evaluate(
     if val.mean_confidence < sim_cfg["low_confidence_threshold"]:
         reasons.append(f"Damage findings have low average confidence ({val.mean_confidence:.2f}).")
 
-    total_loss_decides = False
-    # Only relevant on insurance claims where some draws actually cross the threshold.
-    if sim.branded_share > 0:
+    # (winner if the repaired title stays clean, winner if it is branded), when they differ.
+    tl_flip: tuple[Path, Path] | None = None
+    # Only relevant on insurance claims where a material share of draws crosses the threshold.
+    if sim.branded_share >= sim_cfg["total_loss_min_branded_share"]:
         factors = a["title"]["factor"]
         brand = factors[a["title"]["brand_after_total_loss_repair"]]
         w_clean = _winner(simulate(vehicle, val, a, force_title_factor=factors["clean"]).nets)
         w_brand = _winner(simulate(vehicle, val, a, force_title_factor=brand).nets)
-        total_loss_decides = w_clean != w_brand
-        if total_loss_decides:
+        if w_clean != w_brand:
+            tl_flip = (w_clean, w_brand)
             reasons.append(
-                "The total-loss threshold decides the outcome: the best path differs "
-                "depending on whether a repair would brand the title."
+                f"The total-loss threshold decides the outcome: the repair crosses it in "
+                f"{sim.branded_share:.1%} of draws, and the best path differs depending on "
+                "whether the title is branded."
             )
+    total_loss_decides = tl_flip is not None
 
-    explanation = _explain(vehicle, val, ranked, overlap, total_loss_decides, sim)
+    explanation = _explain(vehicle, val, ranked, overlap, tl_flip, sim)
     return Recommendation(
         vin=vehicle.vin,
         winner=win.path,
@@ -275,7 +278,7 @@ def _explain(
     val: Valuation,
     ranked: list[DispositionOption],
     overlap: float,
-    total_loss_decides: bool,
+    tl_flip: tuple[Path, Path] | None,
     sim: SimResult,
 ) -> str:
     win, run = ranked[0], ranked[1]
@@ -291,7 +294,7 @@ def _explain(
     )
     if win.path == Path.REPAIR_THEN_ACV and sim.branded_share > 0:
         text += (
-            f" In {sim.branded_share:.0%} of draws the repair crosses the threshold "
+            f" In {sim.branded_share:.1%} of draws the repair crosses the threshold "
             "and the title is branded."
         )
     if (
@@ -300,6 +303,11 @@ def _explain(
         and val.repair_ratio >= val.total_loss_threshold
     ):
         text += " Repair is past the total-loss threshold, so a repaired car would carry a brand."
-    if total_loss_decides:
-        text += " The total-loss threshold decides this outcome."
+    if tl_flip:
+        w_clean, w_brand = tl_flip
+        text += (
+            f" The total-loss threshold decides this outcome: if the repaired title stays "
+            f"clean, {LABEL[w_clean]} wins. If the repair brands the title, "
+            f"{LABEL[w_brand]} wins instead."
+        )
     return text

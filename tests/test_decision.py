@@ -119,3 +119,17 @@ def test_total_loss_only_decides_on_insurance_claims():
     a = default_assumptions()
     assert simulate(v, value_vehicle(v, fi, a), a).branded_share == 0
     assert not evaluate(v, fi).total_loss_decides
+
+
+def test_total_loss_decides_needs_material_branding_and_says_what_flips():
+    # Low threshold so the repair ratio (~43%) straddles it; repair wins only if unbranded.
+    a = _with("total_loss", default_threshold_pct=45)
+    v = veh(clean_value_cents=1_600_000, insurance_claim=True, region="ZZ")
+    fi = [f("frame", "crush", 0.4, 0.9), f("door", "dent", 0.6, 0.9)]
+    r = evaluate(v, fi, a)
+    assert r.total_loss_decides
+    assert "If the repair brands the title" in r.explanation
+    # Far from the threshold, a sliver of branded draws doesn't make it decisive.
+    far = evaluate(veh(clean_value_cents=3_000_000, insurance_claim=True, region="ZZ"), fi, a)
+    assert not far.total_loss_decides
+    assert "decides" not in far.explanation

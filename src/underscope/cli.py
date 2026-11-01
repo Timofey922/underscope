@@ -228,5 +228,69 @@ def confirm_cmd(
     typer.echo(f"\nSaved {review_file} and {html_path}.")
 
 
+@app.command("queue")
+def queue_cmd(
+    review_dir: Annotated[
+        FsPath, typer.Option("--review-dir", help="Where review JSON and HTML sheets are.")
+    ] = FsPath("reviews"),
+) -> None:
+    """List damage reviews, pending first, and write an index page linking every sheet."""
+    typer.echo(review.render_queue_text(review.list_reviews(review_dir)))
+    if review_dir.is_dir():
+        typer.echo(f"\nIndex: {review.write_queue_index(review_dir)}")
+
+
+@app.command("batch")
+def batch_cmd(
+    vehicle_dir: Annotated[
+        FsPath, typer.Argument(exists=True, file_okay=False, help="Folder of vehicle JSON files.")
+    ],
+    review_mode: Annotated[
+        review.ReviewMode,
+        typer.Option("--review-mode", help="Ask a checker for every vehicle, or only risky ones."),
+    ] = review.ReviewMode.ALL,
+    review_dir: Annotated[
+        FsPath, typer.Option("--review-dir", help="Where review JSON and HTML sheets go.")
+    ] = FsPath("reviews"),
+    out: Annotated[
+        FsPath | None, typer.Option("--out", help="Write decided recommendations as JSONL.")
+    ] = None,
+) -> None:
+    """Evaluate a folder of vehicles. Confirmed reviews are decided; the rest go to the queue.
+
+    Exits 3 while any vehicle is still waiting for a checker.
+    """
+    decided, waiting = [], []
+    for path in sorted(vehicle_dir.glob("*.json")):
+        vehicle = VehicleRecord(**json.loads(path.read_text()))
+        existing = review_dir / f"{vehicle.vin}.json"
+        req = review.load(existing) if existing.exists() else None
+        if req and req.status == "confirmed":
+            rec, status = evaluate(req.vehicle, req.findings), f"confirmed by {req.checker}"
+        else:
+            findings = MockDetector().detect(vehicle)
+            req = req or review.build_request(vehicle, findings, review_mode)
+            if review.needs_confirmation(review_mode, req.reasons):
+                review.save(req, review_dir)
+                waiting.append(vehicle.vin)
+                continue
+            rec, status = evaluate(vehicle, findings), "not sent for review (no risk signals)"
+        decided.append((rec, status))
+    for rec, status in decided:
+        typer.echo(f"{rec.vin:<20}{LABEL[rec.winner]:<28}{status}")
+    for vin in waiting:
+        typer.echo(f"{vin:<20}{'(awaiting checker)':<28}")
+    if out:
+        out.write_text("".join(
+            json.dumps({**json.loads(rec.model_dump_json()), "findings_status": status}) + "\n"
+            for rec, status in decided
+        ))  # fmt: skip
+    if review_dir.is_dir():
+        typer.echo(f"\nQueue: {review.write_queue_index(review_dir)}")
+    typer.echo(f"{len(decided)} decided, {len(waiting)} awaiting a checker.")
+    if waiting:
+        raise typer.Exit(AWAITING_CONFIRMATION)
+
+
 if __name__ == "__main__":
     app()

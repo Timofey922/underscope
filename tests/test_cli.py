@@ -89,3 +89,42 @@ def test_risky_mode_skips_quiet_vehicles(tmp_path):
     r = runner.invoke(app, ["evaluate", TOTAL, "--review-mode", "risky", "--no-interactive",
                             "--review-dir", str(tmp_path)])  # fmt: skip
     assert r.exit_code == AWAITING_CONFIRMATION
+
+
+def test_batch_queues_then_decides_confirmed(tmp_path):
+    reviews, out = tmp_path / "reviews", tmp_path / "out.jsonl"
+    args = ["batch", str(FIXTURE_DIR), "--review-dir", str(reviews), "--out", str(out)]
+    r = runner.invoke(app, args)
+    assert r.exit_code == AWAITING_CONFIRMATION
+    assert "0 decided, 3 awaiting" in r.output
+    assert (reviews / "index.html").exists()
+    runner.invoke(app, ["confirm", str(reviews / "FIXTOTAL000000001.json"), "--checker", "Lee"])
+    r = runner.invoke(app, args)
+    assert "1 decided, 2 awaiting" in r.output
+    rows = [json.loads(line) for line in out.read_text().splitlines()]
+    assert [x["vin"] for x in rows] == ["FIXTOTAL000000001"]
+    assert rows[0]["findings_status"] == "confirmed by Lee"
+
+
+def test_batch_risky_mode_decides_quiet_vehicles(tmp_path):
+    r = runner.invoke(app, ["batch", str(FIXTURE_DIR), "--review-mode", "risky",
+                            "--review-dir", str(tmp_path)])  # fmt: skip
+    assert "FIXDENT0000000001" in r.output and "no risk signals" in r.output
+    assert r.exit_code == AWAITING_CONFIRMATION  # the two adjuster cases still need a checker
+
+
+def test_queue_lists_pending_first_and_links_sheets(tmp_path):
+    runner.invoke(app, ["batch", str(FIXTURE_DIR), "--review-dir", str(tmp_path)])
+    runner.invoke(app, ["confirm", str(tmp_path / "FIXBORDER00000001.json"), "--checker", "Lee"])
+    r = runner.invoke(app, ["queue", "--review-dir", str(tmp_path)])
+    assert r.exit_code == 0, r.output
+    assert "2 pending, 1 confirmed" in r.output
+    lines = [x for x in r.output.splitlines() if x.startswith("FIX")]
+    assert lines[-1].startswith("FIXBORDER00000001")  # confirmed sorts last
+    page = (tmp_path / "index.html").read_text()
+    assert 'href="FIXDENT0000000001.html"' in page and "Lee at" in page
+
+
+def test_queue_with_no_reviews(tmp_path):
+    r = runner.invoke(app, ["queue", "--review-dir", str(tmp_path / "none")])
+    assert r.exit_code == 0 and "No reviews." in r.output

@@ -378,3 +378,90 @@ with <code>--add panel:type:severity</code>, <code>--remove N</code>,
         '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n'
         f"{head}</head><body>{body}</body></html>\n"
     )
+
+
+# ------------------------------------------------------------------ queue
+
+
+def list_reviews(directory: str | FsPath) -> list[tuple[FsPath, ReviewRequest]]:
+    """Every review request in a directory, pending first, then by VIN."""
+    d = FsPath(directory)
+    found = [(p, load(p)) for p in sorted(d.glob("*.json"))] if d.is_dir() else []
+    return sorted(found, key=lambda pr: (pr[1].status != "pending", pr[1].vin))
+
+
+def render_queue_text(reviews: list[tuple[FsPath, ReviewRequest]]) -> str:
+    if not reviews:
+        return "No reviews."
+    pending = sum(r.status == "pending" for _, r in reviews)
+    lines = [f"{pending} pending, {len(reviews) - pending} confirmed", ""]
+    lines.append(f"{'VIN':<20}{'Status':<11}{'Damaged':>8}{'Verify':>8}  Checker / reasons")
+    for _path, r in reviews:
+        areas = r.areas()
+        damaged = sum(a.status == AreaStatus.DAMAGED for a in areas)
+        verify = sum(a.status == AreaStatus.VERIFY for a in areas)
+        who = r.checker or (r.reasons[0] if r.reasons else "")
+        lines.append(f"{r.vin:<20}{r.status:<11}{damaged:>8}{verify:>8}  {who}")
+    return "\n".join(lines)
+
+
+def render_queue_html(reviews: list[tuple[FsPath, ReviewRequest]]) -> str:
+    e = html.escape
+    rows = []
+    for path, r in reviews:
+        v = r.vehicle
+        areas = r.areas()
+        damaged = ", ".join(a.name for a in areas if a.status == AreaStatus.DAMAGED) or "none"
+        verify = ", ".join(a.name for a in areas if a.status == AreaStatus.VERIFY) or "none"
+        who = e(f"{r.checker} at {r.confirmed_at}") if r.checker else "waiting for a checker"
+        rows.append(
+            f'<tr class="{r.status}"><td><a href="{e(path.with_suffix(".html").name)}">'
+            f"{e(r.vin)}</a><div class=\"muted\">{e(f'{v.year} {v.make} {v.model}')}</div></td>"
+            f'<td><span class="pill {r.status}">{r.status}</span></td>'
+            f"<td>{e(damaged)}</td><td>{e(verify)}</td><td>{who}</td></tr>"
+        )
+    pending = sum(r.status == "pending" for _, r in reviews)
+    body = "".join(rows) or '<tr><td colspan="5">No reviews yet.</td></tr>'
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Damage review queue</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+:root {{ --bg:#fbfbfd; --fg:#1b1c22; --muted:#62646f; --line:#d8dae3; --panel:#eef0f5;
+  --pending:#b5520f; --done:#227a4a; }}
+@media (prefers-color-scheme: dark) {{ :root:not([data-theme="light"]) {{ --bg:#15161b;
+  --fg:#eceef3; --muted:#a2a5b2; --line:#363946; --panel:#232631; --pending:#f0a060;
+  --done:#6cc995; color-scheme:dark; }} }}
+:root[data-theme="dark"] {{ --bg:#15161b; --fg:#eceef3; --muted:#a2a5b2; --line:#363946;
+  --panel:#232631; --pending:#f0a060; --done:#6cc995; color-scheme:dark; }}
+body {{ margin:0; background:var(--bg); color:var(--fg);
+  font:15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }}
+main {{ max-width:1100px; margin:0 auto; padding-block:24px;
+  padding-left:max(16px, env(safe-area-inset-left, 0px));
+  padding-right:max(16px, env(safe-area-inset-right, 0px)); }}
+h1 {{ font-size:20px; margin:0 0 4px; }}
+a {{ color:inherit; }}
+.muted {{ color:var(--muted); font-size:13px; }}
+.wrap {{ overflow-x:auto; margin-top:16px; }}
+table {{ width:100%; border-collapse:collapse; }}
+td, th {{ text-align:left; padding:8px; border-bottom:1px solid var(--line); vertical-align:top; }}
+th {{ font-size:13px; color:var(--muted); font-weight:600; }}
+.pill {{ padding:2px 8px; border-radius:999px; font-size:13px; border:1px solid currentColor; }}
+.pill.pending {{ color:var(--pending); }} .pill.confirmed {{ color:var(--done); }}
+</style></head><body><main>
+<h1>Damage review queue</h1>
+<div class="muted">{pending} pending, {len(reviews) - pending} confirmed. Open a VIN to see its
+sheet; confirm with <code>underscope confirm &lt;VIN&gt;.json --checker NAME</code>.</div>
+<div class="wrap"><table>
+<tr><th>Vehicle</th><th>Status</th><th>Damaged areas</th><th>To verify</th><th>Checker</th></tr>
+{body}</table></div></main></body></html>
+"""
+
+
+def write_queue_index(directory: str | FsPath) -> FsPath:
+    d = FsPath(directory)
+    d.mkdir(parents=True, exist_ok=True)
+    out = d / "index.html"
+    out.write_text(render_queue_html(list_reviews(d)))
+    return out

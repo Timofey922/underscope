@@ -7,7 +7,7 @@
 - [x] M4 Valuation
 - [x] M5 Decision engine (subagent review before commit)
 - [x] M6 Data (fixtures, stubs, synthetic generator)
-- [ ] M7 CLI
+- [x] M7 CLI
 - [ ] M8 Proof (backtest, case studies)
 - [ ] M9 Docs
 
@@ -26,4 +26,4 @@
 none
 
 ## Next step
-M7: typer CLI src/underscope/cli.py: `underscope evaluate vehicle.json` (+ --json).
+M8: backtest (src/underscope/backtest.py -> reports/backtest.md) and case studies (reports/case_studies.md); need a borderline fixture (data/fixtures/borderline.json).

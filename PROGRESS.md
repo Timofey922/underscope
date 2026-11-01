@@ -81,6 +81,13 @@ type accuracy, severity MAE, calibration + Brier, frame misses, clean-photo fals
 saved predictions re-scored free). `evaluate`/`batch` take `--detector claude --photo-root`.
 Not yet run on a single real photo.
 
+Stage 2 (autonomous hour, 2026-11-01): side on findings and cross-photo merging in the vision
+detector (the same dent seen in two photos was costed twice); `underscope label` (resumable
+ground-truth labeling, `--prefill` from predictions); side-aware matching in the evaluator;
+`underscope import-coco` with a mapping YAML and a mapping for the Humans in the Loop class
+names; `detect-eval --batch/--collect` (Message Batches, half price); Pillow in the vision
+extra to downscale photos over 5 MB or 1568 px.
+
 ### Detector test data (needs the user)
 | Dataset | Labels | License / access | Verdict |
 |---|---|---|---|
@@ -90,14 +97,15 @@ Not yet run on a single real photo.
 | Roboflow "car damaged part segmentation" | damaged-part classes | Page blocked automated access; license and provenance unverified | Not verified |
 
 Plan for the recommended set once the user has it (the form takes their contact details, so
-they must request it): convert damage labels to our format (Dent -> dent, Scratch/Paint
-chip/Flaking -> scratch, Cracked -> crack, Broken/Missing part -> broken; Corrosion unmapped),
-score with `--match-by type` on a small `--limit` first, then label panels on a sample (the
-review sheet can serve as the labeling tool) to score panel placement and severity.
+they must request it): check its annotation format (the importer handles COCO; the shipped
+mapping uses the class names from the dataset page), `import-coco` with
+config/coco_mapping.humans_in_the_loop.yaml, score with `--match-by type --limit 20` first, then
+`underscope label --prefill` a sample to get panel, side and severity labels and score those.
 
 ### Proposed CLAUDE.md wording (not applied)
 "Few dependencies: pydantic, numpy, pandas, pyyaml, typer, pytest. Optional extras may add
-more for a specific feature (`vision`: anthropic); the core install and tests must not need them."
+more for a specific feature (`vision`: anthropic, pillow); the core install and tests must not
+need them."
 
 ## Decisions for humans
 - Panels aren't left/right in the model, so the diagram colors both sides of a sided panel.

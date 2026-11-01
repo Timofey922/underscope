@@ -110,10 +110,12 @@ Vehicle JSON fields:
 
 A `DamageFinding` has `panel`, `damage_type` (scratch, dent, crack, crush, broken), `severity`
 (0-1), `confidence` (0-1, read as the probability the damage exists), an optional `photo_ref`,
-and `verified` (set once a human checker confirms or adds it).
+an optional `side` (left, right, center), and `verified` (set once a human checker confirms or
+adds it).
 
 Panels: front bumper, rear bumper, hood, fender, door, quarter panel, roof, windshield, frame.
-Panels have no left/right side in the model.
+Repair costs don't depend on side; side is there so two damaged doors aren't mistaken for one
+door seen in two photos.
 
 ## 2. Perception (`perception.py`, `vision.py`, `detector_eval.py`)
 
@@ -131,6 +133,11 @@ Panels have no left/right side in the model.
   over 5 MB, declined, cut off) raises `DetectionError`. The server-side refusal fallback is on,
   so a declined photo is retried on another model before failing.
 
+  Photos overlap, so the detector merges findings across a vehicle's photos: one finding per
+  panel, side and damage type, at its worst severity and most confident view. Without that, a
+  dent visible from two angles would be costed twice. Photos over 5 MB or longer than 1568 px
+  are shrunk (upright, JPEG) before sending, which needs Pillow from the `vision` extra.
+
 **Scoring a detector.** `underscope detect-eval LABELS --photo-root DIR` runs a detector on
 labeled photos and reports:
 
@@ -145,6 +152,21 @@ Labels use the `MockDetector` format (`{photo_ref: [finding, ...]}`). `--match-b
 on damage type alone, for datasets whose damage photos have no panel labels. A Claude run prints
 a cost estimate and needs `--yes`; afterwards it reports the actual cost from token usage.
 `--save` keeps the predictions and `--predictions` re-scores them later without new API calls.
+`--batch` submits the photos as one Message Batch at half price (results within 24 hours) and
+saves a state file; `--collect STATE` scores the results once the batch has ended.
+
+**Getting labels.**
+
+- `underscope import-coco ANNOTATIONS.json --mapping MAP.yaml` converts COCO annotations. The
+  mapping YAML names what each category means (damage type, or panel and side, or null to
+  ignore). Damage goes to the labeled part whose box covers most of it, with severity as the
+  share of the part covered; without part labels, a stated default panel applies and only
+  `--match-by type` scoring is meaningful. `config/coco_mapping.humans_in_the_loop.yaml` maps
+  the recommended dataset's class names.
+- `underscope label PHOTO_DIR --labels labels.json` is a resumable terminal session for
+  recording the true damage in each photo (panel, side, type, severity), saved after every
+  photo. `--prefill predictions.json` starts each photo from the model's answer, which is
+  faster but can anchor the labeler.
 
 ## 3. Human checker (`review.py`, `cli.py`)
 

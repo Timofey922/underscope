@@ -43,6 +43,10 @@ vehicle goes to the checker.
     [--add frame:dent:0.6] [--remove 2] [--undercarriage yes|no] [--engine-audio yes|no]
 .venv/bin/underscope evaluate data/fixtures/total_loss.json --confirmed reviews/FIXTOTAL000000001.json
 
+# Many vehicles: decide the confirmed ones, queue the rest (exit 3 while any are waiting).
+.venv/bin/underscope batch data/fixtures --out decisions.jsonl
+.venv/bin/underscope queue          # list reviews, pending first; writes reviews/index.html
+
 # Variants
 .venv/bin/underscope evaluate data/fixtures/dent_600.json --review-mode risky      # only risky cars
 .venv/bin/underscope evaluate data/fixtures/total_loss.json --json --skip-confirm  # batch/testing
@@ -80,7 +84,7 @@ flowchart LR
 | `config.py` | Loads and schema-checks `config/assumptions.yaml` |
 | `valuation.py` | Damage + vehicle to values and repair-cost ranges (integer cents) |
 | `decision.py` | Monte Carlo simulation of each path, ranking, review flags, flip conditions, explanation |
-| `cli.py` | `underscope evaluate` (with the review gate) and `underscope confirm` |
+| `cli.py` | `underscope evaluate` (with the review gate), `confirm`, `queue` and `batch` |
 | `data.py` | Fixture source, ACV/Copart stubs, synthetic generator, perturbed "true world" |
 | `backtest.py`, `sensitivity.py`, `case_studies.py` | Evaluation reports in `reports/` |
 
@@ -154,6 +158,13 @@ Confirming marks every finding `verified` with confidence 1.0 and records the ch
 The output says who confirmed the findings. `--skip-confirm` bypasses the gate and the output
 says the findings were not confirmed.
 
+**Many vehicles.** `underscope batch DIR` goes through a folder of vehicle files. A vehicle with
+a confirmed review is decided; one without gets a pending review (an in-progress review is kept,
+not overwritten). It prints one line per vehicle, can write the decisions as JSONL (`--out`),
+and exits 3 while any vehicle is waiting. `underscope queue` lists every review, pending first,
+and writes `reviews/index.html`, a page linking each car's sheet with its damaged and
+to-verify areas.
+
 ## 4. Valuation (`valuation.py`)
 
 All money is integer cents. Ranges are `[low, expected, high]`.
@@ -197,7 +208,9 @@ paths are therefore paired, and results are reproducible.
   plus extras for flagged or missing inspections. On a clean-title insurance claim, a draw whose
   repair cost crosses the threshold is branded.
 - **As-is on ACV:** `as-is value × shock × (title draw / expected title factor) - ACV fee
-  - transport - holding × days`.
+  - transport - holding × days`. In a draw where the insurer totals the car, the buyer gets a
+  salvage certificate, so the salvage title factor applies. The as-is sale never falls below
+  the salvage sale in the same draw (a buyer can always salvage the car).
 - **Salvage on Copart:** `salvage × shock - Copart fee - transport - holding × days`.
 - **Part out:** `parts gross × shock × sell-through - teardown - storage × days - tow`.
 
@@ -205,6 +218,14 @@ Fees are a flat amount plus a % of the sale price. Every path's components (sale
 transport, holding, ...) are kept, and they sum exactly to the net in every draw.
 
 **Ranking.** Paths are ranked by expected net. P10, P50 and P90 come from the same draws.
+
+**Persona answer.** Each recommendation opens with a direct answer to the persona's question:
+
+- *Dealer* (no claim): "Repair pays back" or "Repair does not pay back", with the average
+  difference between repairing and selling as-is and the share of draws where repair is ahead.
+- *Adjuster* (insurance claim): "Total loss" when repair crosses the regional threshold in at
+  least 80% of draws, "Not a total loss" below 20%, otherwise "Borderline total loss" (a firm
+  repair estimate settles it). The expected repair ratio and threshold are stated either way.
 
 **Review flags** (`needs_human_review`), any of:
 
@@ -253,6 +274,9 @@ It reports every problem at once.
   the unflagged cars.
 - **Sensitivity:** scales each key placeholder from 0.5x to 1.5x per fixture and shows where
   the winner flips, plus the break-even as-is discount multiple at which repair wins.
+- **Stratified set:** 600 vehicles, 200 per damage band, picked from a 3,000-vehicle pool made
+  by the same generator, with both truths. The mixed set has only 47 heavy cars, so this is
+  where the hard cases are judged.
 - **Case studies:** the $600 dent (dealer), a borderline write-off at 72% repair ratio
   (adjuster), and an obvious total loss (adjuster).
 
@@ -274,24 +298,40 @@ It reports every problem at once.
 
 ## Current results (synthetic only)
 
+Mixed set (500 vehicles, mostly light damage):
+
 | | Same-model truth | Misspecified truth |
 |---|---|---|
-| Accuracy vs oracle | 90.4% | 90.2% |
-| Average regret per vehicle | $57 | $80 |
-| Best fixed policy ("always as-is") regret | $110 | $76 |
-| Human-review rate | 6.0% | 6.0% |
-| Unflagged cars: UnderScope vs always as-is | $39 vs $84 | $55 vs $57 |
+| Accuracy vs oracle | 90.6% | 90.6% |
+| Average regret per vehicle | $60 | $84 |
+| Best fixed policy ("always as-is") regret | $106 | $71 |
+| Human-review rate | 5.4% | 5.4% |
+| Unflagged cars: UnderScope vs always as-is | $35 vs $78 | $53 vs $53 |
+
+Stratified set (600 vehicles, 200 per damage band):
+
+| | Same-model truth | Misspecified truth |
+|---|---|---|
+| Accuracy vs oracle | 84.2% | 83.7% |
+| Average regret per vehicle | $84 | $80 |
+| Best fixed policy ("always as-is") regret | $202 | $90 |
+| Human-review rate | 11.3% | 11.3% |
+| Unflagged cars: UnderScope vs always as-is | $60 vs $184 | $50 vs $80 |
 
 What it means:
 
-- When its assumptions are wrong, the engine does not beat "always sell as-is" overall. On the
-  94% of cars it doesn't flag, it barely does. Its present value is **triage**: knowing which cars
-  need a human.
-- Mid-damage cars (15-50% repair ratio) are where it does worst under misspecification.
+- On the mixed set, mostly easy light-damage cars where "sell as-is" is nearly always right,
+  the engine only matches the trivial policy when its assumptions are wrong. With the damage
+  bands balanced, it beats that policy even when misspecified ($80 vs $90).
+- Mid damage is close to a toss-up between the engine and "always as-is" ($29 vs $18
+  misspecified).
+- Heavy damage is the hard band, at about 61% accuracy. Most misses are as-is vs part-out. Even
+  with the true findings and a correct model, accuracy only reaches 66%, because part-out
+  outcomes vary widely (gross parts value and sell-through ranges). Real dismantler recovery
+  data is what would narrow this; perception adds about 5 points of error on top.
 - With the untuned placeholders repair rarely wins. For the dent, repair wins only if buyers
   discount the as-is car by about 2.4x the repair cost (placeholder: 1.3x). That one number,
   measurable from ACV sale data, answers the dealer's question.
-- Part-out vs as-is on heavily damaged cars depends on the parts placeholders.
 
 Reports: `reports/backtest.md`, `reports/sensitivity.md`, `reports/case_studies.md`.
 
@@ -301,9 +341,10 @@ Reports: `reports/backtest.md`, `reports/sensitivity.md`, `reports/case_studies.
   needed from ACV and Copart (via a data partnership; the project never scrapes).
 - `MockDetector` reads labels and never sees pixels. A real detector, scored on labeled photos,
   would also give sides and locations, so the review sheet could mark exact spots on the photos.
-- The synthetic damage mix is mostly light damage, and the heavy band has only 47 vehicles.
-- On an insurance total loss, the as-is and Copart paths don't yet model the insurer's
-  salvage title.
+- Synthetic outcomes are a single realized draw per path, so per-vehicle results are noisy;
+  the heavy band's 66% ceiling is mostly that noise.
+- On a totaled claim the model doesn't yet include the insurer's own costs (payout to the
+  owner, owner-retained salvage); it compares dispositions of the car only.
 
 ## Repository layout
 

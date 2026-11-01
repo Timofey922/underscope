@@ -26,6 +26,7 @@ them. Current work is interactive; see the review log below.
 | F11 | Repaired-value haircut was a flat 6% regardless of damage (decided by user: scale with severity) | `repaired_value_haircut_pct_at_total_damage` (PLACEHOLDER 20%) x damage score |
 | F12 | Title factors were exact points, hiding the risk of repairing salvage cars to rebuilt; salvage cars (10% of set) drove ~60% of misspecified regret | PLACEHOLDER [low, expected, high] ranges, one shared draw across statuses |
 | F13 | Review flag compared the winner only to the runner-up; a third path (e.g. part-out) could be the real threat | Flag on P(any other path beats the winner) |
+| F14 | A totaled insurance claim still sold as-is on a clean title | Branded draws use the salvage factor; as-is sale floored at the salvage sale per draw |
 
 Checked and fine: integer-cents arithmetic, common random numbers, seeding, fee signs.
 Confidence-weighted expected repair cost assumes confidence = P(damage exists); a real
@@ -35,15 +36,13 @@ detector's confidence must be calibrated for that to hold.
 - With the untuned placeholders, repair rarely wins. It bears ~1.15x repair (hidden-damage
   reserve), a damage-scaled haircut and extra holding, while buyers only discount as-is cars
   by 1.3x repair. The dent case needs a ~2.4x discount for repair to win.
-- Under a misspecified world the engine does not beat "always sell as-is" overall ($80 vs
-  $76 regret per vehicle). On the 94% it doesn't flag, it barely does ($55 vs $57); the
-  flagged 6% carry $472 average regret. Today its value is triage: knowing which cars need
-  a human.
-- Part-out vs as-is on heavy damage depends on the parts placeholders.
-- Mid band (15-50% repair ratio) is where it loses most under misspecification. The costly
-  misses traced to (a) salvage-title repair risk (now uncertain and flagged more), (b) parts
-  value being off (placeholder), (c) a missed frame finding (perception). Heavy band has only
-  47 vehicles; its numbers are noisy.
+- Mixed set (mostly light damage), misspecified truth: the engine doesn't beat "always as-is"
+  ($84 vs $71); on unflagged cars it ties ($53 vs $53).
+- Stratified set (200 per band), misspecified truth: it does beat it ($80 vs $90; unflagged
+  $50 vs $80). The mixed-set result was driven by easy cases where as-is is nearly always right.
+- Mid band is close to a toss-up with "always as-is". Heavy band is ~61% accurate; even with true
+  findings and a correct model the ceiling is 66%, because part-out outcomes vary widely. That's
+  irreducible without dismantler data; perception adds ~5 points.
 
 ## Human-in-the-loop damage review (2026-11-01, user request)
 A checker confirms findings before any decision: `underscope.review`, `evaluate` gate
@@ -55,6 +54,20 @@ findings become verified with confidence 1.0. Exit code 3 = awaiting confirmatio
 "Risky" reuses existing thresholds; no new numbers were added (config/assumptions.yaml was not
 in the approved edit list).
 
+## Autonomous session (2026-11-01, "continue building for 1 hour")
+Read the user's instruction as approval to edit existing project code, tests and docs for this
+work; CLAUDE.md, .gitignore and pyproject.toml were left alone. Added:
+- F14 above (totaled claim sells as-is on a salvage title).
+- Persona answer on every recommendation (`Recommendation.answer`): dealer "repair pays back /
+  does not pay back" with margin and share of draws; adjuster "total loss / borderline / not",
+  using a wording cut-off of 80% / 20% of draws (`decision.TOTAL_LOSS_CLEAR`, not a market number).
+- `underscope queue` (reviews list + reviews/index.html) and `underscope batch DIR` (decide
+  confirmed, queue the rest, `--out` JSONL, exit 3 while any wait).
+- Stratified synthetic sets and a stratified section in reports/backtest.md.
+
+GitHub's main has 2 commits local main doesn't (PR #1 merge and a CLAUDE.md edit restoring
+"within 15 seconds"); not pulled or merged. Expect a CLAUDE.md conflict when syncing.
+
 ## Decisions for humans
 - Panels aren't left/right in the model, so the diagram colors both sides of a sided panel.
   Real detector output with sides or pixel boxes would let the sheet highlight exact spots
@@ -62,8 +75,11 @@ in the approved edit list).
 - Haircut now scales with damage score (repair cost / clean value). 20% at full damage is
   anchored just under the rebuilt-title discount, not tuned. A structural (frame) premium on
   top is a possible refinement.
-- `insurance_claim` defaults to false (dealer). On a claim, branding = `rebuilt` after repair;
-  the as-is/Copart paths don't yet model the insurer's salvage title on a total loss.
+- `insurance_claim` defaults to false (dealer). On a claim that crosses the threshold, repair
+  leads to a `rebuilt` title and as-is sells on a salvage title. The insurer's own costs (owner
+  payout, owner-retained salvage) aren't modeled.
+- Adjuster wording cut-off (80% of draws = "total loss") is a presentation choice; change
+  `decision.TOTAL_LOSS_CLEAR` if adjusters want a different bar.
 - Review threshold 0.35 now applies to P(any other path beats the winner) (6% review rate on
   the synthetic set). Raising or lowering it trades review workload for regret.
 - Part-out still deducts a tow cost (transport.parts_cents), beyond the TASK.md formula.
@@ -74,7 +90,7 @@ in the approved edit list).
   denied; not retried. The same flow is covered by tests/test_cli.py via CliRunner.
 
 ## Next step
-Perception misses dominate what's left (a missed frame finding cost ~$3.7k on one car). Next:
-model detector miss risk explicitly (e.g. an allowance or a review trigger when high-risk
-panels like frame/undercarriage aren't covered by photos). Real data
-(docs/DATA_REQUIREMENTS.md) remains the main unlock.
+The engine is now limited mostly by data, not logic: parts-value variance caps the heavy band,
+and the dent question hinges on the as-is discount multiple. Real data
+(docs/DATA_REQUIREMENTS.md) is the main unlock. Without it, the next useful code step is a real
+DamageDetector behind the protocol, scored against labeled photos.

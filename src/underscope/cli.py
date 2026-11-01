@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+from enum import Enum
 from pathlib import Path as FsPath
 from typing import Annotated
 
@@ -14,6 +15,19 @@ from underscope import review
 from underscope.decision import LABEL, evaluate
 from underscope.models import Recommendation, VehicleRecord
 from underscope.perception import MockDetector
+
+
+class DetectorName(str, Enum):
+    MOCK = "mock"
+    CLAUDE = "claude"
+
+
+def _make_detector(name: DetectorName, labels: FsPath | None, photo_root: FsPath):
+    if name == DetectorName.CLAUDE:
+        from underscope.vision import ClaudeVisionDetector
+
+        return ClaudeVisionDetector(photo_root)
+    return MockDetector.from_file(labels) if labels else MockDetector()
 
 AWAITING_CONFIRMATION = 3  # exit code: findings written for a checker, decision not made yet
 
@@ -67,6 +81,26 @@ def _load_vehicle(path: FsPath) -> VehicleRecord:
         first = err.errors()[0] if isinstance(err, ValidationError) else {"msg": str(err)}
         where = ".".join(str(x) for x in first.get("loc", ())) or "file"
         raise ValueError(f"invalid vehicle file {path}: {where}: {first['msg']}") from err
+
+
+def _detect(detector, vehicle: VehicleRecord):
+    """Run the detector; a photo it can't analyze ends the command with a clear message."""
+    try:
+        return detector.detect(vehicle)
+    except Exception as err:
+        from underscope.vision import DetectionError
+
+        if not isinstance(err, DetectionError):
+            raise
+        typer.echo(f"Damage detection failed: {err}", err=True)
+        raise typer.Exit(2) from err
+
+
+def _unmapped_reasons(detector) -> list[str]:
+    """Damage the detector saw but couldn't place on a panel goes to the checker."""
+    notes = getattr(detector, "notes", {})
+    return [f"Seen in {ref} but not on a modeled panel: {note}"
+            for ref, items in notes.items() for note in items]  # fmt: skip
 
 
 def _yes_no(text: str) -> bool:
@@ -153,6 +187,13 @@ def evaluate_cmd(
     review_dir: Annotated[
         FsPath, typer.Option("--review-dir", help="Where review JSON and HTML sheets go.")
     ] = FsPath("reviews"),
+    detector_name: Annotated[
+        DetectorName,
+        typer.Option("--detector", help="mock reads labels; claude looks at the photos."),
+    ] = DetectorName.MOCK,
+    photo_root: Annotated[
+        FsPath, typer.Option("--photo-root", help="Folder the vehicle's photo_refs are in.")
+    ] = FsPath("."),
 ) -> None:
     """Evaluate disposition paths for one vehicle, after a human checker confirms the damage."""
     try:
@@ -160,13 +201,13 @@ def evaluate_cmd(
     except ValueError as err:
         typer.echo(str(err), err=True)
         raise typer.Exit(2) from err
-    detector = MockDetector.from_file(labels) if labels else MockDetector()
+    detector = _make_detector(detector_name, labels, photo_root)
     status = "Findings NOT confirmed by a human checker."
     if confirmed:
         req = review.load(confirmed)
         if req.vin != vehicle.vin:
             raise typer.BadParameter(f"review is for VIN {req.vin}, not {vehicle.vin}")
-        if review.is_stale(req, vehicle, detector.detect(vehicle)):
+        if review.is_stale(req, vehicle, _detect(detector, vehicle)):
             typer.echo(
                 f"The vehicle data or its detected damage changed since {confirmed} was "
                 f"reviewed. Send it back to a checker:\n  underscope evaluate {vehicle_file}",
@@ -180,8 +221,9 @@ def evaluate_cmd(
         vehicle, findings = req.vehicle, req.findings
         status = f"Findings confirmed by {req.checker} at {req.confirmed_at}."
     else:
-        findings = detector.detect(vehicle)
+        findings = _detect(detector, vehicle)
         req = review.build_request(vehicle, findings, review_mode)
+        req.reasons += _unmapped_reasons(detector)
         if not skip_confirm and review.needs_confirmation(review_mode, req.reasons):
             json_path, html_path = review.save(req, review_dir)
             typer.echo(review.render_text(req), err=as_json)
@@ -279,11 +321,19 @@ def batch_cmd(
     out: Annotated[
         FsPath | None, typer.Option("--out", help="Write decided recommendations as JSONL.")
     ] = None,
+    detector_name: Annotated[
+        DetectorName,
+        typer.Option("--detector", help="mock reads labels; claude looks at the photos."),
+    ] = DetectorName.MOCK,
+    photo_root: Annotated[
+        FsPath, typer.Option("--photo-root", help="Folder the vehicles' photo_refs are in.")
+    ] = FsPath("."),
 ) -> None:
     """Evaluate a folder of vehicles. Confirmed reviews are decided; the rest go to the queue.
 
     Exits 3 while any vehicle is still waiting for a checker.
     """
+    detector = _make_detector(detector_name, None, photo_root)
     decided, waiting, invalid = [], [], []
     for path in sorted(vehicle_dir.glob("*.json")):
         try:
@@ -291,7 +341,11 @@ def batch_cmd(
         except ValueError as err:
             invalid.append(str(err))
             continue
-        findings = MockDetector().detect(vehicle)
+        try:
+            findings = detector.detect(vehicle)
+        except Exception as err:  # noqa: BLE001 - one bad vehicle shouldn't stop the batch
+            invalid.append(f"{path}: damage detection failed: {err}")
+            continue
         existing = review_dir / f"{vehicle.vin}.json"
         req = review.load(existing) if existing.exists() else None
         if req and review.is_stale(req, vehicle, findings):
@@ -299,7 +353,9 @@ def batch_cmd(
         if req and req.status == "confirmed":
             rec, status = evaluate(req.vehicle, req.findings), f"confirmed by {req.checker}"
         else:
-            req = req or review.build_request(vehicle, findings, review_mode)
+            if req is None:
+                req = review.build_request(vehicle, findings, review_mode)
+                req.reasons += _unmapped_reasons(detector)
             if review.needs_confirmation(review_mode, req.reasons):
                 review.save(req, review_dir)
                 waiting.append(vehicle.vin)
@@ -322,6 +378,83 @@ def batch_cmd(
     typer.echo(f"{len(decided)} decided, {len(waiting)} awaiting a checker.")
     if waiting:
         raise typer.Exit(AWAITING_CONFIRMATION)
+
+
+@app.command("detect-eval")
+def detect_eval_cmd(
+    labels: Annotated[
+        FsPath, typer.Argument(exists=True, help="True labels JSON: photo ref -> findings.")
+    ],
+    photo_root: Annotated[
+        FsPath, typer.Option("--photo-root", help="Folder the labeled photos are in.")
+    ] = FsPath("."),
+    detector_name: Annotated[
+        DetectorName, typer.Option("--detector", help="Detector to score.")
+    ] = DetectorName.CLAUDE,
+    predictions: Annotated[
+        FsPath | None,
+        typer.Option("--predictions", exists=True,
+                     help="Score saved predictions instead of running a detector (free)."),
+    ] = None,  # fmt: skip
+    save: Annotated[
+        FsPath | None, typer.Option("--save", help="Save the detector's predictions here.")
+    ] = None,
+    limit: Annotated[
+        int | None, typer.Option("--limit", min=1, help="Only the first N labeled photos.")
+    ] = None,
+    yes: Annotated[
+        bool, typer.Option("--yes", help="Confirm a paid run (the claude detector).")
+    ] = False,
+    report: Annotated[
+        FsPath | None, typer.Option("--report", help="Also write the report as Markdown.")
+    ] = None,
+) -> None:
+    """Score a damage detector against labeled photos."""
+    from underscope import detector_eval as de
+
+    truth = de.load_findings(labels)
+    refs = sorted(truth)[:limit] if limit else sorted(truth)
+    truth = {r: truth[r] for r in refs}
+    errors: dict[str, str] = {}
+    spent = None
+    if predictions:
+        pred = de.load_findings(predictions)
+    elif detector_name == DetectorName.CLAUDE:
+        from underscope.vision import ClaudeVisionDetector, estimated_cost_usd
+
+        estimate = estimated_cost_usd(len(refs))
+        if not yes:
+            typer.echo(
+                f"This sends {len(refs)} photos to Claude, roughly ${estimate:,.2f}. "
+                "Re-run with --yes to go ahead (use --limit to try a few first)."
+            )
+            raise typer.Exit(1)
+        detector = ClaudeVisionDetector(photo_root)
+        pred, errors = de.run_detector(detector, refs)
+        spent = detector.spent_usd()
+    else:
+        pred, errors = de.run_detector(_MockPhotoDetector(labels), refs)
+    if save and not predictions:
+        de.save_findings(pred, save)
+    text = de.render_report(de.score(truth, pred, errors))
+    if spent is not None:
+        text += f"\nAPI cost of this run: ${spent:,.2f} (from reported token usage).\n"
+    typer.echo(text)
+    if report:
+        report.parent.mkdir(parents=True, exist_ok=True)
+        report.write_text(text)
+
+
+class _MockPhotoDetector:
+    """Per-photo view of the label file; scores 100% by construction (pipeline check)."""
+
+    def __init__(self, labels: FsPath):
+        from underscope.detector_eval import load_findings
+
+        self.labels = load_findings(labels)
+
+    def detect_photo(self, ref: str):
+        return self.labels.get(ref, [])
 
 
 if __name__ == "__main__":

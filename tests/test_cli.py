@@ -166,3 +166,77 @@ def test_evaluate_reports_invalid_vehicle_cleanly(tmp_path):
     bad.write_text('{"vin": "X"}')
     r = runner.invoke(app, ["evaluate", str(bad), "--skip-confirm"])
     assert r.exit_code == 2 and "invalid" in r.output and "Traceback" not in r.output
+
+
+def _labels(tmp_path):
+    labels = {"a.jpg": [{"panel": "door", "damage_type": "dent", "severity": 0.4,
+                         "confidence": 1.0}], "b.jpg": []}  # fmt: skip
+    path = tmp_path / "labels.json"
+    path.write_text(json.dumps(labels))
+    return path
+
+
+def test_detect_eval_mock_scores_perfectly(tmp_path):
+    r = runner.invoke(app, ["detect-eval", str(_labels(tmp_path)), "--detector", "mock"])
+    assert r.exit_code == 0, r.output
+    assert "Panel recall (real damage found) | 100.0%" in r.output
+
+
+def test_detect_eval_claude_needs_yes_and_shows_estimate(tmp_path):
+    r = runner.invoke(app, ["detect-eval", str(_labels(tmp_path)), "--detector", "claude"])
+    assert r.exit_code == 1
+    assert "2 photos" in r.output and "$" in r.output and "--yes" in r.output
+
+
+def test_detect_eval_scores_saved_predictions(tmp_path):
+    pred = tmp_path / "pred.json"
+    pred.write_text(json.dumps({"a.jpg": [], "b.jpg": []}))
+    report = tmp_path / "r.md"
+    r = runner.invoke(app, ["detect-eval", str(_labels(tmp_path)), "--predictions", str(pred),
+                            "--report", str(report)])  # fmt: skip
+    assert r.exit_code == 0 and "Panel recall (real damage found) | 0.0%" in report.read_text()
+
+
+def _fake_claude(monkeypatch, *replies):
+    import underscope.vision as vision
+    from test_vision import FakeClient
+
+    client = FakeClient(*replies)
+    real = vision.ClaudeVisionDetector
+    monkeypatch.setattr(vision, "ClaudeVisionDetector",
+                        lambda root, **kw: real(root, client=client, **kw))  # fmt: skip
+    return client
+
+
+def test_evaluate_with_claude_detector_sends_unmapped_damage_to_checker(tmp_path, monkeypatch):
+    from test_vision import PNG, reply
+
+    (tmp_path / "door.jpg").write_bytes(PNG)
+    vfile = tmp_path / "car.json"
+    car = json.loads((FIXTURE_DIR / "dent_600.json").read_text())
+    vfile.write_text(json.dumps({**car, "findings": [], "photo_refs": ["door.jpg"]}))
+    client = _fake_claude(monkeypatch, reply({
+        "findings": [{"panel": "door", "damage_type": "dent", "severity": 0.5,
+                      "confidence": 0.9}],
+        "unmapped_damage": ["cracked left mirror"]}))  # fmt: skip
+    r = runner.invoke(app, ["evaluate", str(vfile), "--detector", "claude", "--photo-root",
+                            str(tmp_path), "--no-interactive", "--review-dir",
+                            str(tmp_path / "rev")])  # fmt: skip
+    assert r.exit_code == AWAITING_CONFIRMATION, r.output
+    assert len(client.calls) == 1
+    saved = json.loads((tmp_path / "rev" / "FIXDENT0000000001.json").read_text())
+    assert saved["findings"][0]["photo_ref"] == "door.jpg"
+    assert any("cracked left mirror" in x for x in saved["reasons"])
+
+
+def test_evaluate_reports_detection_failure_cleanly(tmp_path, monkeypatch):
+    from test_vision import PNG, reply
+
+    (tmp_path / "door.jpg").write_bytes(PNG)
+    vfile = tmp_path / "car.json"
+    car = json.loads((FIXTURE_DIR / "dent_600.json").read_text())
+    vfile.write_text(json.dumps({**car, "photo_refs": ["door.jpg"]}))
+    _fake_claude(monkeypatch, reply({"findings": []}, stop="refusal"))
+    r = runner.invoke(app, ["evaluate", str(vfile), "--detector", "claude", "--photo-root",
+                            str(tmp_path), "--skip-confirm"])  # fmt: skip
+    assert r.exit_code == 2 and "Damage detection failed" in r.output

@@ -23,6 +23,22 @@ MODEL = "claude-opus-5-5"
 # trigger refusals, but a declined photo then still gets an answer instead of failing.
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
+# Claude Opus 5.5 list price, USD per million tokens (input, output), from Anthropic's model
+# table. Used only to estimate and report what an evaluation run costs.
+PRICE_PER_MTOK = (4.00, 20.00)
+# Rough tokens per photo for the pre-run estimate: a downscaled image plus the prompt in, and
+# the findings JSON plus thinking out. Actual usage is reported after the run.
+EST_TOKENS_PER_PHOTO = (2500, 3000)
+
+
+def cost_usd(input_tokens: int, output_tokens: int) -> float:
+    return (input_tokens * PRICE_PER_MTOK[0] + output_tokens * PRICE_PER_MTOK[1]) / 1e6
+
+
+def estimated_cost_usd(photos: int) -> float:
+    return photos * cost_usd(*EST_TOKENS_PER_PHOTO)
+
+
 MEDIA_TYPES = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
                ".webp": "image/webp", ".gif": "image/gif"}  # fmt: skip
 MAX_IMAGE_BYTES = 5 * 1024 * 1024  # API limit per image
@@ -172,6 +188,11 @@ class ClaudeVisionDetector:
         findings, notes = parse_response(response, photo_ref)
         self.notes[photo_ref] = notes
         return findings
+
+    def spent_usd(self) -> float:
+        """Cost of the calls made so far, from the API's reported token usage."""
+        used = [u for u in self.usage if u is not None]
+        return cost_usd(sum(u.input_tokens for u in used), sum(u.output_tokens for u in used))
 
     def detect(self, vehicle: VehicleRecord) -> list[DamageFinding]:
         found: list[DamageFinding] = []

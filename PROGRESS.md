@@ -6,7 +6,7 @@
 - [x] M3 config/assumptions.yaml
 - [x] M4 Valuation
 - [x] M5 Decision engine (subagent review before commit)
-- [ ] M6 Data (fixtures, stubs, synthetic generator)
+- [x] M6 Data (fixtures, stubs, synthetic generator)
 - [ ] M7 CLI
 - [ ] M8 Proof (backtest, case studies)
 - [ ] M9 Docs
@@ -26,4 +26,4 @@
 none
 
 ## Next step
-M6: FixtureSource, ACVSource/CopartSource stubs, seeded synthetic generator (src/underscope/data.py) -> data/fixtures, data/synthetic.
+M7: typer CLI src/underscope/cli.py: `underscope evaluate vehicle.json` (+ --json).

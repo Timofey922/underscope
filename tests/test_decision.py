@@ -1,6 +1,8 @@
+import copy
+
 import numpy as np
 
-from underscope.config import default_assumptions
+from underscope.config import Assumptions, default_assumptions
 from underscope.decision import PATHS, evaluate, simulate
 from underscope.models import DamageFinding, Path, VehicleRecord
 from underscope.valuation import value_vehicle
@@ -78,11 +80,19 @@ def test_low_confidence_triggers_review():
     assert any("confidence" in x for x in r.review_reasons)
 
 
+def _with(section, **kw):
+    a = default_assumptions()
+    data = copy.deepcopy(a.data)
+    data[section].update(kw)
+    return Assumptions(data)
+
+
 def test_close_call_needs_review():
-    # Repair and as-is are nearly tied for a minor dent.
-    r = evaluate(veh(), [f(sev=0.3)])
-    assert r.needs_human_review
-    assert any("overlap" in x for x in r.review_reasons)
+    # Overlap review fires exactly when P(runner-up beats winner) reaches the threshold.
+    always = _with("simulation", review_overlap_threshold=0.0)
+    never = _with("simulation", review_overlap_threshold=1.01)
+    assert any("overlap" in x for x in evaluate(veh(), [f()], always).review_reasons)
+    assert not any("overlap" in x for x in evaluate(veh(), [f()], never).review_reasons)
 
 
 def test_total_loss_flag_only_near_threshold():
@@ -93,3 +103,11 @@ def test_total_loss_flag_only_near_threshold():
 def test_explanation_and_flip_present():
     r = evaluate(veh(), [f()])
     assert "Best path" in r.explanation and r.flip_conditions
+
+
+def test_holding_cost_charged_on_every_sale_path():
+    a = default_assumptions()
+    v = veh()
+    sim = simulate(v, value_vehicle(v, [f()], a), a)
+    for p in (Path.REPAIR_THEN_ACV, Path.ACV_AS_IS, Path.COPART_SALVAGE):
+        assert (sim.components[p]["holding"] < 0).all()

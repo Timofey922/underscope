@@ -116,14 +116,20 @@ def simulate(
     # 2. Sell as-is on ACV.
     sale = _cents(val.as_is_value * market)
     fee = _cents(fees["acv"]["flat_cents"] + _pct(sale, fees["acv"]["pct_of_price"]))
-    nets[Path.ACV_AS_IS] = sale - fee - t_acv
-    comps[Path.ACV_AS_IS] = {"sale_price": sale, "acv_fees": -fee, "transport": -t_acv}
+    holding = days[Path.ACV_AS_IS] * hold
+    nets[Path.ACV_AS_IS] = sale - fee - t_acv - holding
+    comps[Path.ACV_AS_IS] = {
+        "sale_price": sale, "acv_fees": -fee, "transport": -t_acv, "holding": -holding,
+    }  # fmt: skip
 
     # 3. Sell as salvage on Copart.
     sale = _cents(salv * market)
     fee = _cents(fees["copart"]["flat_cents"] + _pct(sale, fees["copart"]["pct_of_price"]))
-    nets[Path.COPART_SALVAGE] = sale - fee - t_cop
-    comps[Path.COPART_SALVAGE] = {"sale_price": sale, "copart_fees": -fee, "transport": -t_cop}
+    holding = days[Path.COPART_SALVAGE] * hold
+    nets[Path.COPART_SALVAGE] = sale - fee - t_cop - holding
+    comps[Path.COPART_SALVAGE] = {
+        "sale_price": sale, "copart_fees": -fee, "transport": -t_cop, "holding": -holding,
+    }  # fmt: skip
 
     # 4. Part out.
     revenue = _cents(parts_gross * market * sell_through)

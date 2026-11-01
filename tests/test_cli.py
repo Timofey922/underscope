@@ -289,3 +289,14 @@ def test_claude_views_reach_the_review_sheet(tmp_path, monkeypatch):
     assert saved["photo_views"] == {"left.jpg": "left"}
     assert any("Photos don't show: front, rear, right side, roof" in x for x in saved["reasons"])
     assert "not photographed" in r.output
+
+
+def test_confirm_add_accepts_side(tmp_path):
+    runner.invoke(app, ["evaluate", DENT, "--no-interactive", "--review-dir", str(tmp_path)])
+    req = tmp_path / "FIXDENT0000000001.json"
+    r = runner.invoke(app, ["confirm", str(req), "--checker", "a",
+                            "--add", "quarter_panel:dent:0.3:right"])  # fmt: skip
+    assert r.exit_code == 0, r.output
+    assert json.loads(req.read_text())["findings"][-1]["side"] == "right"
+    r = runner.invoke(app, ["confirm", str(req), "--checker", "a", "--add", "door:dent:0.3:x:y"])
+    assert r.exit_code != 0

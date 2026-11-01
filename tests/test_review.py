@@ -71,7 +71,7 @@ def test_save_load_roundtrip_and_html_escapes(tmp_path):
     assert review.load(json_path) == req
     page = html_path.read_text()
     assert "<script>x" not in page and "&lt;script&gt;" in page
-    assert page.count('class="area') == 9  # frame + 8 body panels drawn
+    assert page.count('class="area') == 12  # frame, 5 center panels, 3 sided panels x 2
 
 
 def test_fragment_mode_has_no_document_wrapper():
@@ -123,3 +123,28 @@ def test_full_coverage_and_no_views_change_nothing():
 def test_unknown_views_are_a_risk_signal():
     reasons = review.risk_reasons(veh(), [f()], views={"a": "unknown", "b": "close_up"})
     assert any("Couldn't tell which side" in r for r in reasons)
+
+
+def test_diagram_colors_only_the_damaged_side():
+    left = DamageFinding(panel="door", damage_type="dent", severity=0.8, confidence=0.9,
+                         side="left")
+    page = review.render_html(review.build_request(veh(), [left]))
+    assert '<title>left door: damaged' in page and '<title>right door: clear' in page
+    assert page.count('class="area sev-high"') == 1
+    # A finding without a side colors both doors.
+    page = review.render_html(review.build_request(veh(), [f("door", sev=0.8)]))
+    assert page.count('class="area sev-high"') == 2
+
+
+def test_diagram_marks_unphotographed_side():
+    page = review.render_html(review.build_request(veh(), [], views={"a": "left"}))
+    assert '<title>right door: not photographed' in page
+    assert '<title>left door: clear' in page
+
+
+def test_checker_can_add_sided_finding():
+    req = review.build_request(veh(), [])
+    review.add_finding(req, "fender", "dent", 0.3, "right")
+    assert req.findings[0].side == "right"
+    with pytest.raises(ValueError):
+        review.add_finding(req, "fender", "dent", 0.3, "top")

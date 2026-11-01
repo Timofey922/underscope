@@ -119,7 +119,7 @@ def _yes_no(text: str) -> bool:
 
 PROMPT_HELP = """Commands:
   a                      accept the findings and continue to the decision
-  + panel type severity  add a finding (e.g. + frame dent 0.6)
+  + panel type severity [side]  add a finding (e.g. + door dent 0.6 left)
   - N                    remove finding #N
   s N severity           set the severity of finding #N
   u yes|no               undercarriage damage present?
@@ -142,8 +142,9 @@ def _interactive_review(req: review.ReviewRequest, review_dir: FsPath) -> bool:
             if cmd[0] == "q":
                 review.save(req, review_dir)
                 return False
-            if cmd[0] == "+" and len(cmd) == 4:
-                review.add_finding(req, cmd[1], cmd[2], float(cmd[3]))
+            if cmd[0] == "+" and len(cmd) in (4, 5):
+                review.add_finding(req, cmd[1], cmd[2], float(cmd[3]),
+                                   cmd[4] if len(cmd) == 5 else None)  # fmt: skip
             elif cmd[0] == "-" and len(cmd) == 2:
                 review.remove_finding(req, int(cmd[1]))
             elif cmd[0] == "s" and len(cmd) == 3:
@@ -266,7 +267,7 @@ def confirm_cmd(
     checker: Annotated[str, typer.Option("--checker", help="Name of the human checker.")],
     add: Annotated[
         list[str] | None,
-        typer.Option("--add", help="Add a finding: panel:type:severity (repeatable)."),
+        typer.Option("--add", help="Add a finding: panel:type:severity[:side] (repeatable)."),
     ] = None,
     remove: Annotated[
         list[int] | None,
@@ -286,8 +287,11 @@ def confirm_cmd(
         for n in sorted(remove or [], reverse=True):
             review.remove_finding(req, n)
         for spec in add or []:
-            panel, damage_type, severity = spec.split(":")
-            review.add_finding(req, panel, damage_type, float(severity))
+            panel, damage_type, severity, *side = spec.split(":")
+            if len(side) > 1:
+                raise ValueError(f"--add {spec}: expected panel:type:severity[:side]")
+            review.add_finding(req, panel, damage_type, float(severity),
+                               side[0] if side else None)  # fmt: skip
         if undercarriage is not None:
             review.set_flag(req, "undercarriage", _yes_no(undercarriage))
         if engine_audio is not None:

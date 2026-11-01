@@ -186,10 +186,12 @@ def build_request(
 # ------------------------------------------------------------------ checker edits
 
 
-def add_finding(req: ReviewRequest, panel: str, damage_type: str, severity: float) -> None:
+def add_finding(
+    req: ReviewRequest, panel: str, damage_type: str, severity: float, side: str | None = None
+) -> None:
     req.findings.append(
         DamageFinding(panel=Panel(panel), damage_type=DamageType(damage_type),
-                      severity=severity, confidence=1.0, verified=True)
+                      severity=severity, confidence=1.0, verified=True, side=side)
     )  # fmt: skip
 
 
@@ -312,16 +314,27 @@ def render_html(req: ReviewRequest, standalone: bool = True) -> str:
         f' {e(frame.detail)}</title><rect x="20" y="12" width="200" height="434" rx="28"/></g>'
     )
     for name, rects in _SHAPES.items():
-        area = areas[name]
-        hits = [f for f in req.findings if f.panel.value == name]
-        cls = _severity_class(hits) if hits else area.status.value
-        body = "".join(
-            f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="6"/>' for x, y, w, h in rects
-        )
-        shapes.append(
-            f'<g class="area {cls}"><title>{e(name)}: {e(area.status.value)} '
-            f"{e(area.detail)}</title>{body}</g>"
-        )
+        panel = Panel(name)
+        unseen = req._unseen(panel)
+        # Sided panels are drawn left (first rect) and right; a finding without a side colors
+        # both. Center panels have one rect.
+        sides = ("left", "right") if len(rects) == 2 else ("center",)
+        for side, (x, y, w, h) in zip(sides, rects, strict=True):
+            hits = [f for f in req.findings if f.panel == panel
+                    and (f.side is None or f.side == side or side == "center")]  # fmt: skip
+            if hits:
+                cls, state = _severity_class(hits), "damaged"
+            elif side in unseen:
+                cls, state = "verify", "not photographed"
+            else:
+                # This side is seen and undamaged, whatever the other side of the panel shows.
+                cls, state = "clear", "clear"
+            label = name if side == "center" else f"{side} {name}"
+            detail = "; ".join(_finding_text(f) for f in hits)
+            shapes.append(
+                f'<g class="area {cls}"><title>{e(label)}: {e(state)} {e(detail)}</title>'
+                f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="6"/></g>'
+            )
     svg = (
         '<svg viewBox="0 0 240 460" role="img" aria-label="Top-down car diagram, front at top">'
         + "".join(shapes)

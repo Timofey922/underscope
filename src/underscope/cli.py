@@ -408,6 +408,10 @@ def detect_eval_cmd(
     report: Annotated[
         FsPath | None, typer.Option("--report", help="Also write the report as Markdown.")
     ] = None,
+    match_by: Annotated[
+        str,
+        typer.Option("--match-by", help="panel (default), or type for labels without panels."),
+    ] = "panel",
 ) -> None:
     """Score a damage detector against labeled photos."""
     from underscope import detector_eval as de
@@ -436,7 +440,9 @@ def detect_eval_cmd(
         pred, errors = de.run_detector(_MockPhotoDetector(labels), refs)
     if save and not predictions:
         de.save_findings(pred, save)
-    text = de.render_report(de.score(truth, pred, errors))
+    if match_by not in ("panel", "type"):
+        raise typer.BadParameter("--match-by must be panel or type")
+    text = de.render_report(de.score(truth, pred, errors, by=match_by))
     if spent is not None:
         text += f"\nAPI cost of this run: ${spent:,.2f} (from reported token usage).\n"
     typer.echo(text)

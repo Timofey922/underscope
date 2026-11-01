@@ -3,6 +3,9 @@
 Labels and predictions share MockDetector's format: {photo_ref: [finding, ...]}. Within each
 photo, predictions are matched one-to-one to true findings on the same panel, preferring the
 same damage type. Everything else is a miss (false negative) or a false alarm (false positive).
+
+by="type" matches on damage type alone, for datasets whose damage photos carry no panel
+labels; precision and recall then say nothing about panel placement.
 """
 
 from __future__ import annotations
@@ -35,14 +38,17 @@ def save_findings(findings: Findings, path: str | FsPath) -> FsPath:
 
 
 def match(
-    truth: list[DamageFinding], pred: list[DamageFinding]
+    truth: list[DamageFinding], pred: list[DamageFinding], by: str = "panel"
 ) -> tuple[list[tuple[DamageFinding, DamageFinding]], list[DamageFinding], list[DamageFinding]]:
     """(matched (true, pred) pairs, missed true findings, false-alarm predictions)."""
     left = list(truth)
     pairs, false_alarms = [], []
     # Most confident predictions claim their match first.
     for p in sorted(pred, key=lambda f: -f.confidence):
-        same_panel = [t for t in left if t.panel == p.panel]
+        if by == "type":
+            same_panel = [t for t in left if t.damage_type == p.damage_type]
+        else:
+            same_panel = [t for t in left if t.panel == p.panel]
         if not same_panel:
             false_alarms.append(p)
             continue
@@ -61,6 +67,7 @@ class Score:
     type_correct: int = 0
     severity_abs_error: float = 0.0
     brier_sum: float = 0.0
+    by: str = "panel"
     frame_true: int = 0
     frame_missed: int = 0
     clean_photos: int = 0
@@ -101,10 +108,14 @@ def _bin(conf: float) -> int:
     return next(i for i, (_, hi) in enumerate(CONF_BINS) if conf <= hi)
 
 
-def score(truth: Findings, pred: Findings, errors: dict[str, str] | None = None) -> Score:
+def score(
+    truth: Findings, pred: Findings, errors: dict[str, str] | None = None, by: str = "panel"
+) -> Score:
     """Score predictions on every labeled photo. A photo with no prediction counts as 'no
     damage found' unless it is listed in errors, in which case it is left out."""
-    s = Score(errors=dict(errors or {}))
+    if by not in ("panel", "type"):
+        raise ValueError(f"by must be 'panel' or 'type', not {by!r}")
+    s = Score(errors=dict(errors or {}), by=by)
     for ref, true_items in truth.items():
         if ref in s.errors:
             continue
@@ -115,7 +126,7 @@ def score(truth: Findings, pred: Findings, errors: dict[str, str] | None = None)
         if not true_items:
             s.clean_photos += 1
             s.clean_correct += not p_items
-        pairs, missed, false_alarms = match(true_items, p_items)
+        pairs, missed, false_alarms = match(true_items, p_items, by)
         s.matched += len(pairs)
         for t, p in pairs:
             s.type_correct += t.damage_type == p.damage_type
@@ -148,6 +159,9 @@ def render_report(s: Score, title: str = "Damage detector evaluation") -> str:
         f"Photos scored: {s.photos} ({len(s.errors)} failed and left out). "
         f"True findings: {s.true_findings}. Predicted: {s.predicted}.",
         "",
+        *(["Findings matched on damage type only (labels have no panels); precision and "
+           "recall don't measure panel placement, and frame misses aren't meaningful.", ""]
+          if s.by == "type" else []),
         "| Metric | Value |",
         "|---|---|",
         f"| Panel precision (predictions that match real damage) | {s.precision:.1%} |",

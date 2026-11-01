@@ -71,6 +71,34 @@ work; CLAUDE.md, .gitignore and pyproject.toml were left alone. Added:
 origin/main (PR #1 merge and a CLAUDE.md edit restoring "within 15 seconds") was merged into
 local main on user request, keeping the local CLAUDE.md rule. Not pushed.
 
+## Real damage detector, stage 1 (2026-11-01, user request)
+User chose: Claude vision first, dependencies in an optional `vision` extra, a public dataset
+picked with the user. Built `vision.ClaudeVisionDetector` (claude-opus-5-5, JSON-schema output
+restricted to our panels and damage types, severity/confidence rubric, unmapped damage kept as
+checker notes, server-side refusal fallback), `detector_eval` (panel/type matching, P/R/F1,
+type accuracy, severity MAE, calibration + Brier, frame misses, clean-photo false alarms,
+`--match-by type`), and `underscope detect-eval` (paid runs need `--yes`, actual cost reported,
+saved predictions re-scored free). `evaluate`/`batch` take `--detector claude --photo-root`.
+Not yet run on a single real photo.
+
+### Detector test data (needs the user)
+| Dataset | Labels | License / access | Verdict |
+|---|---|---|---|
+| Humans in the Loop "Car Parts and Car Damages" | 814 damage photos (8 damage types) + 998 parts photos (21 parts), polygons; damage photos have no panel labels | CC0 1.0 (public domain); download via a form on their site | Recommended |
+| CarDD (USTC) | 4,000 photos, 6 damage types | Research only; bars "testing commercial systems"; signed form | Not usable for UnderScope |
+| Pixemantic Vehicle Damage-29 (IEEE DataPort) | 5,244 photos, parts + damage types | Paid subscription; no license stated | Not usable as is |
+| Roboflow "car damaged part segmentation" | damaged-part classes | Page blocked automated access; license and provenance unverified | Not verified |
+
+Plan for the recommended set once the user has it (the form takes their contact details, so
+they must request it): convert damage labels to our format (Dent -> dent, Scratch/Paint
+chip/Flaking -> scratch, Cracked -> crack, Broken/Missing part -> broken; Corrosion unmapped),
+score with `--match-by type` on a small `--limit` first, then label panels on a sample (the
+review sheet can serve as the labeling tool) to score panel placement and severity.
+
+### Proposed CLAUDE.md wording (not applied)
+"Few dependencies: pydantic, numpy, pandas, pyyaml, typer, pytest. Optional extras may add
+more for a specific feature (`vision`: anthropic); the core install and tests must not need them."
+
 ## Decisions for humans
 - Panels aren't left/right in the model, so the diagram colors both sides of a sided panel.
   Real detector output with sides or pixel boxes would let the sheet highlight exact spots

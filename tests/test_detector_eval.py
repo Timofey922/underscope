@@ -64,3 +64,13 @@ def test_roundtrip_and_run_detector(tmp_path):
     assert pred == {"a.jpg": truth["a.jpg"]} and errors == {"b.jpg": "blurry"}
     report = render_report(score(truth, pred, errors))
     assert "Panel recall" in report and "blurry" in report
+
+
+def test_type_only_matching_ignores_panel():
+    truth = {"a.jpg": [f("door", "dent"), f("hood", "scratch")]}
+    pred = {"a.jpg": [f("fender", "dent"), f("roof", "crack")]}
+    by_panel = score(truth, pred)
+    by_type = score(truth, pred, by="type")
+    assert by_panel.matched == 0
+    assert by_type.matched == 1 and by_type.recall == 0.5 and by_type.type_accuracy == 1.0
+    assert "matched on damage type only" in render_report(by_type)

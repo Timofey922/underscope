@@ -23,10 +23,14 @@ it is built that way. `PROGRESS.md` holds the review log and open decisions.
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -e '.[dev]'
+.venv/bin/pip install -e '.[dev]'           # engine, tests
+.venv/bin/pip install -e '.[dev,vision]'    # plus the Claude vision damage detector
 make test   # pytest -q
 make lint   # ruff
 ```
+
+The vision detector reads credentials the way the Anthropic SDK does (`ANTHROPIC_API_KEY`, or a
+profile from `ant auth login`). Tests never call the API.
 
 ## Quick start
 
@@ -80,6 +84,8 @@ flowchart LR
 |---|---|
 | `models.py` | Pydantic domain model: `VehicleRecord`, `DamageFinding`, `DispositionOption`, `Recommendation`, enums for panels, damage types, title status and paths |
 | `perception.py` | `DamageDetector` protocol and `MockDetector`, which reads labels from fixtures instead of pixels |
+| `vision.py` | `ClaudeVisionDetector`: Claude looks at each photo and returns findings (optional `vision` extra) |
+| `detector_eval.py` | Scores any detector against labeled photos |
 | `review.py` | Human-in-the-loop review: risk signals, the area checklist, the review request JSON, checker edits, the HTML sheet |
 | `config.py` | Loads and schema-checks `config/assumptions.yaml` |
 | `valuation.py` | Damage + vehicle to values and repair-cost ranges (integer cents) |
@@ -109,12 +115,36 @@ and `verified` (set once a human checker confirms or adds it).
 Panels: front bumper, rear bumper, hood, fender, door, quarter panel, roof, windshield, frame.
 Panels have no left/right side in the model.
 
-## 2. Perception (`perception.py`)
+## 2. Perception (`perception.py`, `vision.py`, `detector_eval.py`)
 
-`DamageDetector` is a protocol: `detect(vehicle) -> list[DamageFinding]`. Today the only
-implementation is `MockDetector`. It returns the vehicle's inline findings plus any labels
-supplied per photo (`--labels`), tagging each with its `photo_ref`. A real image model would
-plug in behind the same protocol.
+`DamageDetector` is a protocol: `detect(vehicle) -> list[DamageFinding]`. Two implementations:
+
+- **`MockDetector`** returns the vehicle's inline findings plus labels supplied per photo
+  (`--labels`), tagging each with its `photo_ref`. It never looks at pixels.
+- **`ClaudeVisionDetector`** (`--detector claude --photo-root DIR`) sends each photo to Claude
+  Opus 5.5, one request per photo. A JSON schema restricts the answer to our panel and
+  damage-type values. The prompt gives a severity rubric (about 0.1 for a small ding, 0.3 for a
+  hand-sized dent, 0.6 for most of a panel, 0.9+ for a replacement) and asks for lower
+  confidence under glare, dirt, blur or a partial view. Damage that fits no modeled panel
+  (wheels, mirrors, interior) comes back as notes, and the CLI adds those to the checker's review
+  reasons instead of forcing them onto a wrong panel. A photo that can't be analyzed (missing,
+  over 5 MB, declined, cut off) raises `DetectionError`. The server-side refusal fallback is on,
+  so a declined photo is retried on another model before failing.
+
+**Scoring a detector.** `underscope detect-eval LABELS --photo-root DIR` runs a detector on
+labeled photos and reports:
+
+- panel precision, recall and F1 (a prediction matches a true finding on the same panel,
+  preferring the same damage type)
+- damage-type accuracy and severity mean error on matched findings
+- calibration: for each confidence band, how often those predictions were right, plus a Brier
+  score
+- missed frame damage, and false alarms on clean photos
+
+Labels use the `MockDetector` format (`{photo_ref: [finding, ...]}`). `--match-by type` matches
+on damage type alone, for datasets whose damage photos have no panel labels. A Claude run prints
+a cost estimate and needs `--yes`; afterwards it reports the actual cost from token usage.
+`--save` keeps the predictions and `--predictions` re-scores them later without new API calls.
 
 ## 3. Human checker (`review.py`, `cli.py`)
 
@@ -344,8 +374,9 @@ Reports: `reports/backtest.md`, `reports/sensitivity.md`, `reports/case_studies.
 
 - Every number is a placeholder. `docs/DATA_REQUIREMENTS.md` lists the fields, volumes and labels
   needed from ACV and Copart (via a data partnership; the project never scrapes).
-- `MockDetector` reads labels and never sees pixels. A real detector, scored on labeled photos,
-  would also give sides and locations, so the review sheet could mark exact spots on the photos.
+- The Claude detector hasn't been scored on real labeled photos yet; see "Detector test data"
+  in `PROGRESS.md` for the dataset decision. It also doesn't report left/right side or the
+  damage's location in the photo, so the review sheet can't mark exact spots yet.
 - Synthetic outcomes are a single realized draw per path, so per-vehicle results are noisy;
   the heavy band's 66% ceiling is mostly that noise.
 - On a totaled claim the model doesn't yet include the insurer's own costs (payout to the

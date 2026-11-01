@@ -243,7 +243,8 @@ def _severity_class(findings: list[DamageFinding]) -> str:
     return "sev-high" if worst >= 0.66 else "sev-mid" if worst >= 0.33 else "sev-low"
 
 
-def render_html(req: ReviewRequest) -> str:
+def render_html(req: ReviewRequest, standalone: bool = True) -> str:
+    """standalone=False leaves out the doctype/html/head/body wrapper, for hosts that add it."""
     e = html.escape
     v = req.vehicle
     areas = {a.name: a for a in req.areas()}
@@ -294,27 +295,34 @@ def render_html(req: ReviewRequest) -> str:
     else:
         status = "Awaiting checker confirmation"
     photos = "".join(f"<li>{e(p)}</li>" for p in v.photo_refs) or "<li>None.</li>"
-    return f"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Damage review {e(req.vin)}</title>
+    head = f"""<title>Damage review {e(req.vin)}</title>
+<meta name="claude:viewport-fit-sides" content="cover">
 <style>
-:root {{ --bg:#fff; --fg:#1d1d1f; --muted:#6b6b70; --line:#d9d9de; --panel:#f1f1f4;
-  --low:#f2c94c; --mid:#f2994a; --high:#d93a3a; --verify:#2f6fdf; }}
-@media (prefers-color-scheme: dark) {{ :root {{ --bg:#16161a; --fg:#ececf0; --muted:#a0a0a8;
-  --line:#3a3a42; --panel:#24242a; --low:#c9a43a; --mid:#d4813f; --high:#e05555;
-  --verify:#5b8ff0; }} }}
+/* Layout: car diagram beside the area checklist; stacks to one column on phones. */
+:root {{ --bg:#fbfbfd; --fg:#1b1c22; --muted:#62646f; --line:#d8dae3; --panel:#eef0f5;
+  --low:#e9b931; --mid:#ee8a3a; --high:#d6383a; --on-high:#ffffff; --verify:#2f6fdf; }}
+@media (prefers-color-scheme: dark) {{ :root:not([data-theme="light"]) {{ --bg:#15161b;
+  --fg:#eceef3; --muted:#a2a5b2; --line:#363946; --panel:#232631; --low:#c9a43a;
+  --mid:#d7813f; --high:#e25454; --on-high:#ffffff; --verify:#6b98f2; color-scheme:dark; }} }}
+:root[data-theme="dark"] {{ --bg:#15161b; --fg:#eceef3; --muted:#a2a5b2; --line:#363946;
+  --panel:#232631; --low:#c9a43a; --mid:#d7813f; --high:#e25454; --on-high:#ffffff;
+  --verify:#6b98f2; color-scheme:dark; }}
 body {{ margin:0; background:var(--bg); color:var(--fg);
-  font:15px/1.45 system-ui, -apple-system, Segoe UI, sans-serif; }}
-main {{ max-width:960px; margin:0 auto; padding:24px 16px; }}
-h1 {{ font-size:20px; margin:0 0 4px; }} h2 {{ font-size:16px; margin:24px 0 8px; }}
+  font:15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }}
+main {{ max-width:960px; margin:0 auto; padding-block:24px;
+  padding-left:max(16px, env(safe-area-inset-left, 0px));
+  padding-right:max(16px, env(safe-area-inset-right, 0px)); }}
+h1 {{ font-size:20px; margin:0 0 4px; text-wrap:balance; }}
+h2 {{ font-size:13px; margin:24px 0 8px; text-transform:uppercase; letter-spacing:.06em;
+  color:var(--muted); }}
 .muted {{ color:var(--muted); }}
 .status {{ display:inline-block; margin-top:8px; padding:4px 10px; border-radius:999px;
   border:1px solid var(--line); }}
 .grid {{ display:grid; grid-template-columns:minmax(200px,280px) 1fr; gap:24px;
   align-items:start; }}
+.grid > div {{ min-width:0; }}
 @media (max-width:640px) {{ .grid {{ grid-template-columns:1fr; }} }}
-svg {{ width:100%; height:auto; }}
+svg {{ width:100%; max-width:280px; height:auto; display:block; }}
 .area rect {{ fill:var(--panel); stroke:var(--line); stroke-width:2; }}
 .frame rect {{ fill:none; stroke-width:6; }}
 .sev-low rect {{ fill:var(--low); }} .sev-mid rect {{ fill:var(--mid); }}
@@ -323,28 +331,31 @@ svg {{ width:100%; height:auto; }}
 .frame.sev-mid rect {{ fill:none; stroke:var(--mid); }}
 .frame.sev-high rect {{ fill:none; stroke:var(--high); }}
 .verify rect {{ stroke:var(--verify); stroke-dasharray:8 6; stroke-width:4; }}
-table {{ width:100%; border-collapse:collapse; }}
+table {{ width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; }}
 td, th {{ text-align:left; padding:6px 8px; border-bottom:1px solid var(--line);
   vertical-align:top; }}
+th {{ font-weight:600; color:var(--muted); font-size:13px; }}
 .badge {{ padding:2px 8px; border-radius:6px; font-size:13px; white-space:nowrap; }}
-.badge.damaged {{ background:var(--high); color:#fff; }}
+.badge.damaged {{ background:var(--high); color:var(--on-high); }}
 .badge.verify {{ border:2px dashed var(--verify); }}
 .badge.clear {{ color:var(--muted); }}
+.legend {{ display:flex; flex-wrap:wrap; gap:4px 14px; margin-top:8px; }}
 .legend span {{ display:inline-block; width:12px; height:12px; border-radius:3px;
-  margin:0 4px 0 12px; vertical-align:-1px; }}
+  margin-right:4px; vertical-align:-1px; }}
 .table-wrap {{ overflow-x:auto; }}
-code {{ background:var(--panel); padding:1px 5px; border-radius:4px; }}
-</style></head><body><main>
+code {{ background:var(--panel); padding:1px 5px; border-radius:4px; overflow-wrap:anywhere; }}
+</style>"""
+    body = f"""<main>
 <h1>Damage review: {e(f"{v.year} {v.make} {v.model} {v.trim}".strip())}</h1>
 <div class="muted">VIN {e(req.vin)} · {e(v.region)} · {v.mileage:,} mi · {e(v.title_status.value)}
 {" · insurance claim" if v.insurance_claim else ""}</div>
 <div class="status">{status}</div>
 <div class="grid">
 <div><h2>Every area of the car</h2>{svg}
-<div class="legend muted"><span style="background:var(--low)"></span>minor
-<span style="background:var(--mid)"></span>moderate
-<span style="background:var(--high)"></span>severe
-<span style="border:2px dashed var(--verify)"></span>verify</div>
+<div class="legend muted"><div><span style="background:var(--low)"></span>minor</div>
+<div><span style="background:var(--mid)"></span>moderate</div>
+<div><span style="background:var(--high)"></span>severe</div>
+<div><span style="border:2px dashed var(--verify)"></span>verify</div></div>
 <p class="muted">Front at top. Outer outline is the frame.</p></div>
 <div><h2>Area checklist</h2><div class="table-wrap"><table>
 <tr><th>Area</th><th>Status</th><th>Detail</th></tr>{rows}</table></div>
@@ -358,5 +369,12 @@ code {{ background:var(--panel); padding:1px 5px; border-radius:4px; }}
 prompt in the terminal, or run <code>underscope confirm {e(req.vin)}.json --checker NAME</code>
 with <code>--add panel:type:severity</code>, <code>--remove N</code>,
 <code>--undercarriage yes|no</code> or <code>--engine-audio yes|no</code> as needed.</p>
-</div></div></main></body></html>
+</div></div></main>
 """
+    if not standalone:
+        return head + "\n" + body
+    return (
+        '<!doctype html>\n<html lang="en"><head><meta charset="utf-8">\n'
+        '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n'
+        f"{head}</head><body>{body}</body></html>\n"
+    )

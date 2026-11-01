@@ -72,3 +72,12 @@ def test_save_load_roundtrip_and_html_escapes(tmp_path):
     page = html_path.read_text()
     assert "<script>x" not in page and "&lt;script&gt;" in page
     assert page.count('class="area') == 9  # frame + 8 body panels drawn
+
+
+def test_fragment_mode_has_no_document_wrapper():
+    req = review.build_request(veh(), [f()])
+    frag = review.render_html(req, standalone=False)
+    assert frag.startswith("<title>") and "<html" not in frag and "<body" not in frag
+    full = review.render_html(req)
+    assert full.startswith("<!doctype html>")
+    assert frag[frag.index("<main>"):] in full

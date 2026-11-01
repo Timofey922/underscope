@@ -24,9 +24,25 @@ make lint   # ruff
 
 ## Usage
 
+A human checker confirms the damage findings before any decision (human in the loop).
+By default every vehicle is checked; `--review-mode risky` only sends vehicles with risk
+signals (low-confidence findings, missing undercarriage/engine inspection, frame or
+undercarriage damage, no damage found, or a close/threshold-decided decision).
+
 ```bash
-.venv/bin/underscope evaluate data/fixtures/dent_600.json          # readable output
-.venv/bin/underscope evaluate data/fixtures/total_loss.json --json # machine-readable
+# Someone at the terminal: shows every area of the car, writes reviews/<VIN>.html (a diagram
+# highlighting all damaged areas), then prompts: a(ccept), + panel type sev, - N, s N sev,
+# u yes|no, e yes|no, q(uit).
+.venv/bin/underscope evaluate data/fixtures/dent_600.json
+
+# Agent / batch: writes reviews/<VIN>.json + .html and exits 3 (awaiting confirmation).
+.venv/bin/underscope evaluate data/fixtures/total_loss.json --no-interactive
+.venv/bin/underscope confirm reviews/FIXTOTAL000000001.json --checker NAME \
+    [--add frame:dent:0.6] [--remove 2] [--undercarriage yes|no] [--engine-audio yes|no]
+.venv/bin/underscope evaluate data/fixtures/total_loss.json --confirmed reviews/FIXTOTAL000000001.json
+
+.venv/bin/underscope evaluate data/fixtures/dent_600.json --review-mode risky   # only risky ones
+.venv/bin/underscope evaluate data/fixtures/total_loss.json --json --skip-confirm  # batch/testing
 .venv/bin/underscope evaluate vehicle.json --labels labels.json    # MockDetector labels per photo ref
 
 .venv/bin/python -m underscope.data          # regenerate data/synthetic/ (500 vehicles, seed 7)
@@ -45,7 +61,8 @@ repair cost past the total-loss threshold brand the title), optional `clean_valu
 ```mermaid
 flowchart LR
     IMG[Photos / inspection data] --> DET[DamageDetector<br/>MockDetector today]
-    DET --> F[DamageFinding list]
+    DET --> HUM{{Human checker<br/>confirms / corrects findings<br/>HTML sheet of every area}}
+    HUM --> F[Confirmed DamageFinding list]
     V[VehicleRecord] --> VAL
     F --> VAL[Valuation<br/>as-is, repaired, salvage,<br/>parts, repair cost range]
     CFG[(config/assumptions.yaml<br/>PLACEHOLDER)] --> VAL

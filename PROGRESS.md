@@ -45,7 +45,22 @@ detector's confidence must be calibrated for that to hold.
   value being off (placeholder), (c) a missed frame finding (perception). Heavy band has only
   47 vehicles; its numbers are noisy.
 
+## Human-in-the-loop damage review (2026-11-01, user request)
+A checker confirms findings before any decision: `underscope.review`, `evaluate` gate
+(`--review-mode all|risky`, `--interactive/--no-interactive`, `--confirmed`, `--skip-confirm`),
+`underscope confirm`. Every area (9 panels, undercarriage, engine) is listed as damaged /
+verify / clear; the HTML sheet draws a top-down car with every damaged area colored by
+severity and high-risk unconfirmed areas (frame, missing inspections) dashed. Confirmed
+findings become verified with confidence 1.0. Exit code 3 = awaiting confirmation.
+"Risky" reuses existing thresholds; no new numbers were added (config/assumptions.yaml was not
+in the approved edit list).
+
 ## Decisions for humans
+- `reviews/` (default output dir) is not in .gitignore; .gitignore wasn't in the approved
+  edit list. Add it if review files shouldn't be committed.
+- Panels aren't left/right in the model, so the diagram colors both sides of a sided panel.
+  Real detector output with sides or pixel boxes would let the sheet highlight exact spots
+  on the photos.
 - Haircut now scales with damage score (repair cost / clean value). 20% at full damage is
   anchored just under the rebuilt-title discount, not tuned. A structural (frame) premium on
   top is a possible refinement.
@@ -57,7 +72,8 @@ detector's confidence must be calibrated for that to hold.
 - Unknown inspection flags each add an allowance (both missing adds it twice).
 
 ## Blockers
-none
+- Manual end-to-end CLI demo in the scratchpad (command included `rm -rf` of a scratch dir) was
+  denied; not retried. The same flow is covered by tests/test_cli.py via CliRunner.
 
 ## Next step
 Perception misses dominate what's left (a missed frame finding cost ~$3.7k on one car). Next:

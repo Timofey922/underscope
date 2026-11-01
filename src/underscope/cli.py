@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path as FsPath
 from typing import Annotated
 
 import typer
 
+from underscope import review
 from underscope.decision import LABEL, evaluate
 from underscope.models import Recommendation, VehicleRecord
 from underscope.perception import MockDetector
+
+AWAITING_CONFIRMATION = 3  # exit code: findings written for a checker, decision not made yet
 
 app = typer.Typer(
     help="UnderScope: disposition decisions for damaged vehicles.", no_args_is_help=True
@@ -51,6 +55,58 @@ def main() -> None:
     """UnderScope command line."""
 
 
+def _yes_no(text: str) -> bool:
+    if text.lower() in ("y", "yes", "true"):
+        return True
+    if text.lower() in ("n", "no", "false"):
+        return False
+    raise ValueError(f"expected yes or no, got {text!r}")
+
+
+PROMPT_HELP = """Commands:
+  a                      accept the findings and continue to the decision
+  + panel type severity  add a finding (e.g. + frame dent 0.6)
+  - N                    remove finding #N
+  s N severity           set the severity of finding #N
+  u yes|no               undercarriage damage present?
+  e yes|no               abnormal engine audio?
+  q                      stop; leave the review pending"""
+
+
+def _interactive_review(req: review.ReviewRequest, review_dir: FsPath) -> bool:
+    """Walk the checker through the findings. True once confirmed, False if they quit."""
+    typer.echo(PROMPT_HELP)
+    while True:
+        cmd = typer.prompt("review").strip().split()
+        try:
+            if not cmd:
+                continue
+            if cmd[0] == "a":
+                review.confirm(req, typer.prompt("Checker name"))
+                review.save(req, review_dir)
+                return True
+            if cmd[0] == "q":
+                review.save(req, review_dir)
+                return False
+            if cmd[0] == "+" and len(cmd) == 4:
+                review.add_finding(req, cmd[1], cmd[2], float(cmd[3]))
+            elif cmd[0] == "-" and len(cmd) == 2:
+                review.remove_finding(req, int(cmd[1]))
+            elif cmd[0] == "s" and len(cmd) == 3:
+                review.set_severity(req, int(cmd[1]), float(cmd[2]))
+            elif cmd[0] in ("u", "e") and len(cmd) == 2:
+                review.set_flag(req, "undercarriage" if cmd[0] == "u" else "engine",
+                                _yes_no(cmd[1]))  # fmt: skip
+            else:
+                typer.echo(PROMPT_HELP)
+                continue
+        except ValueError as err:
+            typer.echo(f"Not applied: {err}")
+            continue
+        review.save(req, review_dir)
+        typer.echo(review.render_text(req))
+
+
 @app.command("evaluate")
 def evaluate_cmd(
     vehicle_file: Annotated[
@@ -63,15 +119,112 @@ def evaluate_cmd(
     as_json: Annotated[
         bool, typer.Option("--json", help="Print the recommendation as JSON.")
     ] = False,
+    review_mode: Annotated[
+        review.ReviewMode,
+        typer.Option("--review-mode", help="Ask a checker for every vehicle, or only risky ones."),
+    ] = review.ReviewMode.ALL,
+    confirmed: Annotated[
+        FsPath | None,
+        typer.Option("--confirmed", exists=True, help="Resume from a confirmed review JSON."),
+    ] = None,
+    skip_confirm: Annotated[
+        bool,
+        typer.Option("--skip-confirm", help="Decide on unconfirmed findings (batch/testing)."),
+    ] = False,
+    interactive: Annotated[
+        bool | None,
+        typer.Option("--interactive/--no-interactive",
+                     help="Prompt the checker here. Default: when a terminal is attached."),
+    ] = None,  # fmt: skip
+    review_dir: Annotated[
+        FsPath, typer.Option("--review-dir", help="Where review JSON and HTML sheets go.")
+    ] = FsPath("reviews"),
 ) -> None:
-    """Evaluate disposition paths for one vehicle."""
+    """Evaluate disposition paths for one vehicle, after a human checker confirms the damage."""
     vehicle = VehicleRecord(**json.loads(vehicle_file.read_text()))
-    detector = MockDetector.from_file(labels) if labels else MockDetector()
-    rec = evaluate(vehicle, detector.detect(vehicle))
-    if as_json:
-        typer.echo(rec.model_dump_json(indent=2))
+    status = "Findings NOT confirmed by a human checker."
+    if confirmed:
+        req = review.load(confirmed)
+        if req.vin != vehicle.vin:
+            raise typer.BadParameter(f"review is for VIN {req.vin}, not {vehicle.vin}")
+        if req.status != "confirmed":
+            typer.echo(f"{confirmed} is still pending; confirm it first:", err=True)
+            typer.echo(f"  underscope confirm {confirmed} --checker NAME", err=True)
+            raise typer.Exit(AWAITING_CONFIRMATION)
+        vehicle, findings = req.vehicle, req.findings
+        status = f"Findings confirmed by {req.checker} at {req.confirmed_at}."
     else:
-        typer.echo(render(vehicle, rec))
+        detector = MockDetector.from_file(labels) if labels else MockDetector()
+        findings = detector.detect(vehicle)
+        req = review.build_request(vehicle, findings, review_mode)
+        if not skip_confirm and review.needs_confirmation(review_mode, req.reasons):
+            json_path, html_path = review.save(req, review_dir)
+            typer.echo(review.render_text(req), err=as_json)
+            typer.echo(f"\nReview sheet (highlights every damaged area): {html_path}", err=as_json)
+            if interactive is None:
+                interactive = sys.stdin.isatty()
+            if not interactive or not _interactive_review(req, review_dir):
+                typer.echo(
+                    f"\nAwaiting checker confirmation. Review request: {json_path}\n"
+                    f"  1. underscope confirm {json_path} --checker NAME [edits]\n"
+                    f"  2. underscope evaluate {vehicle_file} --confirmed {json_path}",
+                    err=True,
+                )
+                raise typer.Exit(AWAITING_CONFIRMATION)
+            vehicle, findings = req.vehicle, req.findings
+            status = f"Findings confirmed by {req.checker} at {req.confirmed_at}."
+            typer.echo("", err=as_json)
+        elif not skip_confirm:
+            status = "Not sent for review: no risk signals (review mode: risky)."
+    rec = evaluate(vehicle, findings)
+    if as_json:
+        out = json.loads(rec.model_dump_json())
+        out["findings_status"] = status
+        typer.echo(json.dumps(out, indent=2))
+    else:
+        typer.echo(render(vehicle, rec) + f"\n{status}")
+
+
+@app.command("confirm")
+def confirm_cmd(
+    review_file: Annotated[
+        FsPath, typer.Argument(exists=True, readable=True, help="Review request JSON.")
+    ],
+    checker: Annotated[str, typer.Option("--checker", help="Name of the human checker.")],
+    add: Annotated[
+        list[str] | None,
+        typer.Option("--add", help="Add a finding: panel:type:severity (repeatable)."),
+    ] = None,
+    remove: Annotated[
+        list[int] | None,
+        typer.Option("--remove", help="Remove finding #N as listed (repeatable)."),
+    ] = None,
+    undercarriage: Annotated[
+        str | None, typer.Option("--undercarriage", help="yes|no: undercarriage damage.")
+    ] = None,
+    engine_audio: Annotated[
+        str | None, typer.Option("--engine-audio", help="yes|no: abnormal engine audio.")
+    ] = None,
+) -> None:
+    """Checker confirms (and optionally corrects) a pending damage review."""
+    req = review.load(review_file)
+    try:
+        # Remove first, highest number first, so the numbers match what the checker saw.
+        for n in sorted(remove or [], reverse=True):
+            review.remove_finding(req, n)
+        for spec in add or []:
+            panel, damage_type, severity = spec.split(":")
+            review.add_finding(req, panel, damage_type, float(severity))
+        if undercarriage is not None:
+            review.set_flag(req, "undercarriage", _yes_no(undercarriage))
+        if engine_audio is not None:
+            review.set_flag(req, "engine", _yes_no(engine_audio))
+        review.confirm(req, checker)
+    except ValueError as err:
+        raise typer.BadParameter(str(err)) from err
+    _, html_path = review.save(req, review_file.parent, review_file)
+    typer.echo(review.render_text(req))
+    typer.echo(f"\nSaved {review_file} and {html_path}.")
 
 
 if __name__ == "__main__":

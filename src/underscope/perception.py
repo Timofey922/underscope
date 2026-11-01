@@ -30,5 +30,7 @@ class MockDetector:
     def detect(self, vehicle: VehicleRecord) -> list[DamageFinding]:
         found = list(vehicle.findings)
         for ref in vehicle.photo_refs:
-            found.extend(DamageFinding(**f) for f in self.labels.get(ref, []))
+            found.extend(
+                DamageFinding(**{"photo_ref": ref, **f}) for f in self.labels.get(ref, [])
+            )
         return found

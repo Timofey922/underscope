@@ -66,6 +66,8 @@ class DamageFinding(BaseModel):
     damage_type: DamageType
     severity: float = Field(ge=0, le=1)
     confidence: float = Field(ge=0, le=1)
+    photo_ref: str | None = None  # photo the finding came from, when known
+    verified: bool = False  # confirmed (or added) by a human checker
 
 
 class DispositionOption(BaseModel):

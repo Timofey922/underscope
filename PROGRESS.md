@@ -3,7 +3,7 @@
 ## Checklist
 - [x] M1 Scaffold
 - [x] M2 Domain model
-- [ ] M3 config/assumptions.yaml
+- [x] M3 config/assumptions.yaml
 - [ ] M4 Valuation
 - [ ] M5 Decision engine (subagent review before commit)
 - [ ] M6 Data (fixtures, stubs, synthetic generator)
@@ -18,4 +18,4 @@
 none
 
 ## Next step
-M3: config/assumptions.yaml + loader (src/underscope/config.py).
+M4: valuation in src/underscope/valuation.py (uses default_assumptions()).

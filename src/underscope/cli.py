@@ -676,6 +676,21 @@ def import_coco_cmd(
     )
 
 
+@app.command("demo")
+def demo_cmd(
+    out: Annotated[FsPath, typer.Option("--out", help="Folder to write the demo into.")] = FsPath(
+        "demo"
+    ),
+) -> None:
+    """Write sample review sheets (drawn photos, damage boxes) to open in a browser. Free."""
+    from underscope import demo
+
+    index = demo.build(out)
+    typer.echo(f"Open {index} in a browser. Photos are drawings; damage is the fixtures'.\n"
+               f"Try a checker edit: underscope confirm {index.parent}/FIXDENT0000000001.json "
+               "--checker NAME")  # fmt: skip
+
+
 @app.command("calibrate")
 def calibrate_cmd(
     labels: Annotated[FsPath, typer.Argument(exists=True, help="True labels JSON.")],

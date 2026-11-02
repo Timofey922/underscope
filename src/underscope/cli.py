@@ -686,6 +686,26 @@ def import_coco_cmd(
     )
 
 
+@app.command("contracts")
+def contracts_cmd(
+    check: Annotated[
+        bool, typer.Option("--check", help="Only check the files match the code (exit 1 if not).")
+    ] = False,
+) -> None:
+    """Write the JSON Schemas for every file passed between stages to docs/contracts/."""
+    from underscope import contracts
+
+    if check:
+        drift = contracts.stale()
+        if drift:
+            typer.echo(f"Out of date: {', '.join(drift)}. Run: underscope contracts")
+            raise typer.Exit(1)
+        typer.echo("Contracts match the code.")
+        return
+    for path in contracts.write():
+        typer.echo(f"Wrote {path}")
+
+
 @app.command("demo")
 def demo_cmd(
     out: Annotated[FsPath, typer.Option("--out", help="Folder to write the demo into.")] = FsPath(

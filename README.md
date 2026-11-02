@@ -168,7 +168,9 @@ saves a state file; `--collect STATE` scores the results once the batch has ende
 should mean what it says. `underscope calibrate LABELS PREDICTIONS` learns, per confidence band,
 how often predictions were right (smoothed; bands under 20 predictions left alone; rates made
 non-decreasing). `--calibration FILE` applies it in `evaluate`, `batch` and `detect-eval`. Fit
-on one set of photos and score on another.
+on one set of photos and score on another: `--holdout 0.3` keeps 30% of the photos out of the
+fit (seeded split, `--seed`) and reports the Brier score on them raw and calibrated, saying
+plainly when calibration doesn't help.
 
 **Getting labels.**
 
@@ -209,8 +211,10 @@ marked as one of:
 
 The terminal shows this checklist. `reviews/<VIN>.html` shows a top-down car diagram with every
 damaged area colored by severity (minor below 0.33, moderate to 0.66, severe above), verify areas
-(including sides no photo shows) outlined with dashes, the findings table with photo refs, and
-the reasons for review. Fenders, doors and quarter panels are drawn left and right and colored
+(including sides no photo shows) outlined with dashes, the findings table, and the reasons
+for review. A photo section shows each photo (linked relative to the sheet from `--photo-root`)
+with its reported view and the findings it supports; each finding links to its photo, so the
+checker confirms damage against the evidence. A missing file is called out, not shown broken. Fenders, doors and quarter panels are drawn left and right and colored
 per side; a finding without a known side colors both.
 
 **How the checker answers.**

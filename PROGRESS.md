@@ -93,6 +93,11 @@ Stage 3 (autonomous hour, 2026-11-01): photo views and coverage (a panel side no
 per-side coloring on the review diagram and sided checker edits; confidence calibration
 (`underscope calibrate`, `--calibration` on evaluate/batch/detect-eval).
 
+Stage 4 (autonomous session, 2026-11-01): the review sheet shows each photo with its view and
+the findings it supports (findings link to their photo); `calibrate --holdout` checks the table
+on photos it wasn't fitted on; `batch --detector claude` now shows a cost estimate and needs
+`--yes`, like detect-eval. Also published a codemap artifact of the repo.
+
 ### Detector test data (needs the user)
 | Dataset | Labels | License / access | Verdict |
 |---|---|---|---|

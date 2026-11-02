@@ -138,8 +138,23 @@ door seen in two photos.
 
   Photos overlap, so the detector merges findings across a vehicle's photos: one finding per
   panel, side and damage type, at its worst severity and most confident view. Without that, a
-  dent visible from two angles would be costed twice. Photos over 5 MB or longer than 1568 px
-  are shrunk (upright, JPEG) before sending, which needs Pillow from the `vision` extra.
+  dent visible from two angles would be costed twice. Each photo's own findings are kept too
+  (`sightings`), so the review sheet can still mark the dent on every photo that shows it.
+  Photos over 5 MB, longer than 1568 px, or stored sideways with an EXIF rotation tag are
+  re-encoded upright as JPEG before sending (needs Pillow from the `vision` extra), so the
+  model's boxes match the photo as a browser shows it.
+
+  Each finding comes with an approximate **box**: (left, top, right, bottom) as fractions of the
+  photo. It points the checker at the spot; it isn't a measurement.
+
+  **Answers are cached** in `.cache/vision/` (git-ignored), keyed by the photo's bytes, model,
+  effort and a hash of the prompt and answer schema. Re-running `evaluate` or `batch` is then
+  free and returns the same findings. That also keeps confirmed reviews valid: the review
+  fingerprint covers the detected findings, and a fresh answer that differed slightly would
+  send every car back to the checker. Calibration is applied after the cache, so a new table
+  takes effect without new calls. `--no-cache` asks again. Every paid command (`evaluate`,
+  `batch`, `detect-eval`) prints a cost estimate for the photos not yet answered and needs
+  `--yes`.
 
   The detector also reports each photo's view (front, left, rear_right, top, close_up, ...).
   `coverage.py` maps views to the panel sides they show. A panel side no photo shows isn't
@@ -156,13 +171,16 @@ labeled photos and reports:
 - calibration: for each confidence band, how often those predictions were right, plus a Brier
   score
 - missed frame damage, and false alarms on clean photos
+- box placement, when labels have boxes (COCO imports do): mean IoU on matched findings and
+  how many boxes overlap the label by IoU 0.5 or more
 
 Labels use the `MockDetector` format (`{photo_ref: [finding, ...]}`). `--match-by type` matches
 on damage type alone, for datasets whose damage photos have no panel labels. A Claude run prints
 a cost estimate and needs `--yes`; afterwards it reports the actual cost from token usage.
 `--save` keeps the predictions and `--predictions` re-scores them later without new API calls.
 `--batch` submits the photos as one Message Batch at half price (results within 24 hours) and
-saves a state file; `--collect STATE` scores the results once the batch has ended.
+saves a state file; `--collect STATE` scores the results once the batch has ended. Photos
+already in the cache aren't resubmitted; `--collect` scores them from the cache.
 
 **Calibrating confidence.** Confidence scales expected repair cost and triggers review, so it
 should mean what it says. `underscope calibrate LABELS PREDICTIONS` learns, per confidence band,
@@ -214,8 +232,11 @@ damaged area colored by severity (minor below 0.33, moderate to 0.66, severe abo
 (including sides no photo shows) outlined with dashes, the findings table, and the reasons
 for review. A photo section shows each photo (linked relative to the sheet from `--photo-root`)
 with its reported view and the findings it supports; each finding links to its photo, so the
-checker confirms damage against the evidence. A missing file is called out, not shown broken. Fenders, doors and quarter panels are drawn left and right and colored
-per side; a finding without a known side colors both.
+checker confirms damage against the evidence. Each sighting is drawn on its photo as a box
+colored by severity and numbered with its finding (`?` when the current findings no longer
+include it). A missing file is called out, not shown broken. Fenders, doors and quarter panels
+are drawn left and right on the diagram and colored per side; a finding without a known side
+colors both.
 
 **How the checker answers.**
 
@@ -419,8 +440,8 @@ Reports: `reports/backtest.md`, `reports/sensitivity.md`, `reports/case_studies.
 - Every number is a placeholder. `docs/DATA_REQUIREMENTS.md` lists the fields, volumes and labels
   needed from ACV and Copart (via a data partnership; the project never scrapes).
 - The Claude detector hasn't been scored on real labeled photos yet; see "Detector test data"
-  in `PROGRESS.md` for the dataset decision. It reports side and photo view, but
-  not the damage's position within the photo, so the sheet can't mark exact spots yet.
+  in `PROGRESS.md` for the dataset decision. Its boxes are approximate and unscored until
+  that run; `detect-eval` reports their overlap with labeled boxes.
 - Synthetic outcomes are a single realized draw per path, so per-vehicle results are noisy;
   the heavy band's 66% ceiling is mostly that noise.
 - On a totaled claim the model doesn't yet include the insurer's own costs (payout to the

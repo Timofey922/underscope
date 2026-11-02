@@ -98,6 +98,17 @@ the findings it supports (findings link to their photo); `calibrate --holdout` c
 on photos it wasn't fitted on; `batch --detector claude` now shows a cost estimate and needs
 `--yes`, like detect-eval. Also published a codemap artifact of the repo.
 
+Stage 5 (autonomous hour, 2026-11-01):
+- fix: Claude's answers are cached (.cache/vision, keyed by photo bytes, model, effort, prompt
+  hash). Before, every `batch` re-run paid again, and slightly different answers changed the
+  review fingerprint, so confirmed reviews were voided on every re-run with the claude detector.
+- Damage boxes: the detector returns an approximate box per finding; the review sheet draws
+  every sighting on its photo, numbered by finding. COCO imports carry boxes; detect-eval
+  scores them (mean IoU, boxes on target at IoU 0.5).
+- fix: EXIF-rotated photos are sent upright so boxes line up with what the browser shows.
+- The sheet's box overlay was checked through tests only; no browser is available here to look
+  at it.
+
 ### Detector test data (needs the user)
 | Dataset | Labels | License / access | Verdict |
 |---|---|---|---|

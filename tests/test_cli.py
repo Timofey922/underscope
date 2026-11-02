@@ -423,3 +423,15 @@ def test_claude_boxes_reach_the_saved_review(tmp_path, monkeypatch):
     assert len(saved["findings"]) == 1  # merged
     assert [s["photo_ref"] for s in saved["sightings"]] == ["a.jpg", "b.jpg"]
     assert (rev / "FIXDENT0000000001.html").read_text().count("<b>#1</b>") == 2
+
+
+def test_confirm_regrades_with_severity(tmp_path):
+    reviews = tmp_path / "rev"
+    runner.invoke(app, ["evaluate", str(FIXTURE_DIR / "dent_600.json"), "--no-interactive",
+                        "--review-dir", str(reviews)])  # fmt: skip
+    path = reviews / "FIXDENT0000000001.json"
+    r = runner.invoke(app, ["confirm", str(path), "--checker", "Lee", "--severity", "1:0.7"])
+    assert r.exit_code == 0, r.output
+    assert json.loads(path.read_text())["findings"][0]["severity"] == 0.7
+    r = runner.invoke(app, ["confirm", str(path), "--checker", "Lee", "--severity", "1:2"])
+    assert r.exit_code != 0

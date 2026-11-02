@@ -205,3 +205,15 @@ def test_without_sightings_findings_with_boxes_are_marked(tmp_path):
                         photo_ref="a.jpg", box=(0.1, 0.1, 0.2, 0.2))  # fmt: skip
     req = review.build_request(veh(photo_refs=["a.jpg"]), [hit], photo_root=tmp_path)
     assert 'class="mark sev-low"' in review.render_html(req, html_dir=tmp_path)
+
+
+def test_pending_sheet_has_command_builder_confirmed_does_not():
+    req = review.build_request(veh(), [f()])
+    page = review.render_html(req, json_ref="reviews/V1.json")
+    assert 'id="fix"' in page and '"json": "reviews/V1.json"' in page
+    assert "underscope confirm" not in page.split('id="fix-data"')[0].split("<h2>Confirm")[0]
+    with pytest.raises(ValueError):
+        review.set_severity(req, 1, 1.5)
+    review.confirm(req, "Lee")
+    page = review.render_html(req)
+    assert 'id="fix"' not in page and "<h2>Confirmed</h2>" in page

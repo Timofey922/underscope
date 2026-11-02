@@ -323,6 +323,10 @@ def confirm_cmd(
         list[int] | None,
         typer.Option("--remove", help="Remove finding #N as listed (repeatable)."),
     ] = None,
+    severity: Annotated[
+        list[str] | None,
+        typer.Option("--severity", help="Re-grade finding #N: N:severity (repeatable)."),
+    ] = None,
     undercarriage: Annotated[
         str | None, typer.Option("--undercarriage", help="yes|no: undercarriage damage.")
     ] = None,
@@ -333,7 +337,13 @@ def confirm_cmd(
     """Checker confirms (and optionally corrects) a pending damage review."""
     req = review.load(review_file)
     try:
-        # Remove first, highest number first, so the numbers match what the checker saw.
+        # Numbers are as the checker saw them: re-grade, then remove highest first, then add.
+        for spec in severity or []:
+            number, _, value = spec.partition(":")
+            try:
+                review.set_severity(req, int(number), float(value))
+            except ValueError as err:
+                raise ValueError(f"--severity {spec}: expected N:severity ({err})") from err
         for n in sorted(remove or [], reverse=True):
             review.remove_finding(req, n)
         for spec in add or []:

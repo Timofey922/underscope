@@ -215,6 +215,8 @@ def remove_finding(req: ReviewRequest, number: int) -> None:
 def set_severity(req: ReviewRequest, number: int, severity: float) -> None:
     if not 1 <= number <= len(req.findings):
         raise ValueError(f"no finding #{number}")
+    if not 0 <= severity <= 1:
+        raise ValueError(f"severity must be from 0 to 1, not {severity}")
     f = req.findings[number - 1]
     req.findings[number - 1] = f.model_copy(update={"severity": severity, "verified": True})
 
@@ -253,7 +255,7 @@ def save(
         html_path = json_path.with_suffix(".html")
     json_path.parent.mkdir(parents=True, exist_ok=True)
     json_path.write_text(req.model_dump_json(indent=2))
-    html_path.write_text(render_html(req, html_dir=html_path.parent))
+    html_path.write_text(render_html(req, html_dir=html_path.parent, json_ref=str(json_path)))
     return json_path, html_path
 
 
@@ -377,12 +379,71 @@ def _area_label(f: DamageFinding) -> str:
     return f"{f.side} {f.panel.value}" if f.side and f.side != "center" else f.panel.value
 
 
+# The sheet's command builder; a file of its own so it reads as JavaScript.
+_BUILDER_JS = (FsPath(__file__).parent / "review_confirm.js").read_text()
+
+
+def _flag_text(value: bool | None) -> str:
+    return "not inspected" if value is None else "yes" if value else "no"
+
+
+def _builder(req: ReviewRequest, json_ref: str) -> str:
+    """Form that writes the `underscope confirm` command for the checker's corrections. It
+    only builds text; nothing is sent or saved from the page."""
+    e = html.escape
+    rows = "".join(
+        f"<tr><td>#{n}</td><td>{e(_area_label(f))} {e(f.damage_type.value)}</td>"
+        f'<td><input type="number" id="sev-{n}" min="0" max="1" step="0.05" '
+        f'value="{f.severity:g}" aria-label="Severity of finding {n}"></td>'
+        f'<td><input type="checkbox" id="rm-{n}" aria-label="Remove finding {n}"></td></tr>'
+        for n, f in enumerate(req.findings, 1)
+    ) or '<tr><td colspan="4">No findings to correct.</td></tr>'
+    panels = "".join(f'<option value="{p.value}">{p.value}</option>' for p in Panel)
+    types = "".join(f'<option value="{t.value}">{t.value}</option>' for t in DamageType)
+    v = req.vehicle
+    data = json.dumps({"json": json_ref, "findings": [
+        {"n": n, "severity": f.severity} for n, f in enumerate(req.findings, 1)
+    ]}).replace("</", "<\\/")  # fmt: skip
+    flag = ('<option value="">as recorded: {now}</option><option value="yes">yes</option>'
+            '<option value="no">no</option>')  # fmt: skip
+    return f"""<h2>Confirm or correct</h2>
+<p>Check each finding against the photos, mark corrections here, then run the command below.
+This page only writes the command; nothing is saved until you run it.</p>
+<form id="fix" class="fix">
+<div class="table-wrap"><table>
+<tr><th></th><th>Finding</th><th>Severity</th><th>Remove</th></tr>{rows}</table></div>
+<fieldset><legend>Add damage the detector missed</legend><div class="row">
+<label>Panel <select id="add-panel">{panels}</select></label>
+<label>Side <select id="add-side"><option value="">unknown</option><option>left</option>
+<option>right</option><option>center</option></select></label>
+<label>Type <select id="add-type">{types}</select></label>
+<label>Severity <input type="number" id="add-sev" min="0" max="1" step="0.05" value="0.3"></label>
+<button type="button" id="add-btn">Add</button></div>
+<div id="add-msg" class="muted" role="status"></div><ul id="added"></ul></fieldset>
+<div class="row">
+<label>Undercarriage damage <select id="uc">{flag.format(now=_flag_text(v.undercarriage_damage))}
+</select></label>
+<label>Abnormal engine audio <select id="eng">
+{flag.format(now=_flag_text(v.engine_audio_abnormal))}</select></label>
+<label>Checker name <input type="text" id="checker" autocomplete="name"></label></div>
+<pre id="cmd" class="cmd"></pre>
+<div class="row"><button type="button" id="copy">Copy command</button>
+<span id="copied" class="muted" role="status"></span></div>
+</form>
+<script type="application/json" id="fix-data">{data}</script>
+<script>{_BUILDER_JS}</script>"""
+
+
 def render_html(
-    req: ReviewRequest, standalone: bool = True, html_dir: FsPath | None = None
+    req: ReviewRequest,
+    standalone: bool = True,
+    html_dir: FsPath | None = None,
+    json_ref: str | None = None,
 ) -> str:
     """standalone=False leaves out the doctype/html/head/body wrapper, for hosts that add it.
 
-    html_dir is where the sheet will be saved; photo links are relative to it.
+    html_dir is where the sheet will be saved; photo links are relative to it. json_ref is
+    how the confirm command names the review file (default <VIN>.json).
     """
     e = html.escape
     v = req.vehicle
@@ -450,6 +511,11 @@ def render_html(
     else:
         status = "Awaiting checker confirmation"
     photos = _render_photos(req, html_dir)
+    if req.status == "pending":
+        confirm_html = _builder(req, json_ref or f"{req.vin}.json")
+    else:
+        confirm_html = ("<h2>Confirmed</h2><p>The decision uses these findings. To change them, "
+                        "start a new review.</p>")  # fmt: skip
     head = f"""<title>Damage review {e(req.vin)}</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <style>
@@ -515,6 +581,19 @@ th {{ font-weight:600; color:var(--muted); font-size:13px; }}
 .photos figcaption {{ padding:8px 10px; overflow-wrap:anywhere; }}
 .nophoto {{ aspect-ratio:4/3; display:grid; place-items:center; background:var(--panel);
   color:var(--muted); font-size:13px; }}
+.fix {{ display:grid; gap:12px; }}
+.fix .row {{ display:flex; flex-wrap:wrap; gap:8px 16px; align-items:end; }}
+.fix label {{ display:grid; gap:2px; font-size:13px; color:var(--muted); }}
+.fix input, .fix select, .fix button {{ font:inherit; color:var(--fg); background:var(--bg);
+  border:1px solid var(--line); border-radius:6px; padding:4px 8px; }}
+.fix input[type=number] {{ width:5.5em; }}
+.fix button {{ cursor:pointer; background:var(--panel); }}
+.fix button:focus-visible, .fix input:focus-visible, .fix select:focus-visible {{
+  outline:2px solid var(--verify); outline-offset:1px; }}
+.fix fieldset {{ border:1px solid var(--line); border-radius:8px; margin:0; padding:8px 12px; }}
+.fix ul {{ margin:6px 0 0; padding-left:18px; }}
+.cmd {{ margin:0; padding:10px 12px; background:var(--panel); border-radius:6px;
+  white-space:pre-wrap; overflow-wrap:anywhere; font-size:13px; }}
 code {{ background:var(--panel); padding:1px 5px; border-radius:4px; overflow-wrap:anywhere; }}
 </style>"""
     body = f"""<main>
@@ -536,11 +615,7 @@ code {{ background:var(--panel); padding:1px 5px; border-radius:4px; overflow-wr
 {findings}</table></div>
 <h2>Why this needs a careful look</h2><ul>{reasons}</ul>
 <h2>Photos</h2>{photos}
-<h2>How to confirm</h2>
-<p>Check every damaged and verify area against the photos or the car. Then either answer the
-prompt in the terminal, or run <code>underscope confirm {e(req.vin)}.json --checker NAME</code>
-with <code>--add panel:type:severity</code>, <code>--remove N</code>,
-<code>--undercarriage yes|no</code> or <code>--engine-audio yes|no</code> as needed.</p>
+{confirm_html}
 </div></div></main>
 """
     if not standalone:

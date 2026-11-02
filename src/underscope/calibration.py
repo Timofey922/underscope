@@ -9,10 +9,11 @@ Fit on one set of photos and evaluate on another; scoring on the fitting photos 
 from __future__ import annotations
 
 import json
+import random
 from pathlib import Path as FsPath
 from typing import Any
 
-from underscope.detector_eval import CONF_BINS, Findings, match
+from underscope.detector_eval import CONF_BINS, Findings, match, score
 
 
 def fit(truth: Findings, pred: Findings, by: str = "panel", min_count: int = 20) -> dict[str, Any]:
@@ -57,6 +58,30 @@ def apply(confidence: float, calibration: dict[str, Any] | None) -> float:
         if confidence <= b["high"]:
             return confidence if b["calibrated"] is None else b["calibrated"]
     return confidence
+
+
+def split(refs: list[str], holdout: float, seed: int = 0) -> tuple[list[str], list[str]]:
+    """Shuffle photo refs (seeded) into (fit, held-out); held-out gets round(holdout * n)."""
+    if not 0 <= holdout < 1:
+        raise ValueError("holdout must be at least 0 and below 1")
+    refs = sorted(refs)
+    random.Random(seed).shuffle(refs)
+    n_out = round(holdout * len(refs))
+    return sorted(refs[n_out:]), sorted(refs[:n_out])
+
+
+def calibrated(pred: Findings, calibration: dict[str, Any] | None) -> Findings:
+    return {ref: [f.model_copy(update={"confidence": apply(f.confidence, calibration)})
+                  for f in items]
+            for ref, items in pred.items()}  # fmt: skip
+
+
+def holdout_check(
+    truth: Findings, pred: Findings, calibration: dict[str, Any], by: str = "panel"
+) -> tuple[float, float]:
+    """Brier score (lower is better) on photos the table wasn't fitted on: (raw, calibrated)."""
+    raw = score(truth, pred, by=by).brier
+    return raw, score(truth, calibrated(pred, calibration), by=by).brier
 
 
 def save(calibration: dict[str, Any], path: str | FsPath) -> FsPath:

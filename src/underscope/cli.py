@@ -621,6 +621,12 @@ def calibrate_cmd(
         int, typer.Option("--min-count", min=1, help="Fewest predictions to correct a band.")
     ] = 20,
     match_by: Annotated[str, typer.Option("--match-by", help="panel or type.")] = "panel",
+    holdout: Annotated[
+        float,
+        typer.Option("--holdout", min=0.0, max=0.9,
+                     help="Share of photos kept out of the fit and used to check it."),
+    ] = 0.0,  # fmt: skip
+    seed: Annotated[int, typer.Option("--seed", help="Seed for the holdout split.")] = 0,
 ) -> None:
     """Learn how often each stated confidence is actually right, for --calibration."""
     from underscope import calibration as cal
@@ -628,11 +634,24 @@ def calibrate_cmd(
 
     if match_by not in ("panel", "type"):
         raise typer.BadParameter("--match-by must be panel or type")
-    table = cal.fit(load_findings(labels), load_findings(predictions), match_by, min_count)
+    truth, pred = load_findings(labels), load_findings(predictions)
+    fit_refs, test_refs = cal.split(list(truth), holdout, seed)
+    table = cal.fit({r: truth[r] for r in fit_refs}, pred, match_by, min_count)
     cal.save(table, out)
     typer.echo(cal.render(table))
-    typer.echo(f"\nSaved {out}. Score it on different photos than these: "
-               "detect-eval ... --calibration " + str(out))  # fmt: skip
+    if test_refs:
+        raw, after = cal.holdout_check({r: truth[r] for r in test_refs}, pred, table, match_by)
+        verdict = "helps" if after < raw else "doesn't help; don't use it" if after > raw else (
+            "changes nothing")  # fmt: skip
+        typer.echo(
+            f"\nFitted on {len(fit_refs)} photos, checked on {len(test_refs)} held-out photos.\n"
+            f"Brier score on held-out photos (lower is better): {raw:.3f} raw, "
+            f"{after:.3f} calibrated. Calibration {verdict}."
+        )
+        typer.echo(f"Saved {out}.")
+    else:
+        typer.echo(f"\nSaved {out}. Score it on different photos than these: "
+                   "detect-eval ... --calibration " + str(out) + " (or use --holdout)")  # fmt: skip
 
 
 class _MockPhotoDetector:

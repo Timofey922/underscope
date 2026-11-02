@@ -79,3 +79,22 @@ def test_calibrate_cli_then_score_with_it(tmp_path):
         return float(line.split("|")[2])
 
     assert brier(fixed.output) < brier(plain.output)
+
+
+def test_split_is_seeded_and_disjoint():
+    refs = [f"p{i}" for i in range(10)]
+    fit_refs, test_refs = calibration.split(refs, 0.3, seed=1)
+    assert len(test_refs) == 3 and not set(fit_refs) & set(test_refs)
+    assert set(fit_refs) | set(test_refs) == set(refs)
+    assert calibration.split(refs, 0.3, seed=1) == (fit_refs, test_refs)
+    assert calibration.split(refs, 0.0) == (sorted(refs), [])
+    with pytest.raises(ValueError):
+        calibration.split(refs, 1.0)
+
+
+def test_holdout_check_shows_calibration_helping_an_overconfident_detector():
+    truth, pred = dataset(30, 30, 0, 0)  # says 0.95, right half the time
+    cal = calibration.fit(truth, pred)
+    raw, after = calibration.holdout_check(truth, pred, cal)
+    assert after < raw
+    assert raw == pytest.approx((30 * 0.05**2 + 30 * 0.95**2) / 60)

@@ -300,3 +300,24 @@ def test_confirm_add_accepts_side(tmp_path):
     assert json.loads(req.read_text())["findings"][-1]["side"] == "right"
     r = runner.invoke(app, ["confirm", str(req), "--checker", "a", "--add", "door:dent:0.3:x:y"])
     assert r.exit_code != 0
+
+
+def test_calibrate_with_holdout(tmp_path):
+    from underscope.detector_eval import save_findings
+    from underscope.models import DamageFinding
+
+    def dent(panel):
+        return DamageFinding(panel=panel, damage_type="dent", severity=0.4, confidence=0.95)
+
+    truth = {f"p{i}": [dent("door")] for i in range(80)}
+    pred = {f"p{i}": [dent("door" if i % 2 else "roof")] for i in range(80)}
+    save_findings(truth, tmp_path / "labels.json")
+    save_findings(pred, tmp_path / "pred.json")
+    out = tmp_path / "cal.json"
+    result = runner.invoke(app, ["calibrate", str(tmp_path / "labels.json"),
+                                 str(tmp_path / "pred.json"), "--out", str(out),
+                                 "--holdout", "0.25"])  # fmt: skip
+    assert result.exit_code == 0, result.output
+    assert "checked on 20 held-out photos" in result.output
+    assert "Calibration helps" in result.output
+    assert out.exists()

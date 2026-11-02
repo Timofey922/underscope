@@ -109,6 +109,19 @@ Stage 5 (autonomous hour, 2026-11-01):
 - The sheet's box overlay was checked through tests only; no browser is available here to look
   at it.
 
+Stage 6 (autonomous hour, 2026-11-01; user asked for a pitchable demo, contracts, docs and a
+codemap tied to the idea):
+- The review sheet writes the `confirm` command from the checker's corrections (tested under
+  Node); `confirm --severity N:value`.
+- `underscope demo`: a walkthrough (demo/index.html) of the three fixture cars with drawn
+  photos, review sheets and each car's decision. Also published as a Claude artifact.
+- Contracts: `underscope contracts` generates JSON Schemas (docs/contracts/) from the code; a
+  test fails on drift. docs/CONTRACTS.md states each stage's guarantees and the enforcing test.
+- docs/PITCH.md (script, ask, Q&A) and docs/CODEMAP.md (idea -> code).
+- Correction: the built-in estimate is about $0.07 per photo, so the first 20-photo run is about
+  $1.40 live or $0.70 as a batch. Earlier messages to the user said $0.45; that was wrong.
+- "Contracts" was read as data/interface contracts, not legal agreements; confirm with the user.
+
 ### Detector test data (needs the user)
 | Dataset | Labels | License / access | Verdict |
 |---|---|---|---|

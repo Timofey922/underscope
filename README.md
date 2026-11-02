@@ -19,6 +19,16 @@ calls the network. Fixtures and synthetic data are clearly labeled. Nothing here
 This README explains the implementation: what each stage does, the formulas it uses, and why
 it is built that way. `PROGRESS.md` holds the review log and open decisions.
 
+**See it in two minutes:** `.venv/bin/underscope demo`, then open `demo/index.html`: three cars
+from photos to checker review to the recommended exit, no API key needed.
+
+| Doc | For |
+|---|---|
+| [`docs/PITCH.md`](docs/PITCH.md) | A ten-minute demo script, the ask, and likely questions |
+| [`docs/CODEMAP.md`](docs/CODEMAP.md) | How the code is organized and how each part serves the idea |
+| [`docs/CONTRACTS.md`](docs/CONTRACTS.md) | Every hand-off's format and guarantees; JSON Schemas in `docs/contracts/` |
+| [`docs/DATA_REQUIREMENTS.md`](docs/DATA_REQUIREMENTS.md) | What a data partnership must supply |
+
 ## Setup
 
 ```bash

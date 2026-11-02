@@ -223,3 +223,45 @@ def test_photo_views_recorded(tmp_path):
     det.detect(vehicle("a.png", "b.png"))
     assert det.views == {"a.png": "front_left", "b.png": "unknown"}
     assert SCHEMA["required"][0] == "view"
+
+
+def test_cached_answer_is_reused_and_keyed_by_settings(tmp_path):
+    (tmp_path / "a.png").write_bytes(PNG)
+    cache = tmp_path / "cache"
+    answer = {"findings": [finding()], "unmapped_damage": ["flat tire"], "view": "left"}
+    first = ClaudeVisionDetector(tmp_path, client=FakeClient(reply(answer)), cache_dir=cache)
+    out1 = first.detect_photo("a.png")
+    # Second run: no replies queued, so any API call would fail.
+    again = ClaudeVisionDetector(tmp_path, client=FakeClient(), cache_dir=cache)
+    assert again.uncached(["a.png"]) == []
+    assert again.detect_photo("a.png") == out1
+    assert again.notes["a.png"] == ["flat tire"] and again.views["a.png"] == "left"
+    assert again.cache_hits == 1 and again.usage == []
+    # A different effort is a different question; so is a changed photo.
+    assert ClaudeVisionDetector(tmp_path, cache_dir=cache, effort="high").uncached(["a.png"])
+    (tmp_path / "a.png").write_bytes(PNG + b"\x01")
+    assert again.uncached(["a.png"]) == ["a.png"]
+
+
+def test_cache_stores_raw_answer_and_skips_failures(tmp_path):
+    (tmp_path / "a.png").write_bytes(PNG)
+    cache = tmp_path / "cache"
+    det = ClaudeVisionDetector(tmp_path, client=FakeClient(reply("not json")), cache_dir=cache)
+    with pytest.raises(DetectionError):
+        det.detect_photo("a.png")
+    assert not cache.exists()
+    ClaudeVisionDetector(tmp_path, client=FakeClient(reply(
+        {"findings": [finding(conf=0.95)], "unmapped_damage": []})), cache_dir=cache,
+    ).detect_photo("a.png")  # fmt: skip
+    # Calibration applies on the way out, so a new table changes cached findings too.
+    table = {"bins": [{"low": 0.0, "high": 1.0, "calibrated": 0.5}]}
+    det = ClaudeVisionDetector(tmp_path, client=FakeClient(), cache_dir=cache, calibration=table)
+    assert det.detect_photo("a.png")[0].confidence == 0.5
+
+
+def test_no_cache_dir_means_no_cache(tmp_path):
+    (tmp_path / "a.png").write_bytes(PNG)
+    det = ClaudeVisionDetector(tmp_path, client=FakeClient(reply(
+        {"findings": [], "unmapped_damage": []})))  # fmt: skip
+    det.detect_photo("a.png")
+    assert det.uncached(["a.png"]) == ["a.png"]

@@ -219,7 +219,7 @@ def test_evaluate_with_claude_detector_sends_unmapped_damage_to_checker(tmp_path
         "findings": [{"panel": "door", "damage_type": "dent", "severity": 0.5,
                       "confidence": 0.9}],
         "unmapped_damage": ["cracked left mirror"]}))  # fmt: skip
-    r = runner.invoke(app, ["evaluate", str(vfile), "--detector", "claude", "--photo-root",
+    r = runner.invoke(app, ["evaluate", str(vfile), "--detector", "claude", "--yes", "--photo-root",
                             str(tmp_path), "--no-interactive", "--review-dir",
                             str(tmp_path / "rev")])  # fmt: skip
     assert r.exit_code == AWAITING_CONFIRMATION, r.output
@@ -237,7 +237,7 @@ def test_evaluate_reports_detection_failure_cleanly(tmp_path, monkeypatch):
     car = json.loads((FIXTURE_DIR / "dent_600.json").read_text())
     vfile.write_text(json.dumps({**car, "photo_refs": ["door.jpg"]}))
     _fake_claude(monkeypatch, reply({"findings": []}, stop="refusal"))
-    r = runner.invoke(app, ["evaluate", str(vfile), "--detector", "claude", "--photo-root",
+    r = runner.invoke(app, ["evaluate", str(vfile), "--detector", "claude", "--yes", "--photo-root",
                             str(tmp_path), "--skip-confirm"])  # fmt: skip
     assert r.exit_code == 2 and "Damage detection failed" in r.output
 
@@ -281,7 +281,7 @@ def test_claude_views_reach_the_review_sheet(tmp_path, monkeypatch):
     vfile.write_text(json.dumps({**car, "findings": [], "photo_refs": ["left.jpg"]}))
     _fake_claude(monkeypatch, reply({"view": "left", "findings": [], "unmapped_damage": []}))
     rev = tmp_path / "rev"
-    r = runner.invoke(app, ["evaluate", str(vfile), "--detector", "claude", "--photo-root",
+    r = runner.invoke(app, ["evaluate", str(vfile), "--detector", "claude", "--yes", "--photo-root",
                             str(tmp_path), "--no-interactive",
                             "--review-dir", str(rev)])  # fmt: skip
     assert r.exit_code == AWAITING_CONFIRMATION, r.output
@@ -329,3 +329,73 @@ def test_batch_with_claude_detector_needs_yes(tmp_path):
     assert result.exit_code == 1
     assert "photos to Claude, roughly $" in result.output and "--yes" in result.output
     assert not list(tmp_path.iterdir())  # nothing ran
+
+
+def test_batch_with_claude_keeps_confirmed_review_on_rerun(tmp_path, monkeypatch):
+    """Re-running batch must not re-ask Claude (cost) or void the checker's review."""
+    from test_vision import PNG, reply
+
+    cars = tmp_path / "cars"
+    cars.mkdir()
+    (tmp_path / "door.jpg").write_bytes(PNG)
+    car = json.loads((FIXTURE_DIR / "dent_600.json").read_text())
+    (cars / "car.json").write_text(json.dumps({**car, "findings": [], "photo_refs": ["door.jpg"]}))
+    client = _fake_claude(monkeypatch, reply({"findings": [
+        {"panel": "door", "damage_type": "dent", "severity": 0.5, "confidence": 0.9,
+         "side": "left"}], "unmapped_damage": [], "view": "left"}))  # fmt: skip
+    rev = tmp_path / "rev"
+    args = ["batch", str(cars), "--detector", "claude", "--photo-root", str(tmp_path),
+            "--review-dir", str(rev)]  # fmt: skip
+    assert runner.invoke(app, args).exit_code == 1  # cost gate first
+    r = runner.invoke(app, [*args, "--yes"])
+    assert r.exit_code == AWAITING_CONFIRMATION, r.output
+    runner.invoke(app, ["confirm", str(rev / "FIXDENT0000000001.json"), "--checker", "Lee"])
+    r = runner.invoke(app, args)  # no --yes needed: the answer is saved
+    assert r.exit_code == 0, r.output
+    assert "1 decided, 0 awaiting" in r.output
+    assert len(client.calls) == 1
+
+
+def test_evaluate_no_cache_asks_again(tmp_path, monkeypatch):
+    from test_vision import PNG, reply
+
+    (tmp_path / "door.jpg").write_bytes(PNG)
+    vfile = tmp_path / "car.json"
+    car = json.loads((FIXTURE_DIR / "dent_600.json").read_text())
+    vfile.write_text(json.dumps({**car, "photo_refs": ["door.jpg"]}))
+    empty = {"findings": [], "unmapped_damage": []}
+    client = _fake_claude(monkeypatch, reply(empty), reply(empty))
+    args = ["evaluate", str(vfile), "--detector", "claude", "--photo-root", str(tmp_path),
+            "--skip-confirm"]  # fmt: skip
+    assert runner.invoke(app, [*args, "--yes"]).exit_code == 0
+    assert runner.invoke(app, args).exit_code == 0  # cached: free, no --yes
+    r = runner.invoke(app, [*args, "--no-cache"])
+    assert r.exit_code == 1 and "roughly $" in r.output
+    assert runner.invoke(app, [*args, "--no-cache", "--yes"]).exit_code == 0
+    assert len(client.calls) == 2
+
+
+def test_detect_eval_batch_sends_only_unanswered_photos(tmp_path, monkeypatch):
+    import underscope.vision as vision
+    from test_vision import PNG, FakeClient, batch_client, ok, reply
+
+    (tmp_path / "a.jpg").write_bytes(PNG)
+    (tmp_path / "b.jpg").write_bytes(PNG + b"b")
+    dent = {"panel": "door", "damage_type": "dent", "severity": 0.4, "confidence": 0.9}
+    live = FakeClient(reply({"findings": [dent], "unmapped_damage": []}))
+    batches = batch_client([ok("p0", {"findings": [], "unmapped_damage": []})])
+    client = type("Both", (), {"beta": live.beta, "messages": batches.messages})()
+    real = vision.ClaudeVisionDetector
+    monkeypatch.setattr(vision, "ClaudeVisionDetector",
+                        lambda root, **kw: real(root, client=client, **kw))  # fmt: skip
+    labels, state = _labels(tmp_path), tmp_path / "state.json"
+    base = ["detect-eval", str(labels), "--photo-root", str(tmp_path)]
+    assert runner.invoke(app, [*base, "--limit", "1", "--yes"]).exit_code == 0  # answers a.jpg
+    r = runner.invoke(app, [*base, "--batch"])
+    assert r.exit_code == 1 and "sends 1 photos" in r.output
+    r = runner.invoke(app, [*base, "--batch", "--yes", "--batch-state", str(state)])
+    assert "with 1 photos (1 already answered)" in r.output
+    assert json.loads(state.read_text())["photos"] == {"p0": "b.jpg"}
+    r = runner.invoke(app, [*base, "--collect", str(state)])
+    assert r.exit_code == 0, r.output
+    assert "Photos scored: 2 (0 failed" in r.output and "| Panel F1 | 100.0% |" in r.output

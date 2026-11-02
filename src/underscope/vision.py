@@ -12,6 +12,7 @@ Credentials come from the environment the Anthropic SDK reads (ANTHROPIC_API_KEY
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import json
 from pathlib import Path as FsPath
@@ -105,6 +106,15 @@ SCHEMA: dict[str, Any] = {
 }
 
 
+USER_TEXT = "Report the damage in this photo."
+# Changes whenever the instructions or the answer format change, so cached answers given to an
+# older prompt aren't reused.
+PROMPT_VERSION = hashlib.sha256(
+    (SYSTEM + json.dumps(SCHEMA, sort_keys=True) + USER_TEXT).encode()
+).hexdigest()[:12]
+DEFAULT_CACHE_DIR = FsPath(".cache/vision")
+
+
 class DetectionError(RuntimeError):
     """A photo couldn't be analyzed (missing file, refusal, unusable response)."""
 
@@ -155,6 +165,11 @@ def parse_response(
     response: Any, photo_ref: str
 ) -> tuple[list[DamageFinding], list[str], str]:
     """Turn a Messages API response into (findings, unmapped-damage notes, photo view)."""
+    return parse_text(response_text(response, photo_ref), photo_ref)
+
+
+def response_text(response: Any, photo_ref: str) -> str:
+    """The answer's JSON text, or DetectionError when the response has no usable answer."""
     if response.stop_reason == "refusal":
         raise DetectionError(f"{photo_ref}: the model declined to analyze this photo")
     if response.stop_reason == "max_tokens":
@@ -162,6 +177,10 @@ def parse_response(
     text = next((b.text for b in response.content if b.type == "text"), None)
     if text is None:
         raise DetectionError(f"{photo_ref}: response had no text block")
+    return text
+
+
+def parse_text(text: str, photo_ref: str) -> tuple[list[DamageFinding], list[str], str]:
     try:
         data = json.loads(text)
         findings = [
@@ -187,6 +206,10 @@ class ClaudeVisionDetector:
     photo_root: directory that vehicle.photo_refs are relative to.
     client: an anthropic.Anthropic (or a stand-in with the same beta.messages.create);
     created on first use when omitted, so importing this module needs no credentials.
+    cache_dir: where answers are kept, keyed by the photo's bytes, model, effort and prompt.
+    A re-run then costs nothing and returns the same findings, so a confirmed review isn't
+    sent back to the checker just because the model answered slightly differently. None
+    turns caching off.
     """
 
     def __init__(
@@ -196,6 +219,7 @@ class ClaudeVisionDetector:
         model: str = MODEL,
         effort: str = "medium",
         calibration: dict[str, Any] | None = None,
+        cache_dir: str | FsPath | None = None,
     ):
         self.photo_root = FsPath(photo_root)
         self._client = client
@@ -205,6 +229,8 @@ class ClaudeVisionDetector:
         self.notes: dict[str, list[str]] = {}  # photo_ref -> unmapped damage descriptions
         self.views: dict[str, str] = {}  # photo_ref -> which side of the car the photo shows
         self.usage: list[Any] = []  # response.usage per call, for cost reporting
+        self.cache_dir = FsPath(cache_dir) if cache_dir is not None else None
+        self.cache_hits = 0
 
     @property
     def client(self) -> Any:
@@ -217,6 +243,34 @@ class ClaudeVisionDetector:
                 ) from err
             self._client = anthropic.Anthropic()
         return self._client
+
+    # ------------------------------------------------------------ answer cache
+
+    def _cache_path(self, photo_ref: str) -> FsPath | None:
+        path = self.photo_root / photo_ref
+        if self.cache_dir is None or not path.is_file():
+            return None
+        h = hashlib.sha256(path.read_bytes())
+        h.update(f"|{self.model}|{self.effort}|{PROMPT_VERSION}".encode())
+        return self.cache_dir / f"{h.hexdigest()}.json"
+
+    def _cached(self, photo_ref: str) -> str | None:
+        p = self._cache_path(photo_ref)
+        return p.read_text() if p is not None and p.is_file() else None
+
+    def _store(self, photo_ref: str, text: str) -> None:
+        p = self._cache_path(photo_ref)
+        if p is not None:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(text)
+
+    def uncached(self, photo_refs: list[str]) -> list[str]:
+        """Photos that would need an API call (cost estimates count only these)."""
+        return [ref for ref in photo_refs if self._cached(ref) is None]
+
+    def _use(self, text: str, photo_ref: str) -> list[DamageFinding]:
+        findings, self.notes[photo_ref], self.views[photo_ref] = parse_text(text, photo_ref)
+        return self._calibrated(findings)
 
     def request_params(self, photo_ref: str) -> dict[str, Any]:
         """Messages API parameters for one photo (shared by live and batch requests)."""
@@ -231,20 +285,24 @@ class ClaudeVisionDetector:
                               "format": {"type": "json_schema", "schema": SCHEMA}},
             "messages": [{"role": "user", "content": [
                 image_block(path),
-                {"type": "text", "text": "Report the damage in this photo."},
+                {"type": "text", "text": USER_TEXT},
             ]}],
         }  # fmt: skip
 
     def detect_photo(self, photo_ref: str) -> list[DamageFinding]:
+        cached = self._cached(photo_ref)
+        if cached is not None:
+            self.cache_hits += 1
+            return self._use(cached, photo_ref)
         params = self.request_params(photo_ref)
         response = self.client.beta.messages.create(
             **params, betas=[FALLBACK_BETA], fallbacks="default"
         )
         self.usage.append(getattr(response, "usage", None))
-        findings, self.notes[photo_ref], self.views[photo_ref] = parse_response(
-            response, photo_ref
-        )
-        return self._calibrated(findings)
+        text = response_text(response, photo_ref)
+        found = self._use(text, photo_ref)  # only a usable answer is cached
+        self._store(photo_ref, text)
+        return found
 
     def _calibrated(self, findings: list[DamageFinding]) -> list[DamageFinding]:
         if not self.calibration:
@@ -295,8 +353,9 @@ class ClaudeVisionDetector:
             message = item.result.message
             self.usage.append(getattr(message, "usage", None))
             try:
-                found[ref], self.notes[ref], self.views[ref] = parse_response(message, ref)
-                found[ref] = self._calibrated(found[ref])
+                text = response_text(message, ref)
+                found[ref] = self._use(text, ref)
+                self._store(ref, text)
             except DetectionError as err:
                 errors[ref] = str(err)
         for ref in state["photos"].values():

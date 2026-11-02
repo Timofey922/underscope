@@ -22,16 +22,44 @@ class DetectorName(str, Enum):
     CLAUDE = "claude"
 
 
+NoCache = Annotated[
+    bool,
+    typer.Option("--no-cache", help="Ask Claude again even for photos it already answered."),
+]
+
+
 def _make_detector(
-    name: DetectorName, labels: FsPath | None, photo_root: FsPath, calibration: FsPath | None = None
+    name: DetectorName,
+    labels: FsPath | None,
+    photo_root: FsPath,
+    calibration: FsPath | None = None,
+    cache: bool = True,
 ):
     if name == DetectorName.CLAUDE:
         from underscope import calibration as cal
-        from underscope.vision import ClaudeVisionDetector
+        from underscope.vision import DEFAULT_CACHE_DIR, ClaudeVisionDetector
 
         table = cal.load(calibration) if calibration else None
-        return ClaudeVisionDetector(photo_root, calibration=table)
+        return ClaudeVisionDetector(photo_root, calibration=table,
+                                    cache_dir=DEFAULT_CACHE_DIR if cache else None)  # fmt: skip
     return MockDetector.from_file(labels) if labels else MockDetector()
+
+
+def _cost_gate(detector, photo_refs: list[str], yes: bool, hint: str = "") -> None:
+    """Before a paid run, say what it costs and stop unless --yes. Cached photos are free."""
+    from underscope.vision import estimated_cost_usd
+
+    if yes or not hasattr(detector, "uncached"):  # only the paid detector has a cache
+        return
+    todo = detector.uncached(list(dict.fromkeys(photo_refs)))
+    if not todo:
+        return
+    cached = len(set(photo_refs)) - len(todo)
+    reuse = f" ({cached} more already answered, reused free)" if cached else ""
+    cost = estimated_cost_usd(len(todo))
+    typer.echo(f"This sends {len(todo)} photos to Claude{reuse}, roughly ${cost:,.2f}. "
+               f"Re-run with --yes to go ahead{hint}.")  # fmt: skip
+    raise typer.Exit(1)
 
 AWAITING_CONFIRMATION = 3  # exit code: findings written for a checker, decision not made yet
 
@@ -209,6 +237,10 @@ def evaluate_cmd(
         FsPath | None,
         typer.Option("--calibration", exists=True, help="Confidence calibration from calibrate."),
     ] = None,
+    yes: Annotated[
+        bool, typer.Option("--yes", help="Confirm a paid run (the claude detector).")
+    ] = False,
+    no_cache: NoCache = False,
 ) -> None:
     """Evaluate disposition paths for one vehicle, after a human checker confirms the damage."""
     try:
@@ -216,7 +248,8 @@ def evaluate_cmd(
     except ValueError as err:
         typer.echo(str(err), err=True)
         raise typer.Exit(2) from err
-    detector = _make_detector(detector_name, labels, photo_root, calibration)
+    detector = _make_detector(detector_name, labels, photo_root, calibration, not no_cache)
+    _cost_gate(detector, vehicle.photo_refs, yes)
     status = "Findings NOT confirmed by a human checker."
     if confirmed:
         req = review.load(confirmed)
@@ -355,25 +388,20 @@ def batch_cmd(
     yes: Annotated[
         bool, typer.Option("--yes", help="Confirm a paid run (the claude detector).")
     ] = False,
+    no_cache: NoCache = False,
 ) -> None:
     """Evaluate a folder of vehicles. Confirmed reviews are decided; the rest go to the queue.
 
     Exits 3 while any vehicle is still waiting for a checker.
     """
-    if detector_name == DetectorName.CLAUDE and not yes:
-        from underscope.vision import estimated_cost_usd
-
-        photos = 0
-        for path in vehicle_dir.glob("*.json"):
-            try:
-                photos += len(_load_vehicle(path).photo_refs)
-            except ValueError:
-                continue
-        cost = estimated_cost_usd(photos)
-        typer.echo(f"This sends up to {photos} photos to Claude, roughly ${cost:,.2f}. "
-                   "Re-run with --yes to go ahead.")  # fmt: skip
-        raise typer.Exit(1)
-    detector = _make_detector(detector_name, None, photo_root, calibration)
+    detector = _make_detector(detector_name, None, photo_root, calibration, not no_cache)
+    refs = []
+    for path in vehicle_dir.glob("*.json"):
+        try:
+            refs += _load_vehicle(path).photo_refs
+        except ValueError:
+            continue
+    _cost_gate(detector, refs, yes)
     decided, waiting, invalid = [], [], []
     for path in sorted(vehicle_dir.glob("*.json")):
         try:
@@ -472,6 +500,7 @@ def detect_eval_cmd(
         typer.Option("--calibration", exists=True,
                      help="Apply a calibration (fit on different photos) before scoring."),
     ] = None,  # fmt: skip
+    no_cache: NoCache = False,
 ) -> None:
     """Score a damage detector against labeled photos."""
     from underscope import detector_eval as de
@@ -484,31 +513,45 @@ def detect_eval_cmd(
     if predictions:
         pred = de.load_findings(predictions)
     elif collect:
-        from underscope.vision import ClaudeVisionDetector
+        from underscope import vision
 
         state = json.loads(collect.read_text())
-        detector = ClaudeVisionDetector(photo_root, model=state.get("model", "claude-opus-5-5"))
+        detector = vision.ClaudeVisionDetector(
+            photo_root, model=state.get("model", vision.MODEL),
+            cache_dir=None if no_cache else vision.DEFAULT_CACHE_DIR,
+        )  # fmt: skip
         status, pred, errors = detector.collect_batch(state)
         if status != "ended":
             typer.echo(f"Batch {state['batch_id']} is still {status}; try again later.")
             raise typer.Exit(AWAITING_CONFIRMATION)
-        truth = {r: truth[r] for r in truth if r in state["photos"].values()}
+        # Photos answered before the batch was submitted weren't in it; reuse those answers.
+        reused = [r for r in state.get("cached", []) if r in truth]
+        more, more_errors = de.run_detector(detector, reused)
+        pred, errors = {**pred, **more}, {**errors, **more_errors}
+        batch_refs = set(state["photos"].values()) | set(reused)
+        truth = {r: truth[r] for r in truth if r in batch_refs}
         spent = detector.spent_usd(batch=True)
     elif detector_name == DetectorName.CLAUDE:
-        from underscope.vision import ClaudeVisionDetector, estimated_cost_usd
+        detector = _make_detector(detector_name, None, photo_root, cache=not no_cache)
+        hint = " (use --limit to try a few first)"
+        if batch:
+            todo = detector.uncached(refs)
+            if todo and not yes:
+                from underscope.vision import estimated_cost_usd
 
-        estimate = estimated_cost_usd(len(refs)) / (2 if batch else 1)
-        if not yes:
-            how = "as a batch (half price)" if batch else ""
-            typer.echo(
-                f"This sends {len(refs)} photos to Claude {how}, roughly ${estimate:,.2f}. "
-                "Re-run with --yes to go ahead (use --limit to try a few first)."
-            )
-            raise typer.Exit(1)
-        detector = ClaudeVisionDetector(photo_root)
+                typer.echo(f"This sends {len(todo)} photos to Claude as a batch (half price), "
+                           f"roughly ${estimated_cost_usd(len(todo)) / 2:,.2f}. "
+                           f"Re-run with --yes to go ahead{hint}.")  # fmt: skip
+                raise typer.Exit(1)
+            if not todo:
+                typer.echo("Every photo is already answered; scoring the saved answers.")
+                batch = False
+        else:
+            _cost_gate(detector, refs, yes, hint)
         if batch:
             try:
-                state = detector.submit_batch(refs)
+                state = detector.submit_batch(todo)
+                state["cached"] = [r for r in refs if r not in todo]
             except Exception as err:
                 from underscope.vision import DetectionError
 
@@ -517,13 +560,17 @@ def detect_eval_cmd(
                 raise typer.BadParameter(str(err)) from err
             batch_state.write_text(json.dumps(state, indent=2))
             typer.echo(
-                f"Submitted batch {state['batch_id']} with {len(refs)} photos. State saved to "
+                f"Submitted batch {state['batch_id']} with {len(todo)} photos "
+                f"({len(refs) - len(todo)} already answered). State saved to "
                 f"{batch_state}.\nCollect: underscope detect-eval {labels} --photo-root "
                 f"{photo_root} --collect {batch_state} [--save predictions.json]"
             )
             return
-        pred, errors = de.run_detector(detector, refs)
-        spent = detector.spent_usd()
+        if not batch:
+            pred, errors = de.run_detector(detector, refs)
+            spent = detector.spent_usd()
+            if detector.cache_hits:
+                typer.echo(f"Reused {detector.cache_hits} saved answers (no cost).")
     else:
         pred, errors = de.run_detector(_MockPhotoDetector(labels), refs)
     if save and not predictions:

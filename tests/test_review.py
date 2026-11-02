@@ -172,3 +172,36 @@ def test_sheet_shows_each_photo_with_its_findings(tmp_path):
 def test_sheet_without_photo_root_still_lists_photos():
     page = review.render_html(review.build_request(veh(photo_refs=["a.jpg"]), []))
     assert "a.jpg" in page and "photo file not found" in page
+
+
+def test_sheet_marks_every_sighting_on_its_photo(tmp_path):
+    photos = tmp_path / "photos"
+    photos.mkdir()
+    for name in ("a.jpg", "b.jpg"):
+        (photos / name).write_bytes(b"jpg")
+
+    def seen(ref, box, sev=0.8, panel="door"):
+        return DamageFinding(panel=panel, damage_type="dent", severity=sev, confidence=0.9,
+                             side="left", photo_ref=ref, box=box)  # fmt: skip
+
+    # The same dent in two photos merges to one finding, but both photos get a mark.
+    sightings = [seen("a.jpg", (0.1, 0.2, 0.5, 0.6)), seen("b.jpg", (0.5, 0.5, 0.9, 0.9), 0.4),
+                 seen("b.jpg", (0.0, 0.0, 0.2, 0.2), 0.2, panel="hood")]  # fmt: skip
+    req = review.build_request(veh(photo_refs=["a.jpg", "b.jpg"]), [sightings[0]],
+                               photo_root=photos, sightings=sightings)  # fmt: skip
+    _, html_path = review.save(req, tmp_path / "rev")
+    page = html_path.read_text()
+    assert page.count('class="mark ') == 3
+    assert 'class="mark sev-high"' in page
+    assert "left:10.0%;top:20.0%;width:40.0%;height:40.0%" in page
+    assert page.count("<b>#1</b>") == 2
+    # A sighting the findings don't include (checker removed it, say) is marked "?".
+    assert "<b>?</b>" in page and "not in the current findings" in page
+
+
+def test_without_sightings_findings_with_boxes_are_marked(tmp_path):
+    (tmp_path / "a.jpg").write_bytes(b"jpg")
+    hit = DamageFinding(panel="hood", damage_type="dent", severity=0.2, confidence=0.9,
+                        photo_ref="a.jpg", box=(0.1, 0.1, 0.2, 0.2))  # fmt: skip
+    req = review.build_request(veh(photo_refs=["a.jpg"]), [hit], photo_root=tmp_path)
+    assert 'class="mark sev-low"' in review.render_html(req, html_dir=tmp_path)

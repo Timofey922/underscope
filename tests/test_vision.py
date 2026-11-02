@@ -265,3 +265,18 @@ def test_no_cache_dir_means_no_cache(tmp_path):
         {"findings": [], "unmapped_damage": []})))  # fmt: skip
     det.detect_photo("a.png")
     assert det.uncached(["a.png"]) == ["a.png"]
+
+
+def test_box_is_clamped_ordered_and_dropped_when_empty(tmp_path):
+    (tmp_path / "a.png").write_bytes(PNG)
+    answer = {"view": "left", "unmapped_damage": [], "findings": [
+        {**finding(), "box": {"x0": 0.6, "y0": -0.1, "x1": 0.2, "y1": 0.5}},
+        {**finding("hood"), "box": {"x0": 0.3, "y0": 0.3, "x1": 0.3, "y1": 0.5}},
+        finding("roof"),  # older answer without a box
+    ]}  # fmt: skip
+    det = ClaudeVisionDetector(tmp_path, client=FakeClient(reply(answer)))
+    door, hood, roof = det.detect_photo("a.png")
+    assert door.box == (0.2, 0.0, 0.6, 0.5)
+    assert hood.box is None and roof.box is None
+    assert det.sightings["a.png"] == [door, hood, roof]
+    assert "box" in SCHEMA["properties"]["findings"]["items"]["required"]

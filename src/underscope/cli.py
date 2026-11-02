@@ -134,6 +134,12 @@ def _views(detector, vehicle: VehicleRecord) -> dict[str, str]:
     return {ref: views[ref] for ref in vehicle.photo_refs if ref in views}
 
 
+def _sightings(detector, vehicle: VehicleRecord):
+    """Each photo's own findings before merging (with boxes), when the detector keeps them."""
+    seen = getattr(detector, "sightings", {})
+    return [f for ref in vehicle.photo_refs for f in seen.get(ref, [])]
+
+
 def _unmapped_reasons(detector) -> list[str]:
     """Damage the detector saw but couldn't place on a panel goes to the checker."""
     notes = getattr(detector, "notes", {})
@@ -271,8 +277,9 @@ def evaluate_cmd(
     else:
         findings = _detect(detector, vehicle)
         req = review.build_request(
-            vehicle, findings, review_mode, views=_views(detector, vehicle), photo_root=photo_root
-        )
+            vehicle, findings, review_mode, views=_views(detector, vehicle),
+            photo_root=photo_root, sightings=_sightings(detector, vehicle),
+        )  # fmt: skip
         req.reasons += _unmapped_reasons(detector)
         if not skip_confirm and review.needs_confirmation(review_mode, req.reasons):
             json_path, html_path = review.save(req, review_dir)
@@ -424,7 +431,7 @@ def batch_cmd(
             if req is None:
                 req = review.build_request(
                     vehicle, findings, review_mode, views=_views(detector, vehicle),
-                    photo_root=photo_root,
+                    photo_root=photo_root, sightings=_sightings(detector, vehicle),
                 )  # fmt: skip
                 req.reasons += _unmapped_reasons(detector)
             if review.needs_confirmation(review_mode, req.reasons):

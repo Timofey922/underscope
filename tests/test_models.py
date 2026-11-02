@@ -39,3 +39,16 @@ def test_merge_findings_keeps_worst_view_per_area():
     assert len(merged) == 3
     assert (key["left", "dent"].severity, key["left", "dent"].confidence) == (0.5, 0.9)
     assert key["left", "dent"].photo_ref == "b"
+
+
+def test_box_must_be_inside_the_photo():
+    import pytest
+    from pydantic import ValidationError
+
+    from underscope.models import DamageFinding
+
+    base = dict(panel="door", damage_type="dent", severity=0.3, confidence=0.9)
+    assert DamageFinding(**base, box=(0.1, 0.2, 0.5, 0.6)).box == (0.1, 0.2, 0.5, 0.6)
+    for bad in [(0.5, 0.2, 0.1, 0.6), (0.1, 0.2, 1.2, 0.6), (0.1, 0.2, 0.1, 0.6)]:
+        with pytest.raises(ValidationError):
+            DamageFinding(**base, box=bad)

@@ -66,3 +66,11 @@ def test_cli_import_then_score(tmp_path):
     assert "2 damage labels" in r.output and "categories not in the mapping: 1" in r.output
     r = CliRunner().invoke(app, ["detect-eval", str(out), "--detector", "mock"])
     assert r.exit_code == 0 and "| Panel F1 | 100.0% |" in r.output
+
+
+def test_boxes_become_photo_fractions_when_image_size_is_known():
+    coco = {**COCO, "images": [{"id": 10, "file_name": "a.jpg", "width": 200, "height": 100},
+                               {"id": 11, "file_name": "b.jpg"}]}  # fmt: skip
+    labels, _ = convert(coco, MAPPING)
+    assert labels["a.jpg"][0].box == (0.05, 0.1, 0.3, 0.5)
+    assert labels["b.jpg"][0].box is None  # no size, no box

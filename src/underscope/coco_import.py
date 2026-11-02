@@ -43,6 +43,16 @@ def _area(a: dict) -> float:
     return float(a.get("area") or a["bbox"][2] * a["bbox"][3])
 
 
+def _fraction_box(a: dict, img: dict) -> tuple[float, float, float, float] | None:
+    """The annotation's box as fractions of the image, when the image size is known."""
+    w, h = img.get("width"), img.get("height")
+    if not w or not h:
+        return None
+    x0, y0, x1, y1 = _box(a)
+    box = (max(0.0, x0 / w), max(0.0, y0 / h), min(1.0, x1 / w), min(1.0, y1 / h))
+    return box if box[0] < box[2] and box[1] < box[3] else None
+
+
 def load_mapping(path: str | FsPath) -> dict[str, Any]:
     m = yaml.safe_load(FsPath(path).read_text()) or {}
     for value in (m.get("damage") or {}).values():
@@ -102,6 +112,7 @@ def convert(coco: dict[str, Any], mapping: dict[str, Any]) -> tuple[Findings, di
             found.append(DamageFinding(
                 panel=panel, damage_type=damage_type, side=side, confidence=1.0,
                 severity=round(severity, 3), photo_ref=img["file_name"],
+                box=_fraction_box(a, img),
             ))  # fmt: skip
             counts["damage"] += 1
         labels[img["file_name"]] = found

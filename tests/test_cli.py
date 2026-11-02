@@ -399,3 +399,27 @@ def test_detect_eval_batch_sends_only_unanswered_photos(tmp_path, monkeypatch):
     r = runner.invoke(app, [*base, "--collect", str(state)])
     assert r.exit_code == 0, r.output
     assert "Photos scored: 2 (0 failed" in r.output and "| Panel F1 | 100.0% |" in r.output
+
+
+def test_claude_boxes_reach_the_saved_review(tmp_path, monkeypatch):
+    from test_vision import PNG, reply
+
+    for name in ("a.jpg", "b.jpg"):
+        (tmp_path / name).write_bytes(PNG + name.encode())
+    vfile = tmp_path / "car.json"
+    car = json.loads((FIXTURE_DIR / "dent_600.json").read_text())
+    vfile.write_text(json.dumps({**car, "findings": [], "photo_refs": ["a.jpg", "b.jpg"]}))
+    dent = {"panel": "door", "damage_type": "dent", "severity": 0.5, "confidence": 0.9,
+            "side": "left"}
+    box = {"x0": 0.1, "y0": 0.1, "x1": 0.4, "y1": 0.5}
+    answer = {"view": "left", "unmapped_damage": [], "findings": [{**dent, "box": box}]}
+    _fake_claude(monkeypatch, reply(answer), reply(answer))
+    rev = tmp_path / "rev"
+    r = runner.invoke(app, ["evaluate", str(vfile), "--detector", "claude", "--yes",
+                            "--photo-root", str(tmp_path), "--no-interactive",
+                            "--review-dir", str(rev)])  # fmt: skip
+    assert r.exit_code == AWAITING_CONFIRMATION, r.output
+    saved = json.loads((rev / "FIXDENT0000000001.json").read_text())
+    assert len(saved["findings"]) == 1  # merged
+    assert [s["photo_ref"] for s in saved["sightings"]] == ["a.jpg", "b.jpg"]
+    assert (rev / "FIXDENT0000000001.html").read_text().count("<b>#1</b>") == 2

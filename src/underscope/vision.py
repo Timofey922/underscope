@@ -69,6 +69,9 @@ for a small ding or scuff, 0.3 for a dent a hand could cover, 0.6 for damage ove
 the panel, 0.9 or more when the panel needs replacing.
 - confidence from 0 to 1 that this damage really exists as described. Lower it for glare, \
 reflections, dirt, shadows, distance, blur or a partial view.
+- box: a rectangle around the damage in this photo, as fractions of the image width and \
+height (x0, y0 = top-left corner; x1, y1 = bottom-right; 0 to 1). Approximate is fine; it \
+points a human checker at the spot.
 
 Also give the photo's view: which side of the car the camera faces (front, rear, left, \
 right, front_left, front_right, rear_left, rear_right, top for a view onto the roof), \
@@ -93,8 +96,14 @@ SCHEMA: dict[str, Any] = {
                              "enum": ["left", "right", "center", "unknown"]},
                     "severity": {"type": "number"},
                     "confidence": {"type": "number"},
+                    "box": {
+                        "type": "object",
+                        "properties": {k: {"type": "number"} for k in ("x0", "y0", "x1", "y1")},
+                        "required": ["x0", "y0", "x1", "y1"],
+                        "additionalProperties": False,
+                    },
                 },
-                "required": ["panel", "damage_type", "side", "severity", "confidence"],
+                "required": ["panel", "damage_type", "side", "severity", "confidence", "box"],
                 "additionalProperties": False,
             },
         },
@@ -121,6 +130,20 @@ class DetectionError(RuntimeError):
 
 def _clamp(x: float) -> float:
     return min(1.0, max(0.0, float(x)))
+
+
+def _box(raw: Any) -> tuple[float, float, float, float] | None:
+    """Clamped, ordered box from the answer; None when missing or empty."""
+    if not isinstance(raw, dict):
+        return None
+    try:
+        xs = sorted((_clamp(raw["x0"]), _clamp(raw["x1"])))
+        ys = sorted((_clamp(raw["y0"]), _clamp(raw["y1"])))
+    except (KeyError, TypeError, ValueError):
+        return None
+    if xs[0] == xs[1] or ys[0] == ys[1]:
+        return None
+    return (xs[0], ys[0], xs[1], ys[1])
 
 
 def _downscale(path: FsPath) -> bytes | None:
@@ -188,7 +211,7 @@ def parse_text(text: str, photo_ref: str) -> tuple[list[DamageFinding], list[str
                 panel=Panel(f["panel"]), damage_type=DamageType(f["damage_type"]),
                 severity=_clamp(f["severity"]), confidence=_clamp(f["confidence"]),
                 side=None if f.get("side", "unknown") == "unknown" else f["side"],
-                photo_ref=photo_ref,
+                photo_ref=photo_ref, box=_box(f.get("box")),
             )
             for f in data["findings"]
         ]  # fmt: skip
@@ -228,6 +251,8 @@ class ClaudeVisionDetector:
         self.calibration = calibration  # from underscope.calibration.fit, applied to confidence
         self.notes: dict[str, list[str]] = {}  # photo_ref -> unmapped damage descriptions
         self.views: dict[str, str] = {}  # photo_ref -> which side of the car the photo shows
+        # photo_ref -> that photo's own findings, before merging across photos (with boxes)
+        self.sightings: dict[str, list[DamageFinding]] = {}
         self.usage: list[Any] = []  # response.usage per call, for cost reporting
         self.cache_dir = FsPath(cache_dir) if cache_dir is not None else None
         self.cache_hits = 0
@@ -270,7 +295,8 @@ class ClaudeVisionDetector:
 
     def _use(self, text: str, photo_ref: str) -> list[DamageFinding]:
         findings, self.notes[photo_ref], self.views[photo_ref] = parse_text(text, photo_ref)
-        return self._calibrated(findings)
+        self.sightings[photo_ref] = self._calibrated(findings)
+        return self.sightings[photo_ref]
 
     def request_params(self, photo_ref: str) -> dict[str, Any]:
         """Messages API parameters for one photo (shared by live and batch requests)."""

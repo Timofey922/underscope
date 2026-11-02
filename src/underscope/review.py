@@ -65,6 +65,8 @@ class ReviewRequest(BaseModel):
     photo_views: dict[str, str] = Field(default_factory=dict)
     # Folder the photo refs are in, so the sheet can show the photos next to the findings.
     photo_root: str | None = None
+    # Each photo's own detections before merging, with boxes, to mark the spots on the photos.
+    sightings: list[DamageFinding] = Field(default_factory=list)
 
     def _unseen(self, panel: Panel) -> list[str]:
         if not self.photo_views or self.status != "pending":
@@ -176,6 +178,7 @@ def build_request(
     a: Assumptions | None = None,
     views: dict[str, str] | None = None,
     photo_root: str | FsPath | None = None,
+    sightings: list[DamageFinding] | None = None,
 ) -> ReviewRequest:
     return ReviewRequest(
         vin=vehicle.vin,
@@ -183,6 +186,7 @@ def build_request(
         reasons=risk_reasons(vehicle, findings, a, views),
         photo_views=dict(views or {}),
         photo_root=str(FsPath(photo_root).resolve()) if photo_root is not None else None,
+        sightings=list(sightings or []),
         vehicle=vehicle.model_copy(update={"findings": []}),
         findings=list(findings),
         source_fingerprint=fingerprint(vehicle, findings),
@@ -320,16 +324,45 @@ def _photo_src(req: ReviewRequest, ref: str, html_dir: FsPath | None) -> str | N
     return quote(FsPath(os.path.relpath(photo.resolve(), base)).as_posix())
 
 
+def _key(f: DamageFinding) -> tuple:
+    return (f.panel, f.side, f.damage_type)
+
+
+def _marks(req: ReviewRequest, ref: str, numbers: dict[tuple, int]) -> str:
+    """Boxes drawn over a photo where the detector saw damage, labeled with the finding #."""
+    e = html.escape
+    seen = req.sightings or req.findings
+    out = []
+    for f in seen:
+        if f.photo_ref != ref or f.box is None:
+            continue
+        x0, y0, x1, y1 = f.box
+        n = numbers.get(_key(f))
+        label = f"#{n}" if n else "?"
+        tip = f"{_area_label(f)} {f.damage_type.value}, severity {f.severity:.2f}"
+        if n is None:
+            tip += " (not in the current findings)"
+        out.append(
+            f'<span class="mark {_severity_class([f])}" title="{e(tip)}" style="left:{x0:.1%};'
+            f'top:{y0:.1%};width:{x1 - x0:.1%};height:{y1 - y0:.1%}"><b>{label}</b></span>'
+        )
+    return "".join(out)
+
+
 def _render_photos(req: ReviewRequest, html_dir: FsPath | None) -> str:
     e = html.escape
     numbered = list(enumerate(req.findings, 1))
+    numbers = {}
+    for n, f in numbered:
+        numbers.setdefault(_key(f), n)
     cards = []
     for i, ref in enumerate(_photo_refs(req), 1):
         view = req.photo_views.get(ref)
         hits = [f"#{n} {_area_label(f)} {f.damage_type.value} {f.severity:.2f}"
                 for n, f in numbered if f.photo_ref == ref]  # fmt: skip
         src = _photo_src(req, ref, html_dir)
-        img = (f'<a href="{e(src)}"><img src="{e(src)}" alt="Photo {e(ref)}" loading="lazy"></a>'
+        img = (f'<a class="shot" href="{e(src)}"><img src="{e(src)}" alt="Photo {e(ref)}" '
+               f'loading="lazy">{_marks(req, ref, numbers)}</a>'
                if src else '<div class="nophoto">photo file not found</div>')  # fmt: skip
         view_text = f"view: {e(view.replace('_', ' '))}" if view else "view: not reported"
         found = "; ".join(e(h) for h in hits) or "no damage found in this photo"
@@ -470,8 +503,15 @@ th {{ font-weight:600; color:var(--muted); font-size:13px; }}
 .photos figure {{ margin:0; border:1px solid var(--line); border-radius:8px; overflow:hidden;
   min-width:0; }}
 .photos figure:target {{ outline:3px solid var(--verify); }}
-.photos img {{ display:block; width:100%; aspect-ratio:4/3; object-fit:cover;
-  background:var(--panel); }}
+.shot {{ position:relative; display:block; }}
+.shot img {{ display:block; width:100%; height:auto; background:var(--panel); }}
+.mark {{ position:absolute; border:3px solid var(--low); border-radius:4px;
+  box-shadow:0 0 0 1px rgba(0,0,0,.45); }}
+.mark.sev-mid {{ border-color:var(--mid); }} .mark.sev-high {{ border-color:var(--high); }}
+.mark b {{ position:absolute; top:0; left:0; background:var(--high); color:var(--on-high);
+  font-size:11px; line-height:1; padding:2px 4px; border-radius:3px; }}
+.mark.sev-low b {{ background:var(--low); color:#1b1c22; }}
+.mark.sev-mid b {{ background:var(--mid); color:#1b1c22; }}
 .photos figcaption {{ padding:8px 10px; overflow-wrap:anywhere; }}
 .nophoto {{ aspect-ratio:4/3; display:grid; place-items:center; background:var(--panel);
   color:var(--muted); font-size:13px; }}

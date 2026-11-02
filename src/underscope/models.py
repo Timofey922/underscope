@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class TitleStatus(StrEnum):
@@ -72,6 +72,18 @@ class DamageFinding(BaseModel):
     # but side separates two damaged doors from one door seen in two photos.
     side: Literal["left", "right", "center"] | None = None
     verified: bool = False  # confirmed (or added) by a human checker
+    # Approximate location in photo_ref as fractions of its width and height:
+    # (left, top, right, bottom). For pointing the checker at the damage, not for measuring it.
+    box: tuple[float, float, float, float] | None = None
+
+    @field_validator("box")
+    @classmethod
+    def _box_in_photo(cls, box):
+        if box is not None:
+            x0, y0, x1, y1 = box
+            if not (0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1):
+                raise ValueError("box must be (left, top, right, bottom) fractions, 0-1")
+        return box
 
 
 class DispositionOption(BaseModel):

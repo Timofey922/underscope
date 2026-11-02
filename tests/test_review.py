@@ -148,3 +148,27 @@ def test_checker_can_add_sided_finding():
     assert req.findings[0].side == "right"
     with pytest.raises(ValueError):
         review.add_finding(req, "fender", "dent", 0.3, "top")
+
+
+def test_sheet_shows_each_photo_with_its_findings(tmp_path):
+    photos = tmp_path / "photos"
+    photos.mkdir()
+    (photos / "front left.jpg").write_bytes(b"jpg")
+    hit = DamageFinding(panel="fender", damage_type="dent", severity=0.5, confidence=0.9,
+                        side="left", photo_ref="front left.jpg")
+    req = review.build_request(veh(photo_refs=["front left.jpg", "rear.jpg"]), [hit],
+                               views={"front left.jpg": "front_left"}, photo_root=photos)
+    _, html_path = review.save(req, tmp_path / "reviews")
+    page = html_path.read_text()
+    # Linked relative to the sheet, with the space escaped; the missing file says so.
+    assert 'src="../photos/front%20left.jpg"' in page
+    assert "photo file not found" in page
+    assert "view: front left" in page and "#1 left fender dent 0.50" in page
+    assert '<a href="#photo-1">front left.jpg</a>' in page
+    assert "no damage found in this photo" in page  # rear.jpg
+    assert review.load(html_path.with_suffix(".json")).photo_root == str(photos.resolve())
+
+
+def test_sheet_without_photo_root_still_lists_photos():
+    page = review.render_html(review.build_request(veh(photo_refs=["a.jpg"]), []))
+    assert "a.jpg" in page and "photo file not found" in page

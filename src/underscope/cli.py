@@ -237,7 +237,9 @@ def evaluate_cmd(
         status = f"Findings confirmed by {req.checker} at {req.confirmed_at}."
     else:
         findings = _detect(detector, vehicle)
-        req = review.build_request(vehicle, findings, review_mode, views=_views(detector, vehicle))
+        req = review.build_request(
+            vehicle, findings, review_mode, views=_views(detector, vehicle), photo_root=photo_root
+        )
         req.reasons += _unmapped_reasons(detector)
         if not skip_confirm and review.needs_confirmation(review_mode, req.reasons):
             json_path, html_path = review.save(req, review_dir)
@@ -377,8 +379,9 @@ def batch_cmd(
         else:
             if req is None:
                 req = review.build_request(
-                    vehicle, findings, review_mode, views=_views(detector, vehicle)
-                )
+                    vehicle, findings, review_mode, views=_views(detector, vehicle),
+                    photo_root=photo_root,
+                )  # fmt: skip
                 req.reasons += _unmapped_reasons(detector)
             if review.needs_confirmation(review_mode, req.reasons):
                 review.save(req, review_dir)

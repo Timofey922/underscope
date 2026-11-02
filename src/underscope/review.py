@@ -11,10 +11,12 @@ from __future__ import annotations
 import hashlib
 import html
 import json
+import os
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path as FsPath
 from typing import Literal
+from urllib.parse import quote
 
 from pydantic import BaseModel, Field
 
@@ -61,6 +63,8 @@ class ReviewRequest(BaseModel):
     # photo_ref -> view (front, left, rear_right, ...) when the detector reports it. An area no
     # photo shows is unknown, not clean, until the checker confirms it.
     photo_views: dict[str, str] = Field(default_factory=dict)
+    # Folder the photo refs are in, so the sheet can show the photos next to the findings.
+    photo_root: str | None = None
 
     def _unseen(self, panel: Panel) -> list[str]:
         if not self.photo_views or self.status != "pending":
@@ -171,12 +175,14 @@ def build_request(
     mode: ReviewMode = ReviewMode.ALL,
     a: Assumptions | None = None,
     views: dict[str, str] | None = None,
+    photo_root: str | FsPath | None = None,
 ) -> ReviewRequest:
     return ReviewRequest(
         vin=vehicle.vin,
         mode=mode,
         reasons=risk_reasons(vehicle, findings, a, views),
         photo_views=dict(views or {}),
+        photo_root=str(FsPath(photo_root).resolve()) if photo_root is not None else None,
         vehicle=vehicle.model_copy(update={"findings": []}),
         findings=list(findings),
         source_fingerprint=fingerprint(vehicle, findings),
@@ -243,7 +249,7 @@ def save(
         html_path = json_path.with_suffix(".html")
     json_path.parent.mkdir(parents=True, exist_ok=True)
     json_path.write_text(req.model_dump_json(indent=2))
-    html_path.write_text(render_html(req))
+    html_path.write_text(render_html(req, html_dir=html_path.parent))
     return json_path, html_path
 
 
@@ -296,8 +302,55 @@ def _severity_class(findings: list[DamageFinding]) -> str:
     return "sev-high" if worst >= 0.66 else "sev-mid" if worst >= 0.33 else "sev-low"
 
 
-def render_html(req: ReviewRequest, standalone: bool = True) -> str:
-    """standalone=False leaves out the doctype/html/head/body wrapper, for hosts that add it."""
+def _photo_refs(req: ReviewRequest) -> list[str]:
+    """The vehicle's photos, then any photo a finding cites that isn't in that list."""
+    refs = list(req.vehicle.photo_refs)
+    refs += [f.photo_ref for f in req.findings if f.photo_ref and f.photo_ref not in refs]
+    return list(dict.fromkeys(refs))
+
+
+def _photo_src(req: ReviewRequest, ref: str, html_dir: FsPath | None) -> str | None:
+    """Link to the photo relative to the sheet, or None when the file isn't there."""
+    if req.photo_root is None:
+        return None
+    photo = FsPath(req.photo_root) / ref
+    if not photo.is_file():
+        return None
+    base = html_dir.resolve() if html_dir is not None else FsPath.cwd()
+    return quote(FsPath(os.path.relpath(photo.resolve(), base)).as_posix())
+
+
+def _render_photos(req: ReviewRequest, html_dir: FsPath | None) -> str:
+    e = html.escape
+    numbered = list(enumerate(req.findings, 1))
+    cards = []
+    for i, ref in enumerate(_photo_refs(req), 1):
+        view = req.photo_views.get(ref)
+        hits = [f"#{n} {_area_label(f)} {f.damage_type.value} {f.severity:.2f}"
+                for n, f in numbered if f.photo_ref == ref]  # fmt: skip
+        src = _photo_src(req, ref, html_dir)
+        img = (f'<a href="{e(src)}"><img src="{e(src)}" alt="Photo {e(ref)}" loading="lazy"></a>'
+               if src else '<div class="nophoto">photo file not found</div>')  # fmt: skip
+        view_text = f"view: {e(view.replace('_', ' '))}" if view else "view: not reported"
+        found = "; ".join(e(h) for h in hits) or "no damage found in this photo"
+        cards.append(
+            f'<figure id="photo-{i}">{img}<figcaption><strong>{e(ref)}</strong>'
+            f'<div class="muted">{view_text}</div><div>{found}</div></figcaption></figure>'
+        )
+    return f'<div class="photos">{"".join(cards)}</div>' if cards else "<p>None.</p>"
+
+
+def _area_label(f: DamageFinding) -> str:
+    return f"{f.side} {f.panel.value}" if f.side and f.side != "center" else f.panel.value
+
+
+def render_html(
+    req: ReviewRequest, standalone: bool = True, html_dir: FsPath | None = None
+) -> str:
+    """standalone=False leaves out the doctype/html/head/body wrapper, for hosts that add it.
+
+    html_dir is where the sheet will be saved; photo links are relative to it.
+    """
     e = html.escape
     v = req.vehicle
     areas = {a.name: a for a in req.areas()}
@@ -347,10 +400,15 @@ def render_html(req: ReviewRequest, standalone: bool = True) -> str:
         f"<td>{e(a.detail)}</td></tr>"
         for a in req.areas()
     )
+    photo_ids = {ref: i for i, ref in enumerate(_photo_refs(req), 1)}
+
+    def _photo_cell(ref: str | None) -> str:
+        return f'<a href="#photo-{photo_ids[ref]}">{e(ref)}</a>' if ref else ""
+
     findings = "".join(
-        f"<tr><td>#{i}</td><td>{e(f.panel.value)}</td><td>{e(f.damage_type.value)}</td>"
+        f"<tr><td>#{i}</td><td>{e(_area_label(f))}</td><td>{e(f.damage_type.value)}</td>"
         f"<td>{f.severity:.2f}</td><td>{'checker' if f.verified else f'{f.confidence:.2f}'}</td>"
-        f"<td>{e(f.photo_ref or '')}</td></tr>"
+        f"<td>{_photo_cell(f.photo_ref)}</td></tr>"
         for i, f in enumerate(req.findings, 1)
     ) or '<tr><td colspan="6">No findings.</td></tr>'
     reasons = "".join(f"<li>{e(r)}</li>" for r in req.reasons) or "<li>None.</li>"
@@ -358,7 +416,7 @@ def render_html(req: ReviewRequest, standalone: bool = True) -> str:
         status = f"Confirmed by {e(req.checker or '')} at {e(req.confirmed_at or '')}"
     else:
         status = "Awaiting checker confirmation"
-    photos = "".join(f"<li>{e(p)}</li>" for p in v.photo_refs) or "<li>None.</li>"
+    photos = _render_photos(req, html_dir)
     head = f"""<title>Damage review {e(req.vin)}</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <style>
@@ -407,6 +465,16 @@ th {{ font-weight:600; color:var(--muted); font-size:13px; }}
 .legend span {{ display:inline-block; width:12px; height:12px; border-radius:3px;
   margin-right:4px; vertical-align:-1px; }}
 .table-wrap {{ overflow-x:auto; }}
+.photos {{ display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr));
+  gap:16px; }}
+.photos figure {{ margin:0; border:1px solid var(--line); border-radius:8px; overflow:hidden;
+  min-width:0; }}
+.photos figure:target {{ outline:3px solid var(--verify); }}
+.photos img {{ display:block; width:100%; aspect-ratio:4/3; object-fit:cover;
+  background:var(--panel); }}
+.photos figcaption {{ padding:8px 10px; overflow-wrap:anywhere; }}
+.nophoto {{ aspect-ratio:4/3; display:grid; place-items:center; background:var(--panel);
+  color:var(--muted); font-size:13px; }}
 code {{ background:var(--panel); padding:1px 5px; border-radius:4px; overflow-wrap:anywhere; }}
 </style>"""
     body = f"""<main>
@@ -427,7 +495,7 @@ code {{ background:var(--panel); padding:1px 5px; border-radius:4px; overflow-wr
 <tr><th></th><th>Panel</th><th>Type</th><th>Severity</th><th>Confidence</th><th>Photo</th></tr>
 {findings}</table></div>
 <h2>Why this needs a careful look</h2><ul>{reasons}</ul>
-<h2>Photos</h2><ul>{photos}</ul>
+<h2>Photos</h2>{photos}
 <h2>How to confirm</h2>
 <p>Check every damaged and verify area against the photos or the car. Then either answer the
 prompt in the terminal, or run <code>underscope confirm {e(req.vin)}.json --checker NAME</code>

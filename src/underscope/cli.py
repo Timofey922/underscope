@@ -352,11 +352,27 @@ def batch_cmd(
         FsPath | None,
         typer.Option("--calibration", exists=True, help="Confidence calibration from calibrate."),
     ] = None,
+    yes: Annotated[
+        bool, typer.Option("--yes", help="Confirm a paid run (the claude detector).")
+    ] = False,
 ) -> None:
     """Evaluate a folder of vehicles. Confirmed reviews are decided; the rest go to the queue.
 
     Exits 3 while any vehicle is still waiting for a checker.
     """
+    if detector_name == DetectorName.CLAUDE and not yes:
+        from underscope.vision import estimated_cost_usd
+
+        photos = 0
+        for path in vehicle_dir.glob("*.json"):
+            try:
+                photos += len(_load_vehicle(path).photo_refs)
+            except ValueError:
+                continue
+        cost = estimated_cost_usd(photos)
+        typer.echo(f"This sends up to {photos} photos to Claude, roughly ${cost:,.2f}. "
+                   "Re-run with --yes to go ahead.")  # fmt: skip
+        raise typer.Exit(1)
     detector = _make_detector(detector_name, None, photo_root, calibration)
     decided, waiting, invalid = [], [], []
     for path in sorted(vehicle_dir.glob("*.json")):
@@ -520,9 +536,7 @@ def detect_eval_cmd(
     if calibration:
         from underscope import calibration as cal
 
-        table = cal.load(calibration)
-        pred = {ref: [f.model_copy(update={"confidence": cal.apply(f.confidence, table)})
-                      for f in items] for ref, items in pred.items()}  # fmt: skip
+        pred = cal.calibrated(pred, cal.load(calibration))
     text = de.render_report(de.score(truth, pred, errors, by=match_by))
     if spent is not None:
         text += f"\nAPI cost of this run: ${spent:,.2f} (from reported token usage).\n"

@@ -321,3 +321,11 @@ def test_calibrate_with_holdout(tmp_path):
     assert "checked on 20 held-out photos" in result.output
     assert "Calibration helps" in result.output
     assert out.exists()
+
+
+def test_batch_with_claude_detector_needs_yes(tmp_path):
+    result = runner.invoke(app, ["batch", str(FIXTURE_DIR), "--detector", "claude",
+                                 "--review-dir", str(tmp_path)])  # fmt: skip
+    assert result.exit_code == 1
+    assert "photos to Claude, roughly $" in result.output and "--yes" in result.output
+    assert not list(tmp_path.iterdir())  # nothing ran

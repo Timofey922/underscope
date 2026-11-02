@@ -1,18 +1,22 @@
-"""A sample review folder to open in a browser, no API key or dataset needed.
+"""A pitchable walkthrough to open in a browser, no API key or dataset needed.
 
-Builds review sheets for the three fixture cars from drawn stand-in photos (SVG, labeled as
-drawings), with detector-style sightings, boxes and photo views, plus the queue index. The
-damage is the fixtures' own; positions and views are made up to show the sheet, not measured.
+Builds, for the three fixture cars: drawn stand-in photos (SVG, labeled as drawings), review
+sheets with detector-style sightings, boxes and photo views, the checker queue, and a
+walkthrough page (index.html) with each car's recommendation. The damage is the fixtures'
+own; positions and views are made up to show the sheet, not measured. Decisions shown assume
+the checker confirms the findings as detected; the review sheets themselves stay pending.
 """
 
 from __future__ import annotations
 
+import html
 import json
 from pathlib import Path as FsPath
 
 from underscope import review
 from underscope.data import FIXTURE_DIR
-from underscope.models import DamageFinding, VehicleRecord
+from underscope.decision import LABEL, evaluate
+from underscope.models import DamageFinding, Recommendation, VehicleRecord
 from underscope.perception import merge_findings
 
 Box = tuple[float, float, float, float]
@@ -116,10 +120,11 @@ def photo_svg(view: str, damage: list[tuple[Box, float]]) -> str:
 
 
 def build(out: str | FsPath = "demo") -> FsPath:
-    """Write photos/ and reviews/ under out; returns the queue index page."""
+    """Write photos/, reviews/ and the walkthrough index.html under out; returns index.html."""
     out = FsPath(out)
     photos, reviews = out / "photos", out / "reviews"
     photos.mkdir(parents=True, exist_ok=True)
+    cases = []
     for fixture, shots in CARS.items():
         car = json.loads((FIXTURE_DIR / fixture).read_text())
         sightings, views = [], {}
@@ -133,7 +138,147 @@ def build(out: str | FsPath = "demo") -> FsPath:
             # Damage is drawn where it's boxed, so the marks land on it.
             (photos / name).write_text(photo_svg(view, [(d[5], d[3]) for d in damage]))
         vehicle = VehicleRecord(**{**car, "findings": [], "photo_refs": list(views)})
-        req = review.build_request(vehicle, merge_findings(sightings), views=views,
-                                   photo_root=photos, sightings=sightings)  # fmt: skip
+        findings = merge_findings(sightings)
+        req = review.build_request(vehicle, findings, views=views, photo_root=photos,
+                                   sightings=sightings)  # fmt: skip
         review.save(req, reviews)
-    return review.write_queue_index(reviews)
+        lead = next((name for name, _, damage in shots if damage), shots[0][0])
+        cases.append((vehicle, req, evaluate(vehicle, findings), lead))
+    review.write_queue_index(reviews)
+    index = out / "index.html"
+    index.write_text(walkthrough(cases))
+    return index
+
+
+def _money(cents: int) -> str:
+    return f"{'-' if cents < 0 else ''}${abs(cents) / 100:,.0f}"
+
+
+def _bars(rec: Recommendation) -> str:
+    """Expected net per path with its P10-P90 range, on one scale that includes zero."""
+    lo = min(0, *(o.p10_cents for o in rec.options))
+    hi = max(0, *(o.p90_cents for o in rec.options))
+    span = (hi - lo) or 1
+
+    def at(cents: int) -> float:
+        return (cents - lo) / span * 100
+
+    rows = []
+    for o in rec.options:
+        start, end = sorted((at(0), at(o.expected_cents)))
+        cls = "win" if o.path == rec.winner else "neg" if o.expected_cents < 0 else ""
+        rows.append(
+            f'<div class="path {cls}"><div class="pname">{html.escape(LABEL[o.path])}</div>'
+            f'<div class="track"><span class="zero" style="left:{at(0):.1f}%"></span>'
+            f'<span class="range" style="left:{at(o.p10_cents):.1f}%;'
+            f'width:{at(o.p90_cents) - at(o.p10_cents):.1f}%"></span>'
+            f'<span class="bar" style="left:{start:.1f}%;width:{end - start:.1f}%"></span></div>'
+            f'<div class="pval">{_money(o.expected_cents)}</div></div>'
+        )
+    return "".join(rows)
+
+
+Case = tuple[VehicleRecord, review.ReviewRequest, Recommendation, str]
+
+
+def walkthrough(cases: list[Case]) -> str:
+    e = html.escape
+    cards = []
+    for v, req, rec, lead in cases:
+        adjuster = v.insurance_claim
+        persona = "Insurance adjuster" if adjuster else "Dealer"
+        question = ("Total it and send it to Copart, or not?" if adjuster
+                    else "Does the repair pay back on ACV?")  # fmt: skip
+        verify = sum(a.status == review.AreaStatus.VERIFY for a in req.areas())
+        flip = f"<p class=\"flip\"><b>What would flip it:</b> {e(rec.flip_conditions[0])}</p>" if (
+            rec.flip_conditions) else ""  # fmt: skip
+        cards.append(f"""<article class="car">
+<a class="thumb" href="reviews/{e(v.vin)}.html"><img src="photos/{e(lead)}" alt="Drawn photo of the
+{e(v.make)} {e(v.model)}"></a>
+<div class="body">
+<div class="eyebrow">{persona} · {e(v.region)} · {v.mileage:,} mi · clean value
+{_money(v.clean_value_cents or 0)}</div>
+<h2>{v.year} {e(v.make)} {e(v.model)}</h2>
+<p class="q">{e(question)}</p>
+<p class="verdict">{e(LABEL[rec.winner]).capitalize()}</p>
+<p>{e(rec.answer)}</p>
+<div class="bars" role="img" aria-label="Expected net per path">{_bars(rec)}</div>
+<p class="muted small">Bar: expected net. Thin line: 80% of outcomes (P10 to P90).</p>
+{flip}
+<p><a href="reviews/{e(v.vin)}.html">Open the checker's review sheet</a>: {len(req.findings)}
+findings, {verify} areas to verify.</p>
+</div></article>""")
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>UnderScope Demo</title>
+<style>
+/* Layout: one column of car cases, photo beside the decision; stacks on phones. */
+:root {{ --bg:#f4f5f2; --card:#ffffff; --fg:#1d2124; --muted:#5d6468; --line:#d5d9d6;
+  --accent:#2f5fd0; --win:#1f8a5b; --neg:#c93636; --range:#9aa3ab; }}
+@media (prefers-color-scheme: dark) {{ :root:not([data-theme="light"]) {{ --bg:#15181a;
+  --card:#1e2225; --fg:#e8ebe9; --muted:#a0a8ab; --line:#343a3d; --accent:#7ea2f2;
+  --win:#5cc796; --neg:#e86565; --range:#6c757a; color-scheme:dark; }} }}
+:root[data-theme="dark"] {{ --bg:#15181a; --card:#1e2225; --fg:#e8ebe9; --muted:#a0a8ab;
+  --line:#343a3d; --accent:#7ea2f2; --win:#5cc796; --neg:#e86565; --range:#6c757a;
+  color-scheme:dark; }}
+body {{ margin:0; background:var(--bg); color:var(--fg);
+  font:15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }}
+main {{ max-width:1040px; margin:0 auto; padding-block:32px 56px;
+  padding-left:max(16px, env(safe-area-inset-left, 0px));
+  padding-right:max(16px, env(safe-area-inset-right, 0px)); display:grid; gap:28px; }}
+h1 {{ font-size:clamp(28px, 5vw, 40px); line-height:1.1; margin:0; text-wrap:balance; }}
+h2 {{ font-size:22px; margin:0; }}
+p {{ margin:0; max-width:70ch; }}
+a {{ color:var(--accent); }}
+.muted {{ color:var(--muted); }} .small {{ font-size:13px; }}
+.eyebrow {{ font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); }}
+.steps {{ display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:12px; }}
+.steps div {{ background:var(--card); border:1px solid var(--line); border-radius:8px;
+  padding:12px 14px; }}
+.steps b {{ display:block; }}
+.car {{ display:grid; grid-template-columns:minmax(0, 320px) minmax(0, 1fr); gap:20px;
+  background:var(--card); border:1px solid var(--line); border-radius:10px; padding:18px; }}
+.thumb img {{ width:100%; height:auto; border-radius:6px; display:block; }}
+.body {{ display:grid; gap:10px; align-content:start; min-width:0; }}
+.q {{ font-style:italic; }}
+.verdict {{ font-size:22px; font-weight:650; color:var(--win); }}
+.bars {{ display:grid; gap:6px; }}
+.path {{ display:grid; grid-template-columns:minmax(0, 170px) minmax(0, 1fr) 80px; gap:10px;
+  align-items:center; font-size:14px; }}
+.pval {{ text-align:right; font-variant-numeric:tabular-nums; }}
+.track {{ position:relative; height:16px; }}
+.zero {{ position:absolute; top:-2px; bottom:-2px; width:1px; background:var(--muted); }}
+.range {{ position:absolute; top:7px; height:2px; background:var(--range); }}
+.bar {{ position:absolute; top:3px; height:10px; border-radius:2px; background:var(--muted);
+  opacity:.7; }}
+.path.win .bar {{ background:var(--win); opacity:1; }} .path.win {{ font-weight:600; }}
+.path.neg .bar {{ background:var(--neg); }}
+.flip {{ font-size:14px; }}
+footer {{ font-size:13px; color:var(--muted); border-top:1px solid var(--line);
+  padding-top:14px; }}
+@media (max-width:720px) {{ .car, .steps {{ grid-template-columns:1fr; }}
+  .path {{ grid-template-columns:minmax(0, 1fr) 80px; }} .track {{ grid-column:1 / -1; }} }}
+</style></head><body><main>
+<header style="display:grid; gap:10px">
+<div class="eyebrow">UnderScope demo</div>
+<h1>Which exit makes the most money on a damaged car?</h1>
+<p>UnderScope reads the photos and inspection data, has a person confirm the damage, then
+compares four exits: repair then sell on ACV, sell as-is on ACV, sell as salvage on Copart, or
+part it out. It recommends the one with the highest expected net and says what would change
+the answer.</p></header>
+<section class="steps" aria-label="How it works">
+<div><b>1. Read the photos</b><span class="muted">Damage by panel, side, type and severity,
+with a box on each photo.</span></div>
+<div><b>2. A person confirms</b><span class="muted">The checker sees every area, including
+the ones no photo shows, and corrects what's wrong.</span></div>
+<div><b>3. Decide</b><span class="muted">Thousands of simulated outcomes per exit, in cents,
+with the range and the tipping point.</span></div>
+</section>
+{"".join(cards)}
+<p><a href="reviews/index.html">Checker queue</a>: all three cars waiting for confirmation.</p>
+<footer>Demo data. Photos are drawings; cars, damage and every market number are synthetic
+placeholders (config/assumptions.yaml), not real ACV or Copart figures. Decisions assume the
+checker confirms the findings as shown. Rebuild with <code>underscope demo</code>.</footer>
+</main></body></html>
+"""

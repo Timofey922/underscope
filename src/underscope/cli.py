@@ -712,13 +712,13 @@ def demo_cmd(
         "demo"
     ),
 ) -> None:
-    """Write sample review sheets (drawn photos, damage boxes) to open in a browser. Free."""
+    """Write a walkthrough with review sheets and decisions to open in a browser. Free."""
     from underscope import demo
 
     index = demo.build(out)
-    typer.echo(f"Open {index} in a browser. Photos are drawings; damage is the fixtures'.\n"
-               f"Try a checker edit: underscope confirm {index.parent}/FIXDENT0000000001.json "
-               "--checker NAME")  # fmt: skip
+    typer.echo(f"Open {index} in a browser. Photos are drawings; cars and numbers are "
+               "synthetic.\nThe checker's step: underscope confirm "
+               f"{out / 'reviews' / 'FIXDENT0000000001.json'} --checker NAME")  # fmt: skip
 
 
 @app.command("calibrate")

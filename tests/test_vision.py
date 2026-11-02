@@ -280,3 +280,19 @@ def test_box_is_clamped_ordered_and_dropped_when_empty(tmp_path):
     assert hood.box is None and roof.box is None
     assert det.sightings["a.png"] == [door, hood, roof]
     assert "box" in SCHEMA["properties"]["findings"]["items"]["required"]
+
+
+def test_rotated_phone_photo_is_sent_upright(tmp_path):
+    import base64
+    import io
+
+    from underscope.vision import image_block
+
+    Image = pytest.importorskip("PIL.Image")  # vision extra
+    exif = Image.Exif()
+    exif[0x0112] = 6  # stored sideways; viewers rotate it 90 degrees
+    Image.new("RGB", (400, 300)).save(tmp_path / "phone.jpg", exif=exif)
+    block = image_block(tmp_path / "phone.jpg")
+    img = Image.open(io.BytesIO(base64.b64decode(block["source"]["data"])))
+    assert img.size == (300, 400)  # upright, as a browser shows it
+    assert img.getexif().get(0x0112, 1) == 1

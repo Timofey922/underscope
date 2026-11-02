@@ -147,8 +147,10 @@ def _box(raw: Any) -> tuple[float, float, float, float] | None:
 
 
 def _downscale(path: FsPath) -> bytes | None:
-    """JPEG bytes of the photo shrunk to MAX_EDGE on its long side (upright per its EXIF
-    orientation), or None when it is already small enough. Needs Pillow (vision extra)."""
+    """JPEG bytes of the photo shrunk to MAX_EDGE on its long side and turned upright per its
+    EXIF orientation, or None when it is already small and upright. Upright matters for the
+    boxes: they're drawn over the photo as a browser shows it, which follows EXIF. Needs
+    Pillow (vision extra)."""
     try:
         from PIL import Image, ImageOps, UnidentifiedImageError
     except ImportError:
@@ -158,7 +160,8 @@ def _downscale(path: FsPath) -> bytes | None:
     except UnidentifiedImageError:
         return None  # not something Pillow reads; send as is and let the API judge
     with im:
-        if max(im.size) <= MAX_EDGE and path.stat().st_size <= MAX_IMAGE_BYTES:
+        rotated = im.getexif().get(0x0112, 1) != 1  # EXIF Orientation tag
+        if not rotated and max(im.size) <= MAX_EDGE and path.stat().st_size <= MAX_IMAGE_BYTES:
             return None
         im = ImageOps.exif_transpose(im).convert("RGB")
         im.thumbnail((MAX_EDGE, MAX_EDGE))

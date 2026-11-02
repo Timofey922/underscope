@@ -62,6 +62,20 @@ def match(
     return pairs, left, false_alarms
 
 
+# A box overlapping the labeled one at least this much points the checker at the right spot.
+# 0.5 is the usual object-detection bar; damage outlines are vague, so it's a lenient reading.
+ON_TARGET_IOU = 0.5
+
+
+def iou(a: tuple[float, ...], b: tuple[float, ...]) -> float:
+    """Intersection over union of two (left, top, right, bottom) boxes."""
+    w = min(a[2], b[2]) - max(a[0], b[0])
+    h = min(a[3], b[3]) - max(a[1], b[1])
+    inter = max(0.0, w) * max(0.0, h)
+    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+    return inter / union if union > 0 else 0.0
+
+
 @dataclass
 class Score:
     photos: int = 0
@@ -76,6 +90,10 @@ class Score:
     frame_missed: int = 0
     clean_photos: int = 0
     clean_correct: int = 0
+    # Box overlap on matched findings where both label and prediction have a box.
+    boxed: int = 0
+    iou_sum: float = 0.0
+    boxes_on_target: int = 0  # IoU of at least ON_TARGET_IOU
     errors: dict[str, str] = field(default_factory=dict)
     # per confidence bin: [predictions, of which matched]
     calibration: list[list[int]] = field(default_factory=lambda: [[0, 0] for _ in CONF_BINS])
@@ -100,6 +118,10 @@ class Score:
     @property
     def severity_mae(self) -> float:
         return self.severity_abs_error / self.matched if self.matched else 0.0
+
+    @property
+    def mean_iou(self) -> float:
+        return self.iou_sum / self.boxed if self.boxed else 0.0
 
     @property
     def brier(self) -> float:
@@ -135,6 +157,11 @@ def score(
         for t, p in pairs:
             s.type_correct += t.damage_type == p.damage_type
             s.severity_abs_error += abs(t.severity - p.severity)
+            if t.box is not None and p.box is not None:
+                overlap = iou(t.box, p.box)
+                s.boxed += 1
+                s.iou_sum += overlap
+                s.boxes_on_target += overlap >= ON_TARGET_IOU
         for p, hit in [(p, 1) for _, p in pairs] + [(p, 0) for p in false_alarms]:
             s.brier_sum += (p.confidence - hit) ** 2
             s.calibration[_bin(p.confidence)][0] += 1
@@ -176,6 +203,10 @@ def render_report(s: Score, title: str = "Damage detector evaluation") -> str:
         f"| Confidence Brier score (lower is better) | {s.brier:.3f} |",
         f"| Frame damage missed | {s.frame_missed} of {s.frame_true} |",
         f"| Clean photos with no false alarm | {s.clean_correct} of {s.clean_photos} |",
+        *([f"| Box overlap with the label (mean IoU), {s.boxed} boxed matches | "
+           f"{s.mean_iou:.2f} |",
+           f"| Boxes on target (IoU {ON_TARGET_IOU:.1f} or more) | "
+           f"{s.boxes_on_target} of {s.boxed} |"] if s.boxed else []),
         "",
         "## Calibration",
         "",

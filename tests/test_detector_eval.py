@@ -83,3 +83,23 @@ def test_match_prefers_same_side():
     pred = right.model_copy(update={"confidence": 0.9})
     pairs, missed, _ = match([left, right], [pred])
     assert pairs[0][0].side == "right" and missed[0].side == "left"
+
+
+def test_box_overlap_is_scored_on_matched_findings_with_boxes():
+    from underscope.detector_eval import iou, render_report, score
+    from underscope.models import DamageFinding
+
+    def d(box, panel="door"):
+        return DamageFinding(panel=panel, damage_type="dent", severity=0.4, confidence=0.9,
+                             box=box)  # fmt: skip
+
+    assert iou((0, 0, 0.5, 0.5), (0, 0, 0.5, 0.5)) == 1.0
+    assert iou((0, 0, 0.2, 0.2), (0.5, 0.5, 0.9, 0.9)) == 0.0
+    assert iou((0, 0, 0.4, 0.2), (0.2, 0, 0.6, 0.2)) == pytest.approx(1 / 3)
+    truth = {"a": [d((0.1, 0.1, 0.5, 0.5))], "b": [d((0.0, 0.0, 0.2, 0.2))], "c": [d(None)]}
+    pred = {"a": [d((0.1, 0.1, 0.5, 0.5))], "b": [d((0.5, 0.5, 0.9, 0.9))],
+            "c": [d((0.1, 0.1, 0.2, 0.2))]}  # fmt: skip
+    s = score(truth, pred)
+    assert (s.boxed, s.boxes_on_target, s.mean_iou) == (2, 1, 0.5)
+    assert "Boxes on target (IoU 0.5 or more) | 1 of 2" in render_report(s)
+    assert "IoU" not in render_report(score({"c": [d(None)]}, {"c": [d(None)]}))

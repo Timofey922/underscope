@@ -8,10 +8,16 @@ Built for UB Hacking as a demo for ACV, which is now part of Copart.
 
 **https://underscope-eight.vercel.app**
 
-- The page lets you decode a VIN and OBD-II fault codes, or click one of the demo scans.
-- The API is at `POST https://underscope-eight.vercel.app/api/decode-codes` with body `{ "vin": "...", "codes": ["P0300"] }`. CORS is open, so the Lovable app can call it from the browser.
+- Enter a VIN, title, photos, fault codes and market values, or click a sample vehicle (one for each kind of answer). You get both net ranges on one scale, P(fix wins), the verdict, and for close calls the one check that would settle it.
+- Click any part grade or damage flag in the result to change it; the recommendation recomputes live (the reviewer toggle).
+- Registered vehicles (real VINs with a verified title and values) fill in their title and values automatically.
+- APIs, all with open CORS so the Lovable app can call them:
+  - `GET /api/vehicle?vin=`: verified title and values from the demo registry.
+  - `POST /api/grade-photos` `{ vin, photos }`: OpenAI grades 25 parts from photos resized to ~1000px.
+  - `POST /api/decode-codes` `{ vin, codes, title_status? }`: decoded fault codes and their cost.
+  - `POST /api/decide` `{ title_status, grades, flags, codes, values }`: repair band, both nets, P(fix wins), verdict.
+- **Integrate** (https://underscope-eight.vercel.app/integrate.html): deep links like `/?vin=...&codes=...&run=1` that any listing page can use, a drag-to-bookmarks **"Fix or sell?" bookmarklet** that pulls the VIN off any listing page and opens a check, and the API calls.
 - Every push to `main` deploys automatically.
-- Photos added on the page are resized to ~1000px and sent to `POST /api/grade-photos` as `{ vin, photos: [JPEG data URLs] }`. OpenAI grades all 25 parts and the page shows them with the photo each grade came from. See "Vision call" in CLAUDE.md for the contract.
 
 ## How it works
 
@@ -40,7 +46,8 @@ The front end is a Lovable app. The seller uploads photos and a VIN, then sees a
 
 | Folder | What's in it |
 |---|---|
-| `api/` | Vercel serverless functions (TypeScript). `vehicle.ts`: GET `?vin=` → verified title from the demo registry, if the VIN is in it. `decode-codes.ts`: POST `{ vin, codes, title_status? }` → decoded fault codes + triage. `grade-photos.ts`: POST `{ vin, photos }` → 25 part grades, flags, photo gaps |
+| `api/` | Vercel serverless functions (TypeScript). `vehicle.ts`: GET `?vin=` → verified title from the demo registry, if the VIN is in it. `decode-codes.ts`: POST `{ vin, codes, title_status? }` → decoded fault codes + triage. `grade-photos.ts`: POST `{ vin, photos }` → 25 part grades, flags, photo gaps. `decide.ts`: POST → repair band, both net ranges, P(fix wins), verdict. Shared logic in `api/_lib/` |
+| `public/` | The demo page and `demo_vehicles.json` (sample vehicles) |
 | `scripts/` | Seed and test scripts |
 | `supabase/migrations/` | Database schema (`dtc_codes`, `scans`) with row level security |
 | `data/` | `dtc_codes.csv` (60 generic OBD-II codes), `test_scans.json` (10 demo scans) |
@@ -59,6 +66,7 @@ npm run seed:codes                 # load data/dtc_codes.csv into Supabase
 npm run seed:demo                  # decode the 10 demo scans and save them (is_demo = true)
 npm run seed:vehicles              # load real, verified VINs from data/vehicles.local.json (gitignored)
 npm run test:codes                 # run the 10 scans and print a summary table
+npm run test:decision              # run the sample vehicles through the decision and check each verdict
 ```
 
 Keys are read only from environment variables: `.env` locally, Vercel project settings in production. `GEMINI_API_KEY` and `SUPABASE_SERVICE_ROLE_KEY` are server-only; the front end only gets `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`.

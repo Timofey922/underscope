@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Underscope API</title>
+<style>
+  :root { --bg: #fafaf9; --fg: #1c1917; --muted: #78716c; --card: #fff; --line: #e7e5e4; --accent: #1d4ed8; --ok: #15803d; --bad: #b91c1c; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #1c1917; --fg: #f5f5f4; --muted: #a8a29e; --card: #292524; --line: #44403c; --accent: #60a5fa; --ok: #4ade80; --bad: #f87171; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { margin: 0 0 4px; font-size: 26px; }
+  p.sub { margin: 0 0 24px; color: var(--muted); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 18px; margin-bottom: 16px; }
+  label { display: block; font-weight: 600; margin: 0 0 4px; }
+  input { width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); font: 14px ui-monospace, monospace; margin-bottom: 12px; }
+  button { padding: 9px 16px; border: 0; border-radius: 6px; background: var(--accent); color: #fff; font-weight: 600; cursor: pointer; }
+  button:disabled { opacity: .6; cursor: wait; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+  .chip { background: transparent; color: var(--accent); border: 1px solid var(--line); font-weight: 500; padding: 5px 10px; font-size: 13px; }
+  .verdict { font-size: 18px; font-weight: 700; margin: 0 0 4px; }
+  .skip { color: var(--bad); } .full { color: var(--ok); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 10px; }
+  th, td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  pre { overflow-x: auto; font-size: 12px; background: var(--bg); padding: 10px; border-radius: 6px; margin: 10px 0 0; }
+  code { font-family: ui-monospace, monospace; font-size: 13px; }
+  .muted { color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Underscope API</h1>
+  <p class="sub">Fault code decoder for the UB Hacking demo. Enter a VIN and OBD-II codes, or pick a demo scan.</p>
+
+  <div class="card">
+    <div class="chips" id="demos"></div>
+    <label for="vin">VIN</label>
+    <input id="vin" maxlength="17" placeholder="1FTYR2CM1KKA12345">
+    <label for="codes">Codes (comma separated)</label>
+    <input id="codes" placeholder="P0300, C0035">
+    <button id="go">Decode</button>
+  </div>
+
+  <div class="card" id="out" hidden></div>
+
+  <div class="card">
+    <strong>Use it from code</strong>
+    <pre>POST /api/decode-codes
+Content-Type: application/json
+
+{ "vin": "1FTYR2CM1KKA12345", "codes": ["C0035", "P0442", "P1450"] }</pre>
+    <p class="muted" style="margin:10px 0 0">Returns <code>vehicle</code>, <code>codes[]</code>, <code>summary</code>, <code>triage</code> and <code>reason</code>. CORS is open, so the Lovable app can call it directly.</p>
+  </div>
+</main>
+<script>
+const DEMOS = [
+  ['Clean Ram 1500', '1C6RR7LT2HS512345', ''],
+  ['F-150 underboost', '1FTEW1EP6JKD12345', 'P0299, P0171'],
+  ['Silverado misfire', '3GCUYDED4KG123456', 'P0300, P0420'],
+  ['Transit + Ford code', '1FTYR2CM1KKA12345', 'C0035, P0442, P1450'],
+  ['Sierra transmission', '1GT12UEY2HF123456', 'P0700, P0730, P0868'],
+  ['Express airbags', '1GCWGAFP4J1123456', 'B0001, B0010, U0151'],
+  ['F-250 many codes', '1FT7W2BT8LEC12345', 'P0087, P2002, P20EE, P2463, P0401, P0562, U0100'],
+];
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+for (const [label, vin, codes] of DEMOS) {
+  const b = document.createElement('button');
+  b.className = 'chip'; b.textContent = label;
+  b.onclick = () => { $('vin').value = vin; $('codes').value = codes; decode(); };
+  $('demos').appendChild(b);
+}
+
+async function decode() {
+  const vin = $('vin').value.trim();
+  const codes = $('codes').value.split(',').map((c) => c.trim()).filter(Boolean);
+  const out = $('out');
+  $('go').disabled = true; out.hidden = false; out.innerHTML = '<span class="muted">Decoding…</span>';
+  try {
+    const res = await fetch('/api/decode-codes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ vin, codes }) });
+    const r = await res.json();
+    if (!res.ok) { out.innerHTML = `<p class="verdict skip">Error ${res.status}</p><p>${esc(r.error)}</p>`; return; }
+    const v = [r.vehicle.year, r.vehicle.make, r.vehicle.model, r.vehicle.engine].filter(Boolean).join(' ') || 'Unknown vehicle';
+    const skip = r.triage !== 'full_inspection';
+    out.innerHTML = `
+      <p class="verdict ${skip ? 'skip' : 'full'}">${skip ? 'Skip inspection, sell as-is' : 'Full inspection'}</p>
+      <p style="margin:0">${esc(r.reason)}</p>
+      <p class="muted" style="margin:6px 0 0">${esc(v)} · ${r.summary.count} code(s) · worst: ${esc(r.summary.worst_severity)} · cost $${r.summary.cost_low.toLocaleString()}–$${r.summary.cost_high.toLocaleString()}</p>
+      ${r.codes.length ? `<table><tr><th>Code</th><th>Description</th><th>System</th><th>Severity</th><th>Cost</th><th>Source</th></tr>
+        ${r.codes.map((c) => `<tr><td><code>${esc(c.code)}</code></td><td>${esc(c.description)}</td><td>${esc(c.system)}</td><td>${esc(c.severity)}</td><td>$${c.cost_low}–$${c.cost_high}</td><td>${esc(c.source)}</td></tr>`).join('')}</table>` : ''}
+      <details style="margin-top:10px"><summary class="muted">Raw JSON</summary><pre>${esc(JSON.stringify(r, null, 2))}</pre></details>`;
+  } catch (e) {
+    out.innerHTML = `<p class="verdict skip">Request failed</p><p>${esc(e.message)}</p>`;
+  } finally { $('go').disabled = false; }
+}
+$('go').onclick = decode;
+</script>
+</body>
+</html>

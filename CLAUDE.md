@@ -107,6 +107,7 @@ Hand-entered per vehicle: 5-10 comparable sold salvage lots + one clean wholesal
 ## UI (Lovable)
 Upload photos + VIN -> part grid with grade and source photo -> both nets with bands and days -> recommendation -> reviewer toggle to change any grade and recompute live.
 - Working version: `public/index.html` (the Vercel demo page). Headline question: "Fix it or sell it as-is?". Clicking a part grade or a flag cycles it and calls `/api/decide` again. The Lovable app can call the same four endpoints.
+- Look: follows ACV's public site so it sits next to their products (orange #D34319 CTAs, #121212 dark hero, 4px radius, heavy uppercase display headlines in Montserrat as a free stand-in for their Proxima Nova, Roboto body, skewed orange slash accent). Underscope branding only: never use ACV's logo or name it as an ACV product; keep the footer line saying it's an independent project.
 - Sample vehicles: `public/demo_vehicles.json` (made-up VINs, sample grades and values, one per verdict). Real vehicles come from the registry.
 
 ## Test

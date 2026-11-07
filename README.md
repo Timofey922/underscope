@@ -9,11 +9,11 @@ Built for UB Hacking as a demo for ACV, which is now part of Copart.
 ```
 photos + VIN + fault codes
         │
-        ├─ vision/    Claude grades 25 parts: fine / repairable / replace / unknown
+        ├─ vision     Gemini grades 25 parts: fine / repairable / replace / unknown
         │             and flags hidden risks (airbags, frame, fluid leaks)
-        ├─ codes/     decode DTCs (generic table, or Claude + NHTSA vPIC for
+        ├─ codes      decode DTCs (Supabase table, or Gemini + NHTSA vPIC for
         │             manufacturer codes) → system, severity, cost band, triage
-        └─ decision/  repair band (parts + labor, widened for unknowns)
+        └─ decision   repair band (parts + labor, widened for unknowns)
                       as-is band (comparable salvage sales)
                       1,000 Monte Carlo draws → P(fix wins)
                           > 70%  → fix
@@ -31,24 +31,27 @@ The front end is a Lovable app. The seller uploads photos and a VIN, then sees a
 
 | Folder | What's in it |
 |---|---|
-| `vision/` | Claude vision call, part grading, JSON validation |
-| `codes/` | OBD-II fault code decoding and triage |
-| `decision/` | Repair band, as-is band, Monte Carlo recommendation |
-| `data/` | CSV lookup tables: DTC descriptions, DTC costs, repair costs, comps |
+| `api/` | Vercel serverless functions (TypeScript). `decode-codes.ts`: POST `{ vin, codes }` → decoded fault codes + triage |
+| `scripts/` | Seed and test scripts |
+| `supabase/migrations/` | Database schema (`dtc_codes`, `scans`) with row level security |
+| `data/` | `dtc_codes.csv` (60 generic OBD-II codes), `test_scans.json` (10 demo scans) |
 | `test_vehicles/` | 20 test vehicles (photos only, gitignored) |
+
+**Stack:** Lovable (React + TypeScript) front end on Vercel, Vercel functions in `api/`, Google Gemini (`@google/genai`), Supabase (Postgres).
 
 ## Setup
 
-Requires Python 3.10+.
+Requires Node 20+.
 
 ```powershell
-python -m venv venv
-venv\Scripts\Activate.ps1          # macOS/Linux: source venv/bin/activate
-pip install -r requirements.txt
-copy .env.example .env             # then put your key in ANTHROPIC_API_KEY
+npm install
+copy .env.example .env             # then fill in the values
+npm run seed:codes                 # load data/dtc_codes.csv into Supabase
+npm run seed:demo                  # decode the 10 demo scans and save them (is_demo = true)
+npm run test:codes                 # run the 10 scans and print a summary table
 ```
 
-The API key is read from the `ANTHROPIC_API_KEY` environment variable. Keep it out of the code and the front end.
+Keys are read only from environment variables: `.env` locally, Vercel project settings in production. `GEMINI_API_KEY` and `SUPABASE_SERVICE_ROLE_KEY` are server-only; the front end only gets `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`.
 
 ## Testing
 

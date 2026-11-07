@@ -106,8 +106,9 @@ async function askGemini(codes: string[], vehicle: Vehicle): Promise<DecodedCode
         const isUnknown = desc.toLowerCase() === 'unknown';
         return { code, description: desc, system: sys, severity, cost_low: lo, cost_high: hi, source: isUnknown ? 'unknown' : 'gemini' };
       });
-    } catch {
-      // invalid JSON or missing codes: retry once, then fall back to unknown
+    } catch (e) {
+      // API error, invalid JSON or missing codes: retry once, then fall back to unknown
+      console.warn(`Gemini attempt ${attempt + 1} failed: ${(e as Error).message.slice(0, 200)}`);
     }
   }
   return codes.map(unknownCode);

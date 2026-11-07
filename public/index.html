@@ -81,6 +81,18 @@
   .tag button { border: 0; background: none; color: inherit; font: 600 16px/1 var(--sans); padding: 0 4px; cursor: pointer; opacity: .75; }
   .tag button:hover { opacity: 1; }
 
+  /* Title status: segmented radio row */
+  fieldset.title { border: 0; padding: 0; margin: 0 0 26px; min-width: 0; }
+  fieldset.title legend { padding: 0; }
+  .seg { display: flex; flex-wrap: wrap; border: 2px solid var(--ink); border-radius: 3px; background: var(--panel); width: fit-content; max-width: 100%; }
+  .seg label { position: relative; }
+  .seg input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+  .seg span { display: block; padding: 9px 14px; font-weight: 500; font-size: 15px; border-right: 1px solid var(--line); }
+  .seg label:last-child span { border-right: 0; }
+  .seg input:checked + span { background: var(--ink); color: var(--bg); }
+  .seg input:focus-visible + span { outline: 2px solid var(--focus); outline-offset: -4px; }
+  .seg input[value="flood"]:checked + span, .seg input[value="non_repairable"]:checked + span { background: var(--red); color: #fff; }
+
   /* Photos */
   .drop { display: block; padding: 22px 20px; border: 2px dashed var(--steel); border-radius: 3px; background: var(--panel); cursor: pointer; }
   .drop:hover, .drop.over { border-color: var(--ink); border-style: solid; }
@@ -194,6 +206,20 @@
       <div class="hint" id="vin-hint">17 characters, found on the dash or the driver's door jamb.</div>
     </div>
 
+    <fieldset class="field title">
+      <legend class="label">Title status</legend>
+      <div class="seg" id="title">
+        <label><input type="radio" name="title" value="clean"><span>Clean</span></label>
+        <label><input type="radio" name="title" value="salvage"><span>Salvage</span></label>
+        <label><input type="radio" name="title" value="rebuilt"><span>Rebuilt</span></label>
+        <label><input type="radio" name="title" value="flood"><span>Flood</span></label>
+        <label><input type="radio" name="title" value="non_repairable"><span>Non-repairable</span></label>
+        <label><input type="radio" name="title" value="lemon"><span>Lemon buyback</span></label>
+        <label><input type="radio" name="title" value="unknown" checked><span>Not sure</span></label>
+      </div>
+      <div class="hint">As printed on the title document. Flood and non-repairable titles mean the vehicle sells as-is.</div>
+    </fieldset>
+
     <div class="field">
       <span class="label" id="photos-label">Photos</span>
       <label class="drop" id="drop">
@@ -242,7 +268,11 @@ const SAMPLES = [
   ['2017 GMC Sierra 2500HD, transmission failure', '1GT12UEY2HF123456', ['P0700', 'P0730', 'P0868']],
   ['2018 Chevrolet Express, airbags deployed', '1GCWGAFP4J1123456', ['B0001', 'B0010', 'U0151']],
   ['2020 Ford F-250 diesel, seven codes', '1FT7W2BT8LEC12345', ['P0087', 'P2002', 'P20EE', 'P2463', 'P0401', 'P0562', 'U0100']],
+  ['2016 Nissan NV, flood title, no codes', '1N6BF0KM3GN812345', [], 'flood'],
 ];
+const TITLE_LABEL = { clean: 'Clean', salvage: 'Salvage', rebuilt: 'Rebuilt', flood: 'Flood', non_repairable: 'Non-repairable', lemon: 'Lemon buyback', unknown: 'Not sure' };
+const getTitle = () => (document.querySelector('input[name=title]:checked') || {}).value || 'unknown';
+const setTitle = (v) => { document.querySelector(`input[name=title][value="${v}"]`).checked = true; };
 const CODE_RE = /^[PCBU][0-3][0-9A-F]{3}$/;
 const VIN_RE = /^[A-HJ-NPR-Z0-9]{17}$/;
 const SOURCE = { generic_table: 'from the code table', gemini: 'explained by Gemini for this make', unknown: 'meaning unknown for this make', invalid: 'not a valid code' };
@@ -340,12 +370,12 @@ $('vin').addEventListener('input', (e) => {
 });
 
 // ---- Samples ----
-SAMPLES.forEach(([label, vin, cs]) => {
+SAMPLES.forEach(([label, vin, cs, title = 'unknown']) => {
   const li = document.createElement('li');
   li.innerHTML = `<button type="button"><span class="car">${esc(label)}</span><span class="sc">${cs.length ? esc(cs.join(' ')) : 'no codes'}</span></button>`;
   li.querySelector('button').onclick = () => {
     $('vin').value = vin; $('vin').dispatchEvent(new Event('input'));
-    codes = [...cs]; renderCodes();
+    codes = [...cs]; renderCodes(); setTitle(title);
     $('form').requestSubmit();
   };
   $('samples').appendChild(li);
@@ -354,7 +384,7 @@ SAMPLES.forEach(([label, vin, cs]) => {
 $('clear').onclick = () => {
   $('vin').value = ''; $('vin').dispatchEvent(new Event('input'));
   $('code-input').value = ''; codes = []; renderCodes();
-  photos = []; renderPhotos();
+  photos = []; renderPhotos(); setTitle('unknown');
   $('result').hidden = true; $('vin').focus();
 };
 
@@ -379,7 +409,7 @@ $('form').addEventListener('submit', async (e) => {
   try {
     const post = (url, body) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const [res, photoRes] = await Promise.all([
-      post('/api/decode-codes', { vin, codes }),
+      post('/api/decode-codes', { vin, codes, title_status: getTitle() }),
       photos.length ? post('/api/grade-photos', { vin, photos: photos.map((p) => p.dataUrl) }).catch((e) => e) : null,
     ]);
     const r = await res.json().catch(() => ({}));
@@ -443,11 +473,11 @@ function showResult(r, photoResult = null) {
   out.hidden = false;
   out.innerHTML = `
     <div class="verdict">
-      <div class="lamp ${lamp} ignite">${glyph(none)}</div>
+      <div class="lamp ${lamp} ignite">${glyph(none && !skip)}</div>
       <div>
         <h2>${esc(head)}</h2>
-        <p class="why">${esc(r.reason.replace(/^Skip inspection:\s*/, ''))}</p>
-        <p class="vehicle">${car ? esc(car) : 'Vehicle not found in the NHTSA database'}</p>
+        <p class="why">${esc(r.reason.replace(/^Skip inspection:\s*/, '').replace(/^./, (c) => c.toUpperCase()))}</p>
+        <p class="vehicle">${car ? esc(car) : 'Vehicle not found in the NHTSA database'}. Title: ${esc(TITLE_LABEL[r.title_status] || 'Not sure')}${r.title_status && r.title_status !== 'unknown' ? ', entered by seller' : ''}.</p>
       </div>
     </div>
     ${none ? '' : `

@@ -1,4 +1,5 @@
-// POST /api/decode-codes  { vin, codes } -> decoded fault codes, summary and triage.
+// POST /api/decode-codes  { vin, codes, title_status? } -> decoded fault codes, summary and triage.
+// title_status is entered by the seller (no free API returns title brands by VIN).
 // Generic codes come from the Supabase dtc_codes table; manufacturer-specific or
 // unlisted codes are explained by Gemini (which must say "unknown" rather than guess).
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -11,6 +12,7 @@ export const CONFIG = {
     manyCodes: 6,                                  // this many valid codes or more -> skip inspection
     skipSeverities: ['critical'],                  // any code at these severities -> skip
     skipSystemsAtMajor: ['transmission', 'airbag/SRS'], // major-or-worse in these systems -> skip
+    skipTitles: ['non_repairable', 'flood'],       // seller-entered title brands that skip inspection
   },
   // Cost band for codes explained by Gemini (the table has its own costs).
   costBySeverity: {
@@ -22,6 +24,8 @@ export const CONFIG = {
 
 const SYSTEMS = ['engine', 'transmission', 'brakes/ABS', 'airbag/SRS', 'electrical', 'emissions', 'body'];
 const SEVERITIES = ['minor', 'moderate', 'major', 'critical']; // ordered, worst last
+export const TITLE_STATUSES = ['clean', 'salvage', 'rebuilt', 'flood', 'non_repairable', 'lemon', 'unknown'] as const;
+export type TitleStatus = (typeof TITLE_STATUSES)[number];
 const CODE_RE = /^[PCBU][0-3][0-9A-F]{3}$/;
 const VIN_RE = /^[A-HJ-NPR-Z0-9]{17}$/;
 
@@ -33,6 +37,7 @@ export type DecodedCode = {
 export type Vehicle = { year: string | null; make: string | null; model: string | null; engine: string | null };
 export type DecodeResult = {
   vehicle: Vehicle;
+  title_status: TitleStatus;
   codes: DecodedCode[];
   summary: { count: number; worst_severity: string; cost_low: number; cost_high: number };
   triage: 'full_inspection' | 'skip_inspection_sell_as_is';
@@ -113,9 +118,10 @@ async function askGemini(codes: string[], vehicle: Vehicle): Promise<DecodedCode
   return codes.map(unknownCode);
 }
 
-function triage(valid: DecodedCode[]): { triage: DecodeResult['triage']; reason: string } {
+function triage(valid: DecodedCode[], title: TitleStatus): { triage: DecodeResult['triage']; reason: string } {
   const t = CONFIG.triage;
   const reasons: string[] = [];
+  if (t.skipTitles.includes(title)) reasons.push(`title is ${title.replace('_', '-')}`);
   if (valid.length >= t.manyCodes) reasons.push(`${valid.length} codes (threshold ${t.manyCodes})`);
   for (const c of valid) {
     if (t.skipSeverities.includes(c.severity)) reasons.push(`${c.code} is ${c.severity} (${c.system})`);
@@ -128,7 +134,7 @@ function triage(valid: DecodedCode[]): { triage: DecodeResult['triage']; reason:
 
 // ---- Core, usable from scripts ----
 
-export async function decodeScan(vin: string, rawCodes: string[]): Promise<DecodeResult> {
+export async function decodeScan(vin: string, rawCodes: string[], title: TitleStatus = 'unknown'): Promise<DecodeResult> {
   const codes = [...new Set(rawCodes.map((c) => c.trim().toUpperCase()))];
   const valid = codes.filter((c) => CODE_RE.test(c));
   const invalid = codes.filter((c) => !CODE_RE.test(c));
@@ -144,6 +150,7 @@ export async function decodeScan(vin: string, rawCodes: string[]): Promise<Decod
 
   return {
     vehicle,
+    title_status: title,
     codes: [
       ...decoded,
       ...invalid.map((code) => ({ code, description: 'invalid code format', system: 'unknown', severity: 'unknown', cost_low: 0, cost_high: 0, source: 'invalid' as const })),
@@ -154,7 +161,7 @@ export async function decodeScan(vin: string, rawCodes: string[]): Promise<Decod
       cost_low: decoded.reduce((s, c) => s + c.cost_low, 0),
       cost_high: decoded.reduce((s, c) => s + c.cost_high, 0),
     },
-    ...triage(decoded),
+    ...triage(decoded, title),
   };
 }
 
@@ -170,20 +177,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Opening the URL in a browser shows how to use it instead of an error.
     return res.status(200).json({
       endpoint: 'POST /api/decode-codes',
-      body: { vin: '17-character VIN', codes: ['P0300', 'C0035'] },
-      returns: 'vehicle, codes[], summary, triage, reason',
+      body: { vin: '17-character VIN', codes: ['P0300', 'C0035'], title_status: `optional: ${TITLE_STATUSES.join(' | ')}` },
+      returns: 'vehicle, title_status, codes[], summary, triage, reason',
       try_it: '/',
     });
   }
   if (req.method !== 'POST') return res.status(405).json({ error: 'Use POST' });
-  const { vin, codes } = req.body ?? {};
+  const { vin, codes, title_status = 'unknown' } = req.body ?? {};
+  if (!TITLE_STATUSES.includes(title_status)) {
+    return res.status(400).json({ error: `title_status must be one of: ${TITLE_STATUSES.join(', ')}` });
+  }
   const cleanVin = typeof vin === 'string' ? vin.trim().toUpperCase() : '';
   if (!VIN_RE.test(cleanVin)) return res.status(400).json({ error: 'vin must be 17 characters (no I, O or Q)' });
   if (!Array.isArray(codes) || codes.length > CONFIG.maxCodes || !codes.every((c) => typeof c === 'string')) {
     return res.status(400).json({ error: `codes must be an array of up to ${CONFIG.maxCodes} strings` });
   }
   try {
-    return res.status(200).json(await decodeScan(cleanVin, codes));
+    return res.status(200).json(await decodeScan(cleanVin, codes, title_status));
   } catch (e) {
     return res.status(500).json({ error: (e as Error).message });
   }

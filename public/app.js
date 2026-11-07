@@ -94,12 +94,73 @@ async function addPhotos(files) {
   const failed = [];
   for (const f of [...files]) {
     if (photos.length >= MAX_PHOTOS) { failed.push(`${f.name} (limit ${MAX_PHOTOS})`); continue; }
-    try { photos.push({ name: f.name, dataUrl: await resize(f) }); } catch { failed.push(`${f.name} (use JPEG or PNG)`); }
+    try { photos.push({ name: f.name, dataUrl: await resize(f), file: f }); } catch { failed.push(`${f.name} (use JPEG or PNG)`); }
   }
   preset = null; renderPhotos();
   if (failed.length) { $('photos-hint').classList.add('bad'); $('photos-hint').textContent = `Skipped ${failed.join('; ')}.`; }
 }
 const photoBytes = () => photos.reduce((n, p) => n + p.dataUrl.length, 0);
+
+// Two-stage photo grading. Stage 1 (/api/classify-photos, cheap model) says which side each photo shows and boxes
+// damage, the VIN label and the odometer as grid cells; stage 2 (/api/grade-photos) grades the photos plus
+// full-resolution close-ups of those boxes.
+const REQUEST_BUDGET = 4_300_000; // photos + close-ups, under Vercel's ~4.5 MB request limit
+const CROP_SIDE = 768, CROP_PAD = 0.15, MAX_CROPS = 10;
+
+// Stage 1 image: 768 px with a labelled 4x4 grid (columns A-D left to right, rows 1-4 top to bottom).
+async function drawGrid(file) {
+  const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  const s = Math.min(1, 768 / Math.max(bmp.width, bmp.height));
+  const c = document.createElement('canvas');
+  const w = c.width = Math.round(bmp.width * s), h = c.height = Math.round(bmp.height * s);
+  const g = c.getContext('2d');
+  g.drawImage(bmp, 0, 0, w, h); bmp.close();
+  g.strokeStyle = 'rgba(255,230,0,0.85)'; g.lineWidth = 2;
+  for (let i = 1; i < 4; i++) { g.beginPath(); g.moveTo(w * i / 4, 0); g.lineTo(w * i / 4, h); g.moveTo(0, h * i / 4); g.lineTo(w, h * i / 4); g.stroke(); }
+  g.font = 'bold 19px sans-serif'; g.lineWidth = 3; g.strokeStyle = 'black'; g.fillStyle = 'rgb(255,230,0)';
+  for (let r = 0; r < 4; r++) for (let col = 0; col < 4; col++) {
+    const t = 'ABCD'[col] + (r + 1), x = w * col / 4 + 5, y = h * r / 4 + 21;
+    g.strokeText(t, x, y); g.fillText(t, x, y);
+  }
+  return c.toDataURL('image/jpeg', 0.8);
+}
+
+// Close-up: the box (fractions of the photo) plus 15% padding, cut from the full-resolution file.
+async function cropFrom(file, box) {
+  const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  const W = bmp.width, H = bmp.height;
+  const x0 = Math.max(0, (box.x - box.w * CROP_PAD) * W), y0 = Math.max(0, (box.y - box.h * CROP_PAD) * H);
+  const x1 = Math.min(W, (box.x + box.w * (1 + CROP_PAD)) * W), y1 = Math.min(H, (box.y + box.h * (1 + CROP_PAD)) * H);
+  const sw = Math.max(32, x1 - x0), sh = Math.max(32, y1 - y0), k = CROP_SIDE / Math.max(sw, sh);
+  const c = document.createElement('canvas');
+  c.width = Math.round(sw * k); c.height = Math.round(sh * k);
+  c.getContext('2d').drawImage(bmp, x0, y0, sw, sh, 0, 0, c.width, c.height); bmp.close();
+  return c.toDataURL('image/jpeg', 0.82);
+}
+
+async function gradePhotoFlow(vin, status) {
+  status('Sorting photos…');
+  const s1 = await post('/api/classify-photos', { photos: await Promise.all(photos.map((p) => drawGrid(p.file))) });
+  const stage1 = await s1.json().catch(() => null);
+  if (!s1.ok || !stage1 || !Array.isArray(stage1.photos)) throw new Error((stage1 && stage1.error) || `Photo sorting answered ${s1.status}.`);
+  status('Cutting close-ups…');
+  const rank = (k) => (k === 'vin_label' ? 0 : k === 'odometer' ? 1 : 2); // labels need the pixels most
+  const regions = stage1.photos.flatMap((p) => p.regions.map((r) => ({ photo: p.photo, ...r })))
+    .sort((a, b) => rank(a.kind) - rank(b.kind)).slice(0, MAX_CROPS);
+  const crops = [];
+  let bytes = photoBytes();
+  for (const r of regions) {
+    const image = await cropFrom(photos[r.photo - 1].file, r.box);
+    if (bytes + image.length > REQUEST_BUDGET) break;
+    bytes += image.length;
+    crops.push({ photo: r.photo, kind: r.kind, part: r.part, note: r.note, image });
+  }
+  status('Grading photos…');
+  const views = stage1.photos.map((p) => (['exterior_unknown_side', 'other'].includes(p.view) ? null : p.view));
+  const res = await post('/api/grade-photos', { vin, photos: photos.map((p) => p.dataUrl), views, crops });
+  return { res, stage1, crops: crops.map(({ image, ...meta }) => meta) };
+}
+
 function renderPhotos() {
   const list = $('thumbs'); list.innerHTML = '';
   photos.forEach((p, i) => {
@@ -182,7 +243,7 @@ $('clear').onclick = () => {
 // ---------- Run ----------
 async function readPhotoResult(res) {
   if (res === null) return null;
-  if (res instanceof Error) return { error: `Photo upload failed: ${res.message}` };
+  if (res instanceof Error) return { error: `Photo grading failed: ${res.message}` };
   if (res.status === 404) return { error: "Photo grading isn't available on this deployment." };
   if (res.status === 413) return { error: 'Photos too large to upload together. Remove a few.' };
   const body = await res.json().catch(() => null);
@@ -200,15 +261,16 @@ $('form').addEventListener('submit', async (e) => {
     $('vin').focus(); return;
   }
   if (photoBytes() > MAX_BYTES) { $('drop').scrollIntoView({ block: 'center' }); return; }
-  $('go').disabled = true; $('go').textContent = photos.length ? 'Grading photos…' : 'Running…';
+  $('go').disabled = true; $('go').textContent = photos.length ? 'Sorting photos…' : 'Running…';
   try {
-    const [cRes, pRes] = await Promise.all([
+    const [cRes, flow] = await Promise.all([
       post('/api/decode-codes', { vin, codes: codes.get(), title_status: getTitle() }),
-      photos.length ? post('/api/grade-photos', { vin, photos: photos.map((p) => p.dataUrl) }).catch((x) => x) : null,
+      photos.length ? gradePhotoFlow(vin, (t) => { $('go').textContent = t; }).catch((x) => x) : null,
     ]);
     const c = await cRes.json().catch(() => ({}));
     if (!cRes.ok) throw new Error(c.error || `The server answered ${cRes.status}.`);
-    const photo = await readPhotoResult(pRes);
+    const photo = await readPhotoResult(flow === null || flow instanceof Error ? flow : flow.res);
+    if (photo && flow && !(flow instanceof Error)) Object.assign(photo, { stage1: flow.stage1, crops: flow.crops });
     const grades = new Map();
     if (photo && photo.data) photo.data.parts.forEach((p) => grades.set(p.part, { grade: p.grade, photo: p.evidence_photo, edited: false }));
     PARTS.forEach((p) => { if (!grades.has(p)) grades.set(p, { grade: preset ? (preset.grades[p] || 'fine') : 'unknown', photo: null, edited: false }); });
@@ -387,19 +449,43 @@ function codesTab() {
         <span class="meta">${esc(sev(c.severity))}, ${esc(c.system)}, ${esc(CODE_SOURCE[c.source] || c.source)}</span></li>`).join('')}</ul>`;
 }
 
+// The whole check as one JSON document: inputs, decision, fault codes and both photo stages.
+function buildReport(d) {
+  const p = state.photo;
+  return {
+    generated_at: new Date().toISOString(),
+    input: { vin: state.vin, codes: state.codes.codes.map((c) => c.code), title_status: state.codes.title_status, photos: photos.map((x) => x.name), sample: state.sampleId || null },
+    decision: d,
+    fault_codes: state.codes,
+    part_grades: [...state.grades].map(([part, g]) => ({ part, grade: g.grade, evidence_photo: g.photo, edited_by_reviewer: g.edited })),
+    flags: state.flags,
+    photos: !p ? null : p.error ? { error: p.error } : { classification: p.stage1 || null, crops: p.crops || [], grading: p.data },
+  };
+}
+function downloadJson(report) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' }));
+  a.download = `underscope-${report.input.vin}-${report.generated_at.slice(0, 19).replace(/[:T]/g, '-')}.json`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
 function render(d, first) {
   const out = $('result');
+  const report = buildReport(d);
   out.hidden = false;
   const y = window.scrollY;
   const engine = state.codes.vehicle.engine ? `<span class="vin-code">${esc(state.codes.vehicle.engine)}</span>` : '';
   out.innerHTML = `
     <div class="vehbar"><h2>${esc(vehicleName())}</h2><span class="vin-code">${esc(state.vin)}</span>${engine}${titleBadge()}<span class="spacer"></span>
-      <button class="btn btn-ghost btn-sm" type="button" data-copy>Copy link</button></div>
+      <button class="btn btn-ghost btn-sm" type="button" data-copy>Copy link</button>
+      <button class="btn btn-ghost btn-sm" type="button" data-download>Download JSON</button></div>
     ${recBlock(d, first)}${rangesBlock(d)}
     <div class="sec"><h3>Where the numbers come from</h3>${repairTab(d)}</div>
     <div class="sec"><h3>Condition</h3>${conditionTab()}</div>
     <div class="sec"><h3>Fault codes</h3>${codesTab()}</div>
-    <div class="sec"><details><summary style="cursor:pointer;color:var(--orange);font-weight:500;font-size:14px">API response</summary><pre style="margin-top:10px">${esc(JSON.stringify({ decision: d, codes: state.codes, photos: state.photo && state.photo.data }, null, 2))}</pre></details></div>`;
+    <div class="sec"><details><summary style="cursor:pointer;color:var(--orange);font-weight:500;font-size:14px">API response (same as Download JSON)</summary><pre style="margin-top:10px">${esc(JSON.stringify(report, null, 2))}</pre></details></div>`;
+  out.querySelector('[data-download]').onclick = () => downloadJson(report);
   if (first) {
     history.replaceState(null, '', shareUrl().replace(location.origin, ''));
     out.scrollIntoView({ behavior: reduceMotion() ? 'auto' : 'smooth', block: 'start' });

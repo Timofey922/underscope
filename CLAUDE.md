@@ -5,6 +5,30 @@ A demo for ACV (now owned by Copart) that looks at photos of a damaged vehicle a
 
 This is a 24-hour hackathon build. Keep everything simple. Do not add features outside this file.
 
+## Where this fits (background, not scope)
+The hackathon demo is the first thin slice of a larger plan in two docs by Artem Denisenko, both in the repo root:
+- `Underscope_Channel_Routing_Intelligence_—_Research_Plan,_Requirements.pdf` (Nov 5, 2026): research findings, requirements, architecture, 90-day plan
+- `Build plan.pdf` (Nov 6, 2026): 14 build steps, model training plan, codemap, deployment architecture
+
+Read them only when a task needs the bigger picture; this file is the source of truth for the demo.
+
+The full product is a **routing engine, not a price predictor**: after a scan, it ranks the channels a vehicle could go to (ACV dealer wholesale, Copart salvage lanes, recycler/parts, direct buyer) by expected net to the seller, completion probability, days to cash and dispute risk, and names the likely buyer segment. Copart closed its acquisition of ACV on 16 Oct 2026, so this choice is now internal to one company.
+
+The demo's fix-vs-sell-as-is decision is a two-channel version of that engine. Ideas from the docs that the demo already follows, and should keep following:
+- Output is always ranges and a probability of winning, never a single price.
+- A close call is stated as such, with the one check that would change it (the "verification item").
+- Things photos can't show (frame, mechanical, flood/leaks, airbags) become `unknown`/flags that widen the band; never assert them.
+- Weight misses by dollars: a missed "replace" part matters far more than a missed scratch.
+
+Everything else in the docs (eligibility rules by state, P10/P50/P90 estimators, Copart archive models, FastAPI monorepo, Postgres, review UI with blind labeling, simulator, harness gates, fine-tuned grader, partner adapters, pilot) is **post-hackathon**. Do not build it now, even if it seems related. The "Do NOT build" list below wins over the docs.
+
+## Repo layout (demo)
+- `vision/` — vision call and part grading (the docs' "condition normalizer")
+- `codes/` — fault codes module (OBD-II DTCs)
+- `decision/` — repair band, as-is band, Monte Carlo decision (the docs' "estimators" + "decision policy")
+- `data/` — CSV lookup tables (`dtc_generic.csv`, `dtc_costs.csv`, repair band table, per-vehicle comps)
+- `test_vehicles/` — test photos, gitignored
+
 ## Scope
 - Vehicles: full-size pickups and cargo vans only.
 - 20 test vehicles in `test_vehicles/<id>/` (photos only, used for testing, never training).

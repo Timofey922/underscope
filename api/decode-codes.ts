@@ -121,7 +121,7 @@ async function askGemini(codes: string[], vehicle: Vehicle): Promise<DecodedCode
 function triage(valid: DecodedCode[], title: TitleStatus): { triage: DecodeResult['triage']; reason: string } {
   const t = CONFIG.triage;
   const reasons: string[] = [];
-  if (t.skipTitles.includes(title)) reasons.push(`title is ${title.replace('_', '-')}`);
+  if (t.skipTitles.includes(title)) reasons.push(`${title.replace('_', '-')} title`);
   if (valid.length >= t.manyCodes) reasons.push(`${valid.length} codes (threshold ${t.manyCodes})`);
   for (const c of valid) {
     if (t.skipSeverities.includes(c.severity)) reasons.push(`${c.code} is ${c.severity} (${c.system})`);

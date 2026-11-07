@@ -78,6 +78,7 @@ Steps:
 ```
 6. Triage rule: if many codes or any critical ones (airbag deployed, transmission, major engine), set "triage": "skip_inspection_sell_as_is", because a full inspection isn't worth the time and money. Thresholds live in one config object (`CONFIG` at the top of `api/decode-codes.ts`).
 7. Code costs are added to the repair band; critical codes also widen the band like an unknown flag.
+8. Title status: entered by the seller on the page (no free API returns title brands by VIN; paid NMVTIS lookups are out of scope). Optional `title_status` in the request: `clean`, `salvage`, `rebuilt`, `flood`, `non_repairable`, `lemon`, `unknown` (default). It is echoed in the response; `flood` and `non_repairable` set triage to `skip_inspection_sell_as_is` (`CONFIG.triage.skipTitles`).
 
 ## Repair band
 Lookup table (CSV) of part x grade -> parts cost low/high, labor hours low/high, paint yes/no. Seller labor rate is an input.

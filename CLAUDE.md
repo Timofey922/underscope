@@ -106,8 +106,9 @@ Hand-entered per vehicle: 5-10 comparable sold salvage lots + one clean wholesal
 
 ## UI (Lovable)
 Upload photos + VIN -> part grid with grade and source photo -> both nets with bands and days -> recommendation -> reviewer toggle to change any grade and recompute live.
-- Working version: `public/index.html` (the Vercel demo page). Headline question: "Fix it or sell it as-is?". Clicking a part grade or a flag cycles it and calls `/api/decide` again. The Lovable app can call the same four endpoints.
-- Look: follows ACV's public site so it sits next to their products (orange #D34319 CTAs, #121212 dark hero, 4px radius, heavy uppercase display headlines in Montserrat as a free stand-in for their Proxima Nova, Roboto body, skewed orange slash accent). Underscope branding only: never use ACV's logo or name it as an ACV product; keep the footer line saying it's an independent project.
+- Working version: `public/index.html` + `public/app.js` + `public/app.css` (the Vercel demo). App layout, not a landing page: app bar, intake panel on the left, results on the right (vehicle header with title badge, recommendation, both net ranges, tabs for repair estimate / condition / fault codes / API response). Clicking a part grade or a flag cycles it and calls `/api/decide` again. The Lovable app can call the same four endpoints.
+- Look: tool-like, in ACV's palette and type (orange #D34319 actions, #121212 ink, gray scale, Roboto, 4px radii). No marketing hero, no decorative copy. Underscope branding only: never use ACV's logo or present it as an ACV product; keep the footer line saying it's an independent project.
+- Integration points (`public/integrate.html`): deep links (`/?vin=&codes=&title=&clean=&comps=&run=1`, `/?sample=<id>`; every result has Copy link), a bookmarklet that finds a VIN on any listing page (validated by check digit) and opens a check, and the four CORS-open APIs. No access to ACV systems is used; CLAUDE.md's "no ACV integration" still holds.
 - Sample vehicles: `public/demo_vehicles.json` (made-up VINs, sample grades and values, one per verdict). Real vehicles come from the registry.
 
 ## Test

@@ -16,6 +16,7 @@ Built for UB Hacking as a demo for ACV, which is now part of Copart.
   - `POST /api/grade-photos` `{ vin, photos }`: OpenAI grades 25 parts from photos resized to ~1000px.
   - `POST /api/decode-codes` `{ vin, codes, title_status? }`: decoded fault codes and their cost.
   - `POST /api/decide` `{ title_status, grades, flags, codes, values }`: repair band, both nets, P(fix wins), verdict.
+- **Integrate** (https://underscope-eight.vercel.app/integrate.html): deep links like `/?vin=...&codes=...&run=1` that any listing page can use, a drag-to-bookmarks **"Fix or sell?" bookmarklet** that pulls the VIN off any listing page and opens a check, and the API calls.
 - Every push to `main` deploys automatically.
 
 ## How it works

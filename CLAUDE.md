@@ -19,9 +19,10 @@ Read them only when a task needs the bigger picture; this file is the source of 
 ## Stack
 - Front end: Lovable app (React + TypeScript), hosted on Vercel.
 - Back end: Vercel serverless functions in `api/` (TypeScript). All AI calls happen here, never in the browser.
-- AI: Google Gemini via `@google/genai`, called through Vertex AI (`GEMINI_USE_VERTEX=true`, billed to Google Cloud project `project-45b188c0-b276-4e00-a94`). Model name from env var `GEMINI_MODEL` (currently `gemini-3.8-flash`). Create clients only with `geminiClient()` from `api/_lib/gemini.ts`. `GEMINI_API_KEY` is an API key bound to service account `underscope-vertex` (Vertex AI User role); plain API keys are rejected by Vertex.
+- AI for photos: OpenAI via `openai` (Karthik's credit). `api/grade-photos.ts`, model from `OPENAI_MODEL` (currently `gpt-5.5`), client from `openaiClient()` in `api/_lib/openai.ts`.
+- AI for fault codes: Google Gemini via `@google/genai`, called through Vertex AI (`GEMINI_USE_VERTEX=true`, billed to Google Cloud project `project-45b188c0-b276-4e00-a94`). Model name from env var `GEMINI_MODEL` (currently `gemini-3.8-flash`). Create clients only with `geminiClient()` from `api/_lib/gemini.ts`. `GEMINI_API_KEY` is an API key bound to service account `underscope-vertex` (Vertex AI User role); plain API keys are rejected by Vertex.
 - Database: Supabase (Postgres), project `zkewmumlgbofqonxpwin`. Tables are small and demo-only; row level security on. Migrations in `supabase/migrations/`.
-- Secrets only in environment variables (`.env` locally, Vercel project settings in production): `GEMINI_API_KEY`, `GEMINI_MODEL`, `GEMINI_USE_VERTEX`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (server only), `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` (front end). Never hardcode or commit keys.
+- Secrets only in environment variables (`.env` locally, Vercel project settings in production): `GEMINI_API_KEY`, `GEMINI_MODEL`, `GEMINI_USE_VERTEX`, `OPENAI_API_KEY`, `OPENAI_MODEL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (server only), `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` (front end). Never hardcode or commit keys.
 
 ## Repo layout
 - `api/` — Vercel functions (`decode-codes.ts` = fault codes module)
@@ -39,9 +40,10 @@ front_bumper, hood, grille, left_headlight, right_headlight, windshield, left_fr
 - replace: broken, missing, or too damaged to repair
 - unknown: part not visible or unclear in the photos (mandatory option, use it rather than guess)
 
-## Vision call (Gemini API)
+## Vision call (OpenAI) — built: `api/grade-photos.ts`
 - Send all photos of one vehicle in ONE request; resize to ~1000 px long side.
-- System prompt demands JSON only; temperature 0.
+- System prompt demands JSON only. GPT-5 models reject `temperature: 0`, so output is pinned with a strict JSON schema instead (every part is a required key, grades are an enum) plus `reasoning_effort: low`.
+- Left/right always mean the vehicle's own sides (driver's seat view); the prompt says so explicitly because models otherwise mix up viewer and vehicle sides.
 - Parse the JSON; reject and retry if invalid or any part is missing.
 - Output shape:
 ```json
@@ -51,13 +53,13 @@ front_bumper, hood, grille, left_headlight, right_headlight, windshield, left_fr
   "photo_gaps": ["no clear underbody photo"]
 }
 ```
-- API key from environment variable `GEMINI_API_KEY`. Never put it in code or the front end.
-- Endpoint (owner: Karthik): `api/grade-photos.ts`, `POST { vin, photos }`. The demo page (`public/index.html`) already calls it:
+- API key from environment variable `OPENAI_API_KEY`. Never put it in code or the front end. Uploaded photos are only graded, never used for training.
+- Endpoint (owner: Karthik; first version built, tune freely): `api/grade-photos.ts`, `POST { vin, photos }`. The demo page (`public/index.html`) calls it:
   - `photos` is an array of JPEG data URLs (`data:image/jpeg;base64,...`), already resized in the browser to ~1000 px long side, in upload order.
   - `evidence_photo` in the response is 1-based and matches the numbers shown on the page's thumbnails.
   - Return the output shape above with status 200; on failure return a 4xx/5xx with `{ "error": "..." }`.
   - Vercel caps request bodies at ~4.5 MB; the page limits uploads to 30 photos / 4 MB.
-  - Create the Gemini client with `geminiClient()` from `api/_lib/gemini.ts`.
+  - Create the OpenAI client with `openaiClient()` from `api/_lib/openai.ts`. Tuning knobs (image detail, reasoning effort, max photos) are in `GRADE_CONFIG`.
 
 ## Fault codes module (owner: Tim) — built: `api/decode-codes.ts`
 Input: VIN + list of OBD-II trouble codes from a scan tool (e.g. ["P0300", "C1232"]).

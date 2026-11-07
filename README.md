@@ -11,14 +11,14 @@ Built for UB Hacking as a demo for ACV, which is now part of Copart.
 - The page lets you decode a VIN and OBD-II fault codes, or click one of the demo scans.
 - The API is at `POST https://underscope-eight.vercel.app/api/decode-codes` with body `{ "vin": "...", "codes": ["P0300"] }`. CORS is open, so the Lovable app can call it from the browser.
 - Every push to `main` deploys automatically.
-- Photos added on the page are resized to ~1000px and sent to `POST /api/grade-photos` as `{ vin, photos: [JPEG data URLs] }`. That endpoint is Karthik's. Until it's deployed, the page says photo grading isn't connected. Once it returns the vision shape from CLAUDE.md, the page shows all 25 parts with their grades. See "Vision call" in CLAUDE.md for the contract.
+- Photos added on the page are resized to ~1000px and sent to `POST /api/grade-photos` as `{ vin, photos: [JPEG data URLs] }`. OpenAI grades all 25 parts and the page shows them with the photo each grade came from. See "Vision call" in CLAUDE.md for the contract.
 
 ## How it works
 
 ```
 photos + VIN + fault codes
         │
-        ├─ vision     Gemini grades 25 parts: fine / repairable / replace / unknown
+        ├─ vision     OpenAI grades 25 parts: fine / repairable / replace / unknown
         │             and flags hidden risks (airbags, frame, fluid leaks)
         ├─ codes      decode DTCs (Supabase table, or Gemini + NHTSA vPIC for
         │             manufacturer codes) → system, severity, cost band, triage
@@ -40,13 +40,13 @@ The front end is a Lovable app. The seller uploads photos and a VIN, then sees a
 
 | Folder | What's in it |
 |---|---|
-| `api/` | Vercel serverless functions (TypeScript). `decode-codes.ts`: POST `{ vin, codes }` → decoded fault codes + triage |
+| `api/` | Vercel serverless functions (TypeScript). `decode-codes.ts`: POST `{ vin, codes, title_status? }` → decoded fault codes + triage. `grade-photos.ts`: POST `{ vin, photos }` → 25 part grades, flags, photo gaps |
 | `scripts/` | Seed and test scripts |
 | `supabase/migrations/` | Database schema (`dtc_codes`, `scans`) with row level security |
 | `data/` | `dtc_codes.csv` (60 generic OBD-II codes), `test_scans.json` (10 demo scans) |
 | `test_vehicles/` | 20 test vehicles (photos only, gitignored) |
 
-**Stack:** Lovable (React + TypeScript) front end on Vercel, Vercel functions in `api/`, Google Gemini via Vertex AI (`@google/genai`), Supabase (Postgres).
+**Stack:** Lovable (React + TypeScript) front end on Vercel, Vercel functions in `api/`, OpenAI for photo grading (`openai`), Google Gemini via Vertex AI for fault codes (`@google/genai`), Supabase (Postgres).
 
 ## Setup
 

@@ -25,7 +25,7 @@ function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add
 
 let state = null;      // the checked vehicle; grades and flags stay editable
 let preset = null;     // grades/flags from a sample vehicle (instead of photos)
-let activeTab = 'repair';
+
 let samples = {};
 
 // ---------- Tag fields ----------
@@ -218,11 +218,12 @@ $('form').addEventListener('submit', async (e) => {
       : preset ? 'Sample grades, standing in for graded photos.'
       : 'No photos, so every part starts as not visible. Click a grade to set it.';
     state = { vin, codes: c, photo, grades, flags, gradeNote, photoGaps: photo && photo.data ? photo.data.photo_gaps : [], sampleId: preset && preset.id };
-    activeTab = 'repair';
+
     await recompute(true);
   } catch (err) {
-    $('empty').hidden = true; $('result').hidden = false;
-    $('result').innerHTML = `<div class="error-box"><h3>Couldn't check this vehicle</h3><p>${esc(err.message)} Try again or open a sample.</p></div>`;
+    $('result').hidden = false;
+    $('result').innerHTML = `<div class="error-box"><h3>Couldn't check this vehicle</h3><p>${esc(err.message)} Try again or open a sample below.</p></div>`;
+    $('result').scrollIntoView({ behavior: reduceMotion() ? 'auto' : 'smooth', block: 'center' });
   } finally {
     $('go').disabled = false; $('go').textContent = 'Run check';
   }
@@ -252,10 +253,10 @@ comps.onChange = recomputeSoon;
 
 // Reviewer toggle, tabs, copy link
 $('result').addEventListener('click', (e) => {
-  const pb = e.target.closest('[data-part]'), fb = e.target.closest('[data-flag]'), tb = e.target.closest('[data-tab]'), cl = e.target.closest('[data-copy]');
+  const pb = e.target.closest('[data-part]'), fb = e.target.closest('[data-flag]'), cl = e.target.closest('[data-copy]');
   if (pb && state) { const g = state.grades.get(pb.dataset.part); g.grade = GRADE_ORDER[(GRADE_ORDER.indexOf(g.grade) + 1) % GRADE_ORDER.length]; g.edited = true; recompute(false); }
   else if (fb && state) { const order = [true, false, 'unknown'], k = fb.dataset.flag; state.flags[k] = order[(order.indexOf(state.flags[k]) + 1) % order.length]; recompute(false); }
-  else if (tb) { activeTab = tb.dataset.tab; document.querySelectorAll('[data-tab]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === activeTab))); document.querySelectorAll('.tabpanel').forEach((p) => p.hidden = p.id !== `tab-${activeTab}`); }
+
   else if (cl) { copyLink(); }
 });
 
@@ -297,7 +298,7 @@ function recBlock(d, first) {
     sell_as_is: ['on-red', '!', 'Sell it as-is', pct === 0 ? 'Selling as-is came out ahead in all 1,000 simulated outcomes.' : `Fixing came out ahead in only ${pct}% of 1,000 simulated outcomes.`],
     too_close: ['on-amber', '?', 'Too close to call', `Fixing came out ahead in ${pct}% of 1,000 simulated outcomes; the ranges overlap too much to choose.`],
     not_fixable: ['on-red', '!', 'Sell it as-is', 'A non-repairable title means it can\'t be registered again after repair.'],
-  }[d.verdict] || ['', '–', 'Needs market values', `Add ${d.missing.join(' and ')} on the left.`];
+  }[d.verdict] || ['', '–', 'Needs market values', `Add ${d.missing.join(' and ')} above.`];
   const check = d.check ? `<p class="check"><b>Check before deciding:</b> ${esc(d.check.label)}. If it comes back clean, fixing wins ${Math.round(d.check.p_fix_if_resolved * 100)}% of the time.</p>` : '';
   return `<div class="rec"><div class="lamp ${V[0]}${first ? ' ignite' : ''}" aria-hidden="true">${V[1]}</div><div><h3>${esc(V[2])}</h3><p class="why">${esc(V[3])}</p>${check}</div></div>`;
 }
@@ -364,22 +365,22 @@ function codesTab() {
 
 function render(d, first) {
   const out = $('result');
-  $('empty').hidden = true; out.hidden = false;
-  const unknownCount = [...state.grades.values()].filter((g) => g.grade === 'unknown').length;
-  const tabs = [['repair', 'Repair estimate', null], ['condition', 'Condition', unknownCount ? `${unknownCount} unseen` : null], ['codes', 'Fault codes', state.codes.summary.count || null], ['api', 'API response', null]];
+  out.hidden = false;
+  const y = window.scrollY;
   const engine = state.codes.vehicle.engine ? `<span class="vin-code">${esc(state.codes.vehicle.engine)}</span>` : '';
   out.innerHTML = `
     <div class="vehbar"><h2>${esc(vehicleName())}</h2><span class="vin-code">${esc(state.vin)}</span>${engine}${titleBadge()}<span class="spacer"></span>
       <button class="btn btn-ghost btn-sm" type="button" data-copy>Copy link</button></div>
     ${recBlock(d, first)}${rangesBlock(d)}
-    <div class="tabs" role="tablist">${tabs.map(([id, name, n]) => `<button type="button" role="tab" data-tab="${id}" aria-selected="${id === activeTab}">${name}${n ? `<span class="count">${esc(n)}</span>` : ''}</button>`).join('')}</div>
-    <div class="tabpanel" id="tab-repair" ${activeTab === 'repair' ? '' : 'hidden'}>${repairTab(d)}</div>
-    <div class="tabpanel" id="tab-condition" ${activeTab === 'condition' ? '' : 'hidden'}>${conditionTab()}</div>
-    <div class="tabpanel" id="tab-codes" ${activeTab === 'codes' ? '' : 'hidden'}>${codesTab()}</div>
-    <div class="tabpanel" id="tab-api" ${activeTab === 'api' ? '' : 'hidden'}><pre>${esc(JSON.stringify({ decision: d, codes: state.codes, photos: state.photo && state.photo.data }, null, 2))}</pre></div>`;
+    <div class="sec"><h3>Where the numbers come from</h3>${repairTab(d)}</div>
+    <div class="sec"><h3>Condition</h3>${conditionTab()}</div>
+    <div class="sec"><h3>Fault codes</h3>${codesTab()}</div>
+    <div class="sec"><details><summary style="cursor:pointer;color:var(--orange);font-weight:500;font-size:14px">API response</summary><pre style="margin-top:10px">${esc(JSON.stringify({ decision: d, codes: state.codes, photos: state.photo && state.photo.data }, null, 2))}</pre></details></div>`;
   if (first) {
     history.replaceState(null, '', shareUrl().replace(location.origin, ''));
-    if (matchMedia('(max-width: 980px)').matches) out.scrollIntoView({ behavior: reduceMotion() ? 'auto' : 'smooth', block: 'start' });
+    out.scrollIntoView({ behavior: reduceMotion() ? 'auto' : 'smooth', block: 'start' });
+  } else {
+    window.scrollTo(0, y); // reviewer edits: stay where you are
   }
 }
 

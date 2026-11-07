@@ -20,8 +20,13 @@
   <span class="tag-built">Built for ACV at UB Hacking</span>
 </div></header>
 
-<div class="workspace">
-  <aside class="panel intake" aria-label="Vehicle intake">
+<div class="page">
+  <div class="page-head">
+    <h1>Fix it or sell it as-is?</h1>
+    <p class="lede">Add the VIN, photos and scan-tool codes. Underscope compares what the vehicle nets if you repair and resell it against selling it damaged today, and shows both as ranges.</p>
+  </div>
+
+  <section class="panel intake" aria-label="Vehicle intake">
     <div class="panel-head"><h2>Vehicle</h2><button class="linkbtn" id="clear" type="button">Clear</button></div>
     <form id="form" novalidate>
       <div class="panel-body">
@@ -63,6 +68,7 @@
         </div>
 
         <p class="subhead">Market values</p>
+        <div class="two">
         <div class="field">
           <label for="clean">Clean wholesale value</label>
           <div class="money"><span>$</span><input id="clean" inputmode="numeric" autocomplete="off" placeholder="18000"></div>
@@ -72,6 +78,7 @@
           <span class="label" id="comps-label">Salvage comps (sold prices)</span>
           <div class="tags" id="comps"><input id="comp-input" inputmode="numeric" autocomplete="off" placeholder="6500" aria-labelledby="comps-label"></div>
           <div class="hint" id="comps-hint"></div>
+        </div>
         </div>
 
         <details class="assume">
@@ -84,20 +91,19 @@
       <button class="btn btn-primary" id="go" type="submit" form="form">Run check</button>
       <span class="hint" style="margin:0" id="go-hint"></span>
     </div>
-  </aside>
+  </section>
 
-  <main class="results" id="results" aria-live="polite">
-    <section class="panel empty" id="empty">
-      <h2>No vehicle checked yet</h2>
-      <p>Enter a VIN on the left, or open a sample. Samples use made-up VINs, grades and values, and each one lands on a different outcome.</p>
-      <table class="sample-table">
-        <thead><tr><th>Vehicle</th><th>VIN</th><th>Title</th><th></th></tr></thead>
-        <tbody id="samples"></tbody>
-      </table>
-      <p style="margin:18px 0 0;font-size:13.5px">Looking at a listing somewhere else? The <a href="/integrate.html#bookmarklet">bookmarklet</a> pulls the VIN off the page and opens it here.</p>
-    </section>
-    <section class="panel" id="result" hidden></section>
-  </main>
+  <section class="panel result" id="result" hidden aria-live="polite"></section>
+
+  <section class="panel empty" id="empty">
+    <h2>Sample vehicles</h2>
+    <p>Made-up VINs, grades and values. Each one lands on a different outcome.</p>
+    <table class="sample-table">
+      <thead><tr><th>Vehicle</th><th>VIN</th><th>Title</th><th></th></tr></thead>
+      <tbody id="samples"></tbody>
+    </table>
+    <p style="margin:18px 0 0;font-size:13.5px">Looking at a listing somewhere else? The <a href="/integrate.html#bookmarklet">bookmarklet</a> pulls the VIN off the page and opens it here.</p>
+  </section>
 </div>
 
 <footer>

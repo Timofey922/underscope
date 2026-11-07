@@ -83,25 +83,36 @@ Steps:
 9. Demo registry (the VIN → title bridge): Supabase table `vehicles` holds real VINs whose title a teammate verified by hand (`source`: `title_document`, `dealer_listing`, `nmvtis_report`). RLS on, no policies, so only the server reads it. `GET /api/vehicle?vin=` returns `registered`, `title_status`, `title_state`, `source` (never odometer or notes); the page calls it to fill in the title. In `decode-codes`, a registry record wins over the seller's choice and the response says so in `title_source`. Load records from `data/vehicles.local.json` (gitignored; format in `data/vehicles.example.json`) with `npm run seed:vehicles`. Never commit real VINs. Label demo vehicles as verified or sample; never present a made-up VIN as a real car's history.
 8. Title status: entered by the seller on the page (no free API returns title brands by VIN; paid NMVTIS lookups are out of scope). Optional `title_status` in the request: `clean`, `salvage`, `rebuilt`, `flood`, `non_repairable`, `lemon`, `unknown` (default). It is echoed in the response; `flood` and `non_repairable` set triage to `skip_inspection_sell_as_is` (`CONFIG.triage.skipTitles`).
 
-## Repair band
+## Repair band — built: `api/_lib/decision.ts` + `data/repair_costs.csv`
 Lookup table (CSV) of part x grade -> parts cost low/high, labor hours low/high, paint yes/no. Seller labor rate is an input.
 Repair band = sum of rows for flagged parts. If any flag is "unknown" or frame_suspected is true, widen the top of the band by a fixed amount and record the reason.
+- `data/repair_costs.csv` holds rough, unverified industry ranges for a generic passenger vehicle. Replace with shop quotes when available.
+- Paint adds `paintPerPanel` per painted panel. `airbags_deployed: true` adds an interior replacement if interior isn't already graded replace.
+- Widening amounts (top of band only), each recorded with a reason and a check: frame suspected, airbags unknown, fluid leak unknown, each critical fault code, and 5+ parts not visible. Unknown parts are not costed otherwise.
+- Every number is in `DECISION_CONFIG` at the top of `api/_lib/decision.ts`. `vercel.json` bundles the CSV with `api/decide.ts`.
 
 ## As-is band
 Hand-entered per vehicle: 5-10 comparable sold salvage lots + one clean wholesale value with a condition haircut. Band = low/high of comps.
+- Entered on the page, or stored per VIN in the registry (`clean_wholesale`, `salvage_comps`, `values_note`) and filled in automatically. At least 3 comps are required.
+- After-repair value = clean wholesale × (1 − condition haircut 5–12%) × (1 − title discount). Title discounts: rebuilt/salvage 20–40% (salvage becomes rebuilt after repair), flood 30–50%, lemon 15–30%, unknown 0–20%. `non_repairable` means fixing isn't allowed: verdict `not_fixable`.
 
 ## Decision
 - fix_net = after_repair_value - repair_band - holding_days * daily_cost - selling_fee
 - as_is_net = as_is_band - fee - transport
 - Sample each band 1000 times (uniform low..high), count how often fix wins.
 - >70%: "fix". <30%: "sell as-is". Otherwise "too close to call" + the check that would change it most (usually the unknown flag).
+- Built: `POST /api/decide` (no AI, deterministic: seeded random, separate streams for fix and as-is). Returns repair band with lines and widenings, after-repair value, as-is band, both nets as P10/P50/P90, days, `p_fix`, `verdict` (`fix`, `sell_as_is`, `too_close`, `not_fixable`, or null with `missing`), and `check` for close calls (the widening or unknown title whose resolution moves `p_fix` most).
+- Fault-code triage (`full_inspection` / `skip_inspection_sell_as_is`) is only a note about whether a full inspection is worth paying for. It is not the recommendation; the page never shows it as the headline.
 
 ## UI (Lovable)
 Upload photos + VIN -> part grid with grade and source photo -> both nets with bands and days -> recommendation -> reviewer toggle to change any grade and recompute live.
+- Working version: `public/index.html` (the Vercel demo page). Headline question: "Fix it or sell it as-is?". Clicking a part grade or a flag cycles it and calls `/api/decide` again. The Lovable app can call the same four endpoints.
+- Sample vehicles: `public/demo_vehicles.json` (made-up VINs, sample grades and values, one per verdict). Real vehicles come from the registry.
 
 ## Test
 Run all 20 vehicles; compare model grade vs our grade per part in a sheet. Report agreement % and expensive misses (model "fine" where truth is "replace").
 Fault codes: `npm run test:codes` runs the 10 demo scans and checks each triage.
+Decision: `npm run test:decision` runs every vehicle in `public/demo_vehicles.json` and checks it gets its `expect` verdict.
 
 ## Do NOT build
 Fine-tuning, dataset downloads, scraping, logins, payments, extra database tables beyond what a step needs, VIN enrichment beyond the free NHTSA vPIC call, any Copart/ACV integration.

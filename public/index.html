@@ -3,23 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Underscope fault code check</title>
-<meta name="description" content="Enter a VIN and OBD-II fault codes to see whether a vehicle is worth a full inspection or should be sold as-is.">
+<title>Underscope: fix it or sell it as-is</title>
+<meta name="description" content="Photos, fault codes and title in; two net ranges and a fix-or-sell-as-is recommendation out.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #E6EAEC;
-    --panel: #F3F5F6;
-    --ink: #14212C;
-    --steel: #5A6975;
-    --line: #C3CBD1;
-    --amber: #E39B00;
-    --red: #C42B1C;
-    --green: #2F7A4D;
-    --off: #B9C1C7;
-    --focus: #1F5FBF;
+    --bg: #E6EAEC; --panel: #F3F5F6; --ink: #14212C; --steel: #5A6975; --line: #C3CBD1;
+    --amber: #E39B00; --red: #C42B1C; --green: #2F7A4D; --off: #B9C1C7; --focus: #1F5FBF;
     --sans: "Barlow", system-ui, sans-serif;
     --cond: "Barlow Semi Condensed", "Barlow", system-ui, sans-serif;
     --mono: "IBM Plex Mono", ui-monospace, monospace;
@@ -30,61 +22,41 @@
       --amber: #FFB020; --red: #FF5A48; --green: #4FC47F; --off: #33404B; --focus: #6EA8FF;
     }
   }
-
   * { box-sizing: border-box; }
   html { -webkit-text-size-adjust: 100%; }
   body { margin: 0; background: var(--bg); color: var(--ink); font: 400 17px/1.55 var(--sans); }
   main { max-width: 860px; margin: 0 auto; padding: 40px 20px 80px; }
   :focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
 
-  /* Header */
   .brand { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 44px; }
-  .brand b { font: 700 22px/1 var(--cond); letter-spacing: .01em; }
+  .brand b { font: 700 22px/1 var(--cond); }
   .brand span { color: var(--steel); font-size: 15px; }
+  h1 { font: 600 clamp(32px, 5.6vw, 50px)/1.05 var(--cond); margin: 0 0 12px; }
+  .lede { color: var(--steel); margin: 0 0 36px; max-width: 60ch; }
 
-  h1 { font: 600 clamp(30px, 5.2vw, 46px)/1.08 var(--cond); margin: 0 0 12px; max-width: 18ch; }
-  .lede { color: var(--steel); margin: 0 0 36px; max-width: 58ch; }
-
-  /* Form */
   form { border-top: 3px solid var(--ink); padding-top: 28px; }
   .field { margin-bottom: 26px; }
-  .field > label, .field > .label { display: block; font: 600 17px/1.3 var(--cond); margin-bottom: 8px; }
+  .field > label:not(.drop), .field > .label, legend.label { display: block; font: 600 17px/1.3 var(--cond); margin-bottom: 8px; }
+  legend.label { padding: 0; }
   .hint { color: var(--steel); font-size: 14px; margin-top: 6px; min-height: 1.4em; }
   .hint.bad { color: var(--red); }
   .hint.verified { color: var(--green); font-weight: 500; }
+  .group-head { font: 700 20px/1.2 var(--cond); margin: 36px 0 4px; }
+  .group-sub { color: var(--steel); font-size: 15px; margin: 0 0 16px; }
 
-  /* VIN plate: 17 stamped slots behind a monospace input */
+  /* VIN plate */
   .vin-wrap { display: inline-block; max-width: 100%; overflow-x: auto; }
   .vin {
-    --cell: 1.5ch;
-    font: 500 clamp(17px, 4.6vw, 30px)/1 var(--mono);
-    width: calc(17 * var(--cell) + .5ch + 4px);
-    padding: .55em 0 .55em .25ch;
-    letter-spacing: calc(var(--cell) - 1ch);
-    text-transform: uppercase;
-    color: var(--ink);
-    background:
-      repeating-linear-gradient(90deg, transparent 0 calc(var(--cell) - 1px), var(--line) calc(var(--cell) - 1px) var(--cell)),
-      var(--panel);
-    border: 2px solid var(--ink);
-    border-radius: 3px;
-    caret-color: var(--amber);
+    --cell: 1.5ch; font: 500 clamp(17px, 4.6vw, 30px)/1 var(--mono);
+    width: calc(17 * var(--cell) + .5ch + 4px); padding: .55em 0 .55em .25ch;
+    letter-spacing: calc(var(--cell) - 1ch); text-transform: uppercase; color: var(--ink);
+    background: repeating-linear-gradient(90deg, transparent 0 calc(var(--cell) - 1px), var(--line) calc(var(--cell) - 1px) var(--cell)), var(--panel);
+    border: 2px solid var(--ink); border-radius: 3px; caret-color: var(--amber);
   }
   .vin::placeholder { color: var(--off); }
 
-  /* Codes as tags */
-  .codes { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px; min-height: 52px;
-           background: var(--panel); border: 2px solid var(--ink); border-radius: 3px; cursor: text; }
-  .codes:focus-within { outline: 2px solid var(--focus); outline-offset: 3px; }
-  .codes input { flex: 1 0 120px; border: 0; background: transparent; color: var(--ink); font: 500 17px var(--mono); text-transform: uppercase; padding: 6px 4px; outline: none; }
-  .tag { display: inline-flex; align-items: center; gap: 6px; font: 500 15px/1 var(--mono); padding: 7px 6px 7px 10px; border-radius: 2px; background: var(--ink); color: var(--bg); }
-  .tag.invalid { background: var(--red); color: #fff; }
-  .tag button { border: 0; background: none; color: inherit; font: 600 16px/1 var(--sans); padding: 0 4px; cursor: pointer; opacity: .75; }
-  .tag button:hover { opacity: 1; }
-
-  /* Title status: segmented radio row */
-  fieldset.title { border: 0; padding: 0; margin: 0 0 26px; min-width: 0; }
-  fieldset.title legend { padding: 0; }
+  /* Title segmented row */
+  fieldset { border: 0; padding: 0; margin: 0 0 26px; min-width: 0; }
   .seg { display: flex; flex-wrap: wrap; border: 2px solid var(--ink); border-radius: 3px; background: var(--panel); width: fit-content; max-width: 100%; }
   .seg label { position: relative; }
   .seg input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
@@ -107,87 +79,126 @@
   .thumbs .n { position: absolute; left: 0; top: 0; background: var(--ink); color: var(--bg); font: 500 13px/1 var(--mono); padding: 5px 7px; }
   .thumbs button { position: absolute; right: 4px; top: 4px; width: 26px; height: 26px; border: 0; border-radius: 50%; background: rgba(0,0,0,.6); color: #fff; font: 600 16px/1 var(--sans); cursor: pointer; }
 
-  /* Parts grid from photo grading */
-  .parts-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; margin: 40px 0 6px; }
-  .parts-head h3 { font: 700 24px/1.2 var(--cond); margin: 0; }
-  .parts-head p { margin: 0; color: var(--steel); font-size: 15px; }
-  .parts { list-style: none; margin: 12px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 0 24px; }
-  .parts li { display: grid; grid-template-columns: 12px 1fr auto; gap: 10px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 15px; }
-  .parts .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--off); }
-  .parts .g-fine .dot { background: var(--green); }
-  .parts .g-repairable .dot { background: var(--amber); }
-  .parts .g-replace .dot { background: var(--red); }
-  .parts .g-unknown .dot { background: transparent; border: 2px solid var(--steel); }
-  .parts .grade { color: var(--steel); font-size: 13px; text-align: right; }
-  .parts .ph { font: 500 12px var(--mono); color: var(--steel); }
-  .flags { margin: 18px 0 0; color: var(--steel); font-size: 15px; }
-  .flags b { color: var(--ink); font-weight: 600; }
-  .notice { margin-top: 36px; padding: 14px 16px; border-left: 4px solid var(--amber); background: var(--panel); font-size: 15px; }
+  /* Tag inputs (codes, comps) */
+  .tags { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px; min-height: 52px; background: var(--panel); border: 2px solid var(--ink); border-radius: 3px; cursor: text; }
+  .tags:focus-within { outline: 2px solid var(--focus); outline-offset: 3px; }
+  .tags input { flex: 1 0 120px; border: 0; background: transparent; color: var(--ink); font: 500 17px var(--mono); text-transform: uppercase; padding: 6px 4px; outline: none; }
+  .tag { display: inline-flex; align-items: center; gap: 6px; font: 500 15px/1 var(--mono); padding: 7px 6px 7px 10px; border-radius: 2px; background: var(--ink); color: var(--bg); }
+  .tag.invalid { background: var(--red); color: #fff; }
+  .tag button { border: 0; background: none; color: inherit; font: 600 16px/1 var(--sans); padding: 0 4px; cursor: pointer; opacity: .75; }
+  .money { display: inline-flex; align-items: center; background: var(--panel); border: 2px solid var(--ink); border-radius: 3px; }
+  .money span { padding: 0 2px 0 12px; font: 500 20px var(--mono); color: var(--steel); }
+  .money input { width: 11ch; border: 0; background: transparent; color: var(--ink); font: 500 20px var(--mono); padding: 11px 12px 11px 2px; outline: none; }
+  .money:focus-within { outline: 2px solid var(--focus); outline-offset: 3px; }
 
-  .actions { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+  details.assume { margin: 8px 0 26px; }
+  details.assume summary { cursor: pointer; color: var(--steel); font-size: 15px; }
+  .assume-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px 20px; margin-top: 14px; }
+  .assume-grid label { display: block; font-size: 14px; color: var(--steel); }
+  .assume-grid input { display: block; width: 100%; margin-top: 4px; padding: 8px 10px; border: 2px solid var(--line); border-radius: 3px; background: var(--panel); color: var(--ink); font: 500 16px var(--mono); }
+
+  .actions { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; margin-top: 8px; }
   .go { font: 600 18px/1 var(--cond); letter-spacing: .02em; padding: 15px 26px; background: var(--ink); color: var(--bg); border: 0; border-radius: 3px; cursor: pointer; }
   .go:hover { opacity: .88; }
   .go:disabled { opacity: .55; cursor: progress; }
   .clear { background: none; border: 0; color: var(--steel); font: 500 15px var(--sans); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; padding: 4px; }
 
-  /* Samples */
-  .samples { margin-top: 44px; }
-  .samples h2 { font: 600 17px/1.3 var(--cond); margin: 0 0 4px; }
-  .samples p { color: var(--steel); font-size: 15px; margin: 0 0 12px; }
-  .samples ul { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
-  .samples li button {
-    display: grid; grid-template-columns: 1fr auto; gap: 4px 16px; width: 100%; text-align: left;
-    padding: 11px 4px; background: none; border: 0; border-bottom: 1px solid var(--line); color: var(--ink); cursor: pointer; font: inherit;
-  }
-  .samples li button:hover { background: var(--panel); }
-  .samples .car { font-weight: 500; }
-  .samples .sc { font: 400 14px var(--mono); color: var(--steel); text-align: right; }
-  @media (max-width: 560px) { .samples li button { grid-template-columns: 1fr; } .samples .sc { text-align: left; } }
-
   /* Result */
   .result { margin-top: 48px; padding-top: 28px; border-top: 3px solid var(--ink); }
   .verdict { display: grid; grid-template-columns: auto 1fr; gap: 20px; align-items: start; }
-  .lamp { width: 54px; height: 54px; border-radius: 50%; background: var(--off); margin-top: 4px; position: relative; }
-  .lamp { display: grid; place-items: center; font: 700 30px/1 var(--cond); color: var(--bg); }
+  .lamp { width: 54px; height: 54px; border-radius: 50%; background: var(--off); margin-top: 4px; display: grid; place-items: center; font: 700 30px/1 var(--cond); color: var(--bg); }
   .lamp.on-red { background: var(--red); box-shadow: 0 0 0 6px color-mix(in srgb, var(--red) 18%, transparent), 0 0 28px color-mix(in srgb, var(--red) 55%, transparent); }
-  .lamp.on-green { background: var(--green); box-shadow: 0 0 0 6px color-mix(in srgb, var(--green) 18%, transparent); }
+  .lamp.on-green { background: var(--green); box-shadow: 0 0 0 6px color-mix(in srgb, var(--green) 18%, transparent), 0 0 24px color-mix(in srgb, var(--green) 40%, transparent); }
   .lamp.on-amber { background: var(--amber); box-shadow: 0 0 0 6px color-mix(in srgb, var(--amber) 20%, transparent), 0 0 28px color-mix(in srgb, var(--amber) 50%, transparent); }
   .lamp.ignite { animation: ignite .9s ease-out; }
   @keyframes ignite { 0% { filter: brightness(.3); } 35% { filter: brightness(1.6); } 55% { filter: brightness(.8); } 100% { filter: brightness(1); } }
   @media (prefers-reduced-motion: reduce) { .lamp.ignite { animation: none; } }
-
-  .verdict h2 { font: 700 clamp(28px, 4.8vw, 40px)/1.05 var(--cond); margin: 0 0 8px; }
+  .verdict h2 { font: 700 clamp(30px, 5.2vw, 44px)/1.03 var(--cond); margin: 0 0 8px; }
   .verdict .why { margin: 0; max-width: 60ch; }
-  .vehicle { color: var(--steel); margin: 6px 0 0; font-size: 15px; }
+  .verdict .check { margin: 10px 0 0; padding: 10px 14px; border-left: 4px solid var(--amber); background: var(--panel); max-width: 62ch; }
+  .vehicle { color: var(--steel); margin: 8px 0 0; font-size: 15px; }
 
-  .figures { display: grid; grid-template-columns: repeat(3, auto); justify-content: start; gap: 8px 48px; margin: 30px 0 26px; }
-  .figures dt { color: var(--steel); font-size: 14px; }
-  .figures dd { margin: 0; font: 600 26px/1.15 var(--cond); }
-  @media (max-width: 560px) { .figures { grid-template-columns: 1fr 1fr; gap: 14px 24px; } }
+  /* Net ranges on one dollar scale */
+  .ranges { margin: 34px 0 8px; }
+  .rrow { display: grid; grid-template-columns: 150px 1fr; gap: 6px 18px; align-items: center; padding: 10px 0; }
+  .rrow .name { font: 600 18px/1.2 var(--cond); }
+  .rrow.win .name::after { content: " wins"; color: var(--green); font-weight: 600; }
+  .track { position: relative; height: 30px; }
+  .whisker { position: absolute; top: 14px; height: 2px; background: var(--off); }
+  .bar { position: absolute; top: 5px; height: 20px; border-radius: 2px; }
+  .bar.fix { background: var(--ink); }
+  .bar.sell { background: var(--steel); }
+  .mid { position: absolute; top: 2px; width: 3px; height: 26px; background: var(--amber); border-radius: 1px; }
+  .zero { position: absolute; top: -4px; bottom: -4px; border-left: 1px dashed var(--steel); }
+  .rrow .nums { grid-column: 2; color: var(--steel); font-size: 15px; }
+  .rrow .nums b { color: var(--ink); font-weight: 600; }
+  .scale-note { color: var(--steel); font-size: 13px; margin: 2px 0 0 168px; }
+  @media (max-width: 560px) { .rrow { grid-template-columns: 1fr; } .rrow .nums { grid-column: 1; } .scale-note { margin-left: 0; } }
+
+  h3.sec { font: 700 24px/1.2 var(--cond); margin: 44px 0 4px; }
+  p.sec-sub { margin: 0 0 12px; color: var(--steel); font-size: 15px; }
+  .lines { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+  .lines li { display: grid; grid-template-columns: 1fr auto; gap: 16px; padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 15px; }
+  .lines li > * { min-width: 0; overflow-wrap: anywhere; }
+  .lines .amt { font: 600 17px/1.3 var(--cond); white-space: nowrap; text-align: right; }
+  .lines li.widen { color: var(--steel); }
+  .lines li.widen .amt { color: var(--amber); }
+  .lines li.total { font-weight: 600; border-bottom: 2px solid var(--ink); }
+  .lines li.total .amt { font-size: 20px; }
+  .money-notes { color: var(--steel); font-size: 15px; margin: 14px 0 0; }
+  .money-notes p { margin: 4px 0; }
+
+  /* Parts: clickable grades (reviewer toggle) */
+  .parts { list-style: none; margin: 8px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 0 24px; }
+  .parts button { display: grid; grid-template-columns: 12px 1fr auto; gap: 10px; align-items: center; width: 100%; padding: 9px 2px; background: none; border: 0; border-bottom: 1px solid var(--line); color: var(--ink); font: inherit; font-size: 15px; text-align: left; cursor: pointer; }
+  .parts button:hover { background: var(--panel); }
+  .parts button > * { min-width: 0; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--off); }
+  .g-fine .dot { background: var(--green); }
+  .g-repairable .dot { background: var(--amber); }
+  .g-replace .dot { background: var(--red); }
+  .g-unknown .dot { background: transparent; border: 2px solid var(--steel); }
+  .parts .grade { color: var(--steel); font-size: 13px; text-align: right; }
+  .parts .edited .grade { color: var(--ink); font-weight: 600; }
+  .parts .ph { font: 500 12px var(--mono); color: var(--steel); }
+  .flags { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0 0; }
+  .flags button { padding: 7px 12px; border: 1px solid var(--line); border-radius: 2px; background: var(--panel); color: var(--ink); font: 500 14px var(--sans); cursor: pointer; }
+  .flags button b { font-weight: 600; }
+  .flags button.yes b { color: var(--red); }
+  .notice { margin-top: 18px; padding: 12px 14px; border-left: 4px solid var(--amber); background: var(--panel); font-size: 15px; }
 
   .codelist { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
-  .codelist li { display: grid; grid-template-columns: 74px 1fr auto; gap: 4px 18px; padding: 14px 0 14px 14px; border-bottom: 1px solid var(--line); border-left: 4px solid var(--off); }
+  .codelist li { display: grid; grid-template-columns: 74px 1fr auto; gap: 4px 18px; padding: 12px 0 12px 14px; border-bottom: 1px solid var(--line); border-left: 4px solid var(--off); }
+  .codelist li > * { min-width: 0; overflow-wrap: anywhere; }
   .codelist li.sev-minor { border-left-color: var(--green); }
   .codelist li.sev-moderate { border-left-color: var(--amber); }
   .codelist li.sev-major, .codelist li.sev-critical { border-left-color: var(--red); }
-  .codelist li > *, .samples li button > *, .figures > * { min-width: 0; overflow-wrap: anywhere; }
   .codelist .code { font: 500 16px/1.4 var(--mono); }
   .codelist .desc { font-weight: 500; }
   .codelist .meta { grid-column: 2; color: var(--steel); font-size: 14px; }
-  .codelist .cost { font: 600 18px/1.3 var(--cond); text-align: right; white-space: nowrap; }
-  .codelist .sev { font-weight: 600; color: var(--ink); }
+  .codelist .cost { font: 600 17px/1.3 var(--cond); text-align: right; white-space: nowrap; }
   @media (max-width: 560px) { .codelist li { grid-template-columns: 64px 1fr; } .codelist .cost { grid-column: 2; text-align: left; } }
 
-  .raw { margin-top: 18px; }
+  .raw { margin-top: 26px; }
   .raw summary { color: var(--steel); cursor: pointer; font-size: 15px; }
   pre { overflow-x: auto; font: 400 13px/1.5 var(--mono); background: var(--panel); border: 1px solid var(--line); padding: 14px; border-radius: 3px; }
-
   .error h2 { color: var(--red); }
 
-  /* Developer note */
+  .samples { margin-top: 52px; }
+  .samples h2 { font: 600 17px/1.3 var(--cond); margin: 0 0 4px; }
+  .samples p { color: var(--steel); font-size: 15px; margin: 0 0 12px; }
+  .samples ul { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+  .samples li button { display: grid; grid-template-columns: 1fr auto; gap: 4px 16px; width: 100%; text-align: left; padding: 11px 4px; background: none; border: 0; border-bottom: 1px solid var(--line); color: var(--ink); cursor: pointer; font: inherit; }
+  .samples li button:hover { background: var(--panel); }
+  .samples li button > * { min-width: 0; }
+  .samples .car { font-weight: 500; }
+  .samples .sc { font-size: 14px; color: var(--steel); text-align: right; }
+  @media (max-width: 560px) { .samples li button { grid-template-columns: 1fr; } .samples .sc { text-align: left; } }
+
   .dev { margin-top: 64px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--steel); font-size: 15px; }
   .dev h2 { font: 600 17px/1.3 var(--cond); color: var(--ink); margin: 0 0 6px; }
   .dev code { font: 400 14px var(--mono); color: var(--ink); }
+  .dev ul { margin: 6px 0 0; padding-left: 20px; }
 </style>
 </head>
 <body>
@@ -197,17 +208,17 @@
     <span>UB Hacking demo for ACV</span>
   </header>
 
-  <h1>Is this vehicle worth a full inspection?</h1>
-  <p class="lede">Enter the VIN and the trouble codes from the scan tool. Underscope looks up each code, estimates the repair range, and tells you whether to inspect the vehicle or sell it as-is.</p>
+  <h1>Fix it or sell it as-is?</h1>
+  <p class="lede">Add the VIN, photos and the codes from the scan tool. Underscope estimates what the vehicle nets if you repair and resell it, and what it nets sold damaged today, then tells you which way the odds point. You get two ranges, never a single price.</p>
 
   <form id="form" novalidate>
     <div class="field">
       <label for="vin">VIN</label>
-      <div class="vin-wrap"><input id="vin" class="vin" maxlength="17" autocomplete="off" spellcheck="false" placeholder="1FTYR2CM1KKA12345" aria-describedby="vin-hint"></div>
+      <div class="vin-wrap"><input id="vin" class="vin" maxlength="17" autocomplete="off" spellcheck="false" placeholder="3MZBM1U73EM110438" aria-describedby="vin-hint"></div>
       <div class="hint" id="vin-hint">17 characters, found on the dash or the driver's door jamb.</div>
     </div>
 
-    <fieldset class="field title">
+    <fieldset class="field">
       <legend class="label">Title status</legend>
       <div class="seg" id="title">
         <label><input type="radio" name="title" value="clean"><span>Clean</span></label>
@@ -218,7 +229,7 @@
         <label><input type="radio" name="title" value="lemon"><span>Lemon buyback</span></label>
         <label><input type="radio" name="title" value="unknown" checked><span>Not sure</span></label>
       </div>
-      <div class="hint" id="title-hint">As printed on the title document. Flood and non-repairable titles mean the vehicle sells as-is.</div>
+      <div class="hint" id="title-hint"></div>
     </fieldset>
 
     <div class="field">
@@ -234,14 +245,30 @@
 
     <div class="field">
       <span class="label" id="codes-label">Trouble codes</span>
-      <div class="codes" id="codes" aria-labelledby="codes-label">
-        <input id="code-input" autocomplete="off" spellcheck="false" placeholder="P0300" aria-labelledby="codes-label" aria-describedby="codes-hint">
-      </div>
-      <div class="hint" id="codes-hint">Press Enter after each code. Leave empty if the scan found none.</div>
+      <div class="tags" id="codes"><input id="code-input" autocomplete="off" spellcheck="false" placeholder="P0300" aria-labelledby="codes-label"></div>
+      <div class="hint" id="codes-hint"></div>
     </div>
 
+    <p class="group-head">Market values</p>
+    <p class="group-sub">What the vehicle is worth clean, and what similar damaged ones actually sold for.</p>
+    <div class="field">
+      <label for="clean">Clean wholesale value</label>
+      <div class="money"><span>$</span><input id="clean" inputmode="numeric" autocomplete="off" placeholder="18000"></div>
+      <div class="hint" id="clean-hint">Same year, model and mileage with no damage and a clean title.</div>
+    </div>
+    <div class="field">
+      <span class="label" id="comps-label">Comparable salvage sales</span>
+      <div class="tags" id="comps"><input id="comp-input" inputmode="numeric" autocomplete="off" placeholder="6500" aria-labelledby="comps-label"></div>
+      <div class="hint" id="comps-hint"></div>
+    </div>
+
+    <details class="assume">
+      <summary>Fees, labor and timing</summary>
+      <div class="assume-grid" id="assume"></div>
+    </details>
+
     <div class="actions">
-      <button class="go" id="go" type="submit">Check vehicle</button>
+      <button class="go" id="go" type="submit">Get recommendation</button>
       <button class="clear" id="clear" type="button">Clear</button>
     </div>
   </form>
@@ -250,96 +277,123 @@
 
   <section class="samples">
     <h2>Sample vehicles</h2>
-    <p>Real VIN formats with common fault patterns. Pick one to fill the form and run it.</p>
+    <p>Made-up VINs with sample grades and values, one for each kind of answer. Pick one to fill the form and run it.</p>
     <ul id="samples"></ul>
   </section>
 
   <section class="dev">
     <h2>Calling the API</h2>
-    <p>Send <code>POST /api/decode-codes</code> with <code>{ "vin": "…", "codes": ["P0300"] }</code>. The response has <code>vehicle</code>, <code>codes</code>, <code>summary</code>, <code>triage</code> and <code>reason</code>. Cross-origin requests are allowed, so the Lovable app can call it directly.</p>
+    <ul>
+      <li><code>GET /api/vehicle?vin=</code> returns the verified title and values for registered vehicles.</li>
+      <li><code>POST /api/grade-photos</code> with <code>{ vin, photos }</code> grades 25 parts.</li>
+      <li><code>POST /api/decode-codes</code> with <code>{ vin, codes, title_status }</code> decodes fault codes.</li>
+      <li><code>POST /api/decide</code> with <code>{ title_status, grades, flags, codes, values }</code> returns both net ranges and the recommendation.</li>
+    </ul>
   </section>
 </main>
 
 <script>
-const SAMPLES = [
-  ['2017 Ram 1500, no codes', '1C6RR7LT2HS512345', []],
-  ['2018 Ford F-150, turbo underboost and lean', '1FTEW1EP6JKD12345', ['P0299', 'P0171']],
-  ['2019 Chevrolet Silverado, misfire and catalyst', '3GCUYDED4KG123456', ['P0300', 'P0420']],
-  ['2019 Ford Transit, Ford-specific EVAP code', '1FTYR2CM1KKA12345', ['C0035', 'P0442', 'P1450']],
-  ['2017 GMC Sierra 2500HD, transmission failure', '1GT12UEY2HF123456', ['P0700', 'P0730', 'P0868']],
-  ['2018 Chevrolet Express, airbags deployed', '1GCWGAFP4J1123456', ['B0001', 'B0010', 'U0151']],
-  ['2020 Ford F-250 diesel, seven codes', '1FT7W2BT8LEC12345', ['P0087', 'P2002', 'P20EE', 'P2463', 'P0401', 'P0562', 'U0100']],
-  ['2016 Nissan NV, flood title, no codes', '1N6BF0KM3GN812345', [], 'flood'],
-];
+const PARTS = ['front_bumper', 'hood', 'grille', 'left_headlight', 'right_headlight', 'windshield', 'left_front_fender', 'right_front_fender', 'left_front_door', 'right_front_door', 'left_rear_door', 'right_rear_door', 'left_mirror', 'right_mirror', 'left_rear_quarter', 'right_rear_quarter', 'tailgate_or_rear_doors', 'rear_bumper', 'left_taillight', 'right_taillight', 'wheels_and_tires', 'roof', 'interior', 'engine_bay', 'underbody'];
+const GRADE_ORDER = ['fine', 'repairable', 'replace', 'unknown'];
+const GRADE_LABEL = { fine: 'Fine', repairable: 'Repairable', replace: 'Replace', unknown: 'Not visible' };
 const TITLE_LABEL = { clean: 'Clean', salvage: 'Salvage', rebuilt: 'Rebuilt', flood: 'Flood', non_repairable: 'Non-repairable', lemon: 'Lemon buyback', unknown: 'Not sure' };
-const getTitle = () => (document.querySelector('input[name=title]:checked') || {}).value || 'unknown';
-const setTitle = (v) => { document.querySelector(`input[name=title][value="${v}"]`).checked = true; };
+const SOURCE_LABEL = { title_document: 'the title document', dealer_listing: 'the dealer listing', nmvtis_report: 'an NMVTIS title report' };
+const CODE_SOURCE = { generic_table: 'from the code table', gemini: 'explained by Gemini for this make', unknown: 'meaning unknown for this make', invalid: 'not a valid code' };
+const FLAG_LABEL = { airbags_deployed: 'Airbags deployed', frame_suspected: 'Frame damage suspected', fluid_leak: 'Fluid leak' };
+const ASSUME = [
+  ['labor_rate', 'Labor rate ($/hour)', 95], ['fix_days', 'Days to repair and resell', 30], ['daily_cost', 'Holding cost ($/day)', 20],
+  ['fix_selling_fee', 'Fee to sell after repair ($)', 450], ['as_is_days', 'Days to sell as-is', 7], ['as_is_fee', 'Salvage auction fee ($)', 350], ['transport', 'Transport ($)', 150],
+];
 const CODE_RE = /^[PCBU][0-3][0-9A-F]{3}$/;
 const VIN_RE = /^[A-HJ-NPR-Z0-9]{17}$/;
-const SOURCE = { generic_table: 'from the code table', gemini: 'explained by Gemini for this make', unknown: 'meaning unknown for this make', invalid: 'not a valid code' };
-const glyph = (ok) => `<span aria-hidden="true">${ok ? '✓' : '!'}</span>`;
+const MAX_PHOTOS = 30, LONG_SIDE = 1000, MAX_BYTES = 4_000_000;
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const money = (n) => '$' + Number(n).toLocaleString('en-US');
-let codes = [];
+const money = (n) => (n < 0 ? '−$' : '$') + Math.abs(Math.round(n)).toLocaleString('en-US');
+const label = (s) => s.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
+const reduceMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+const glyph = (ok) => `<span aria-hidden="true">${ok ? '✓' : '!'}</span>`;
+const post = (url, body) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 
-// ---- Codes field ----
-function renderCodes() {
-  $('codes').querySelectorAll('.tag').forEach((t) => t.remove());
-  codes.forEach((c, i) => {
-    const t = document.createElement('span');
-    t.className = 'tag' + (CODE_RE.test(c) ? '' : ' invalid');
-    t.innerHTML = `${esc(c)}<button type="button" aria-label="Remove ${esc(c)}">×</button>`;
-    t.querySelector('button').onclick = () => { codes.splice(i, 1); renderCodes(); };
-    $('codes').insertBefore(t, $('code-input'));
+// Run state: one checked vehicle. Grades and flags are editable after the first run.
+let state = null;
+let preset = null; // grades/flags supplied by a sample vehicle instead of photos
+
+// ---- Tag fields (codes, comps) ----
+function tagField(box, input, hint, { normalize, valid, show, hintText }) {
+  let items = [];
+  const render = () => {
+    box.querySelectorAll('.tag').forEach((t) => t.remove());
+    items.forEach((it, i) => {
+      const t = document.createElement('span');
+      t.className = 'tag' + (valid(it) ? '' : ' invalid');
+      t.innerHTML = `${esc(show(it))}<button type="button" aria-label="Remove ${esc(show(it))}">×</button>`;
+      t.querySelector('button').onclick = () => { items.splice(i, 1); render(); api.onChange(); };
+      box.insertBefore(t, input);
+    });
+    const bad = items.filter((x) => !valid(x));
+    hint.classList.toggle('bad', bad.length > 0);
+    hint.textContent = hintText(bad);
+  };
+  const add = (text) => {
+    text.split(/[\s,;]+/).map(normalize).filter(Boolean).forEach((x) => { if (!items.includes(x)) items.push(x); });
+    render(); api.onChange();
+  };
+  input.addEventListener('keydown', (e) => {
+    const v = e.target.value.trim();
+    if ((e.key === 'Enter' || e.key === ',' || e.key === ' ') && v) { e.preventDefault(); add(v); e.target.value = ''; }
+    else if (e.key === 'Enter') { e.preventDefault(); $('form').requestSubmit(); }
+    else if (e.key === 'Backspace' && !v && items.length) { items.pop(); render(); api.onChange(); }
   });
-  const bad = codes.filter((c) => !CODE_RE.test(c));
-  const hint = $('codes-hint');
-  hint.classList.toggle('bad', bad.length > 0);
-  hint.textContent = bad.length
-    ? `${bad.join(', ')} doesn't look like an OBD-II code. Codes start with P, C, B or U, followed by 4 characters.`
-    : 'Press Enter after each code. Leave empty if the scan found none.';
+  input.addEventListener('paste', (e) => { e.preventDefault(); add(e.clipboardData.getData('text')); });
+  input.addEventListener('blur', () => { if (input.value.trim()) { add(input.value); input.value = ''; } });
+  box.addEventListener('click', (e) => { if (e.target === box) input.focus(); });
+  const api = { get: () => items.slice(), set: (xs) => { items = xs.map(normalize).filter(Boolean); render(); }, flush: () => { if (input.value.trim()) { add(input.value); input.value = ''; } }, onChange: () => {} };
+  render();
+  return api;
 }
-function addCodes(text) {
-  text.toUpperCase().split(/[\s,;]+/).filter(Boolean).forEach((c) => { if (!codes.includes(c)) codes.push(c); });
-  renderCodes();
-}
-$('code-input').addEventListener('keydown', (e) => {
-  const v = e.target.value.trim();
-  if ((e.key === 'Enter' || e.key === ',' || e.key === ' ') && v) { e.preventDefault(); addCodes(v); e.target.value = ''; }
-  else if (e.key === 'Enter') { e.preventDefault(); $('form').requestSubmit(); }
-  else if (e.key === 'Backspace' && !v && codes.length) { codes.pop(); renderCodes(); }
+const codes = tagField($('codes'), $('code-input'), $('codes-hint'), {
+  normalize: (s) => String(s).trim().toUpperCase(), valid: (c) => CODE_RE.test(c), show: (c) => c,
+  hintText: (bad) => bad.length ? `${bad.join(', ')} doesn't look like an OBD-II code. Codes start with P, C, B or U, followed by 4 characters.` : 'Press Enter after each code. Leave empty if the scan found none.',
 });
-$('code-input').addEventListener('paste', (e) => { e.preventDefault(); addCodes(e.clipboardData.getData('text')); });
-$('codes').addEventListener('click', (e) => { if (e.target === $('codes')) $('code-input').focus(); });
+const comps = tagField($('comps'), $('comp-input'), $('comps-hint'), {
+  normalize: (s) => { const n = Math.round(Number(String(s).replace(/[$,\s]/g, ''))); return n > 0 ? String(n) : (String(s).trim() ? String(s).trim() : ''); },
+  valid: (x) => /^\d+$/.test(x), show: (x) => /^\d+$/.test(x) ? money(+x) : x,
+  hintText: (bad) => bad.length ? `${bad.join(', ')} isn't a dollar amount.` : 'Sold prices for 5 to 10 damaged lots of the same model and year. Press Enter after each.',
+});
+
+// ---- Assumptions ----
+$('assume').innerHTML = ASSUME.map(([k, l, v]) => `<label>${esc(l)}<input id="a-${k}" inputmode="numeric" value="${v}"></label>`).join('');
+const readAssumptions = () => Object.fromEntries(ASSUME.map(([k, , v]) => { const n = Number($(`a-${k}`).value); return [k, Number.isFinite(n) && n >= 0 ? n : v]; }));
+const readValues = () => ({ clean_wholesale: Number(String($('clean').value).replace(/[$,\s]/g, '')) || undefined, salvage_comps: comps.get().filter((x) => /^\d+$/.test(x)).map(Number) });
+
+// ---- Title ----
+const TITLE_HINT = 'As printed on the title document. A non-repairable title means it can\'t be fixed and resold; flood and salvage lower the value after repair.';
+const getTitle = () => (document.querySelector('input[name=title]:checked') || {}).value || 'unknown';
+const setTitle = (v) => { const r = document.querySelector(`input[name=title][value="${v}"]`); if (r) r.checked = true; };
+$('title-hint').textContent = TITLE_HINT;
 
 // ---- Photos ----
-// Each photo is resized in the browser to ~1000px on the long side (CLAUDE.md), stored as a JPEG data URL.
-const MAX_PHOTOS = 30, LONG_SIDE = 1000, MAX_BYTES = 4_000_000; // Vercel request bodies cap at ~4.5 MB
-let photos = []; // { name, dataUrl }
-
+let photos = [];
 async function resize(file) {
   const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
-  const scale = Math.min(1, LONG_SIDE / Math.max(bmp.width, bmp.height));
+  const s = Math.min(1, LONG_SIDE / Math.max(bmp.width, bmp.height));
   const c = document.createElement('canvas');
-  c.width = Math.round(bmp.width * scale); c.height = Math.round(bmp.height * scale);
-  c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
-  bmp.close();
+  c.width = Math.round(bmp.width * s); c.height = Math.round(bmp.height * s);
+  c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height); bmp.close();
   return c.toDataURL('image/jpeg', 0.82);
 }
 async function addPhotos(files) {
-  const hint = $('photos-hint'); hint.classList.remove('bad');
   const failed = [];
   for (const f of [...files]) {
     if (photos.length >= MAX_PHOTOS) { failed.push(`${f.name} (limit is ${MAX_PHOTOS} photos)`); continue; }
-    try { photos.push({ name: f.name, dataUrl: await resize(f) }); }
-    catch { failed.push(`${f.name} (this browser can't read that format; use JPEG or PNG)`); }
+    try { photos.push({ name: f.name, dataUrl: await resize(f) }); } catch { failed.push(`${f.name} (this browser can't read that format; use JPEG or PNG)`); }
   }
-  renderPhotos();
-  if (failed.length) { hint.classList.add('bad'); hint.textContent = `Skipped ${failed.join('; ')}.`; }
+  preset = null; renderPhotos();
+  if (failed.length) { $('photos-hint').classList.add('bad'); $('photos-hint').textContent = `Skipped ${failed.join('; ')}.`; }
 }
-function photoBytes() { return photos.reduce((n, p) => n + p.dataUrl.length, 0); }
+const photoBytes = () => photos.reduce((n, p) => n + p.dataUrl.length, 0);
 function renderPhotos() {
   const list = $('thumbs'); list.innerHTML = '';
   photos.forEach((p, i) => {
@@ -348,178 +402,257 @@ function renderPhotos() {
     li.querySelector('button').onclick = () => { photos.splice(i, 1); renderPhotos(); };
     list.appendChild(li);
   });
+  const b = photoBytes(), size = b >= 1e6 ? `${(b / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1e3))} KB`;
   const hint = $('photos-hint');
-  const b = photoBytes(), mb = b >= 1e6 ? `${(b / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1e3))} KB`;
-  hint.classList.toggle('bad', photoBytes() > MAX_BYTES);
-  hint.textContent = !photos.length ? '' : photoBytes() > MAX_BYTES
-    ? `${photos.length} photos, ${mb}. That's over the 4 MB upload limit; remove a few photos.`
-    : `${photos.length} photo${photos.length === 1 ? '' : 's'}, ${mb}. Numbers match the photo numbers in the results.`;
+  hint.classList.toggle('bad', b > MAX_BYTES);
+  hint.textContent = !photos.length ? 'Without photos, you can set each part\'s grade by hand in the results.' : b > MAX_BYTES
+    ? `${photos.length} photos, ${size}. That's over the 4 MB upload limit; remove a few photos.`
+    : `${photos.length} photo${photos.length === 1 ? '' : 's'}, ${size}. Numbers match the photo numbers in the results.`;
 }
 $('photo-input').addEventListener('change', (e) => { addPhotos(e.target.files); e.target.value = ''; });
 const drop = $('drop');
 ['dragenter', 'dragover'].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add('over'); }));
 ['dragleave', 'drop'].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.remove('over'); }));
 drop.addEventListener('drop', (e) => addPhotos([...e.dataTransfer.files].filter((f) => f.type.startsWith('image/'))));
+renderPhotos();
 
-// ---- VIN field ----
+// ---- VIN + registry ----
+const CLEAN_HINT = 'Same year, model and mileage with no damage and a clean title.';
+let registryVin = null;
 $('vin').addEventListener('input', (e) => {
   const v = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
   e.target.value = v;
-  const hint = $('vin-hint');
-  hint.classList.remove('bad');
+  const hint = $('vin-hint'); hint.classList.remove('bad');
   hint.textContent = v.length === 0 ? "17 characters, found on the dash or the driver's door jamb." : `${v.length} of 17 characters`;
-  if (VIN_RE.test(v)) checkRegistry(v); else showTitleHint(null);
+  if (VIN_RE.test(v)) checkRegistry(v); else showRegistry(null);
 });
-
-// ---- Demo registry: verified title for known VINs ----
-const SOURCE_LABEL = { title_document: 'the title document', dealer_listing: 'the dealer listing', nmvtis_report: 'an NMVTIS title report' };
-const TITLE_HINT = 'As printed on the title document. Flood and non-repairable titles mean the vehicle sells as-is.';
-let registryVin = null;
-function showTitleHint(rec) {
-  const hint = $('title-hint');
-  hint.classList.remove('verified');
-  if (!rec) { hint.textContent = TITLE_HINT; return; }
-  hint.classList.add('verified');
-  hint.textContent = `Verified: ${TITLE_LABEL[rec.title_status]} title${rec.title_state ? ` (${rec.title_state})` : ''}, from ${SOURCE_LABEL[rec.source] || rec.source}. This record is used instead of the selection.`;
+function showRegistry(rec) {
+  const th = $('title-hint'), ch = $('clean-hint');
+  th.classList.toggle('verified', !!rec); ch.classList.remove('verified');
+  if (!rec) { th.textContent = TITLE_HINT; ch.textContent = CLEAN_HINT; return; }
+  th.textContent = `Verified: ${TITLE_LABEL[rec.title_status]} title${rec.title_state ? ` (${rec.title_state})` : ''}, from ${SOURCE_LABEL[rec.source] || rec.source}. This record is used instead of the selection.`;
+  if (rec.clean_wholesale) { ch.classList.add('verified'); ch.textContent = `Filled in from the vehicle record${rec.values_note ? `: ${rec.values_note}` : '.'}`; }
 }
 async function checkRegistry(vin) {
   registryVin = vin;
   try {
     const r = await fetch(`/api/vehicle?vin=${encodeURIComponent(vin)}`).then((x) => x.json());
-    if (registryVin !== vin) return; // VIN changed while waiting
-    if (r.registered) { setTitle(r.title_status); showTitleHint(r); } else showTitleHint(null);
-  } catch { showTitleHint(null); }
+    if (registryVin !== vin) return;
+    if (!r.registered) return showRegistry(null);
+    setTitle(r.title_status);
+    if (r.clean_wholesale) $('clean').value = r.clean_wholesale;
+    if (r.salvage_comps && r.salvage_comps.length) comps.set(r.salvage_comps);
+    showRegistry(r);
+  } catch { showRegistry(null); }
 }
 
 // ---- Samples ----
-SAMPLES.forEach(([label, vin, cs, title = 'unknown']) => {
-  const li = document.createElement('li');
-  li.innerHTML = `<button type="button"><span class="car">${esc(label)}</span><span class="sc">${cs.length ? esc(cs.join(' ')) : 'no codes'}</span></button>`;
-  li.querySelector('button').onclick = () => {
-    $('vin').value = vin; $('vin').dispatchEvent(new Event('input'));
-    codes = [...cs]; renderCodes(); setTitle(title);
-    $('form').requestSubmit();
-  };
-  $('samples').appendChild(li);
-});
+fetch('/demo_vehicles.json').then((r) => r.json()).then(({ vehicles }) => {
+  for (const v of vehicles) {
+    const li = document.createElement('li');
+    const n = Object.values(v.grades).filter((g) => g === 'replace' || g === 'repairable').length;
+    li.innerHTML = `<button type="button"><span class="car">${esc(v.label)}</span><span class="sc">${esc(TITLE_LABEL[v.title_status])} title, ${n} damaged part${n === 1 ? '' : 's'}, ${v.codes.length} code${v.codes.length === 1 ? '' : 's'}</span></button>`;
+    li.querySelector('button').onclick = () => {
+      $('vin').value = v.vin; $('vin').dispatchEvent(new Event('input'));
+      setTitle(v.title_status); codes.set(v.codes);
+      $('clean').value = v.values.clean_wholesale; comps.set(v.values.salvage_comps);
+      photos = []; renderPhotos();
+      preset = { grades: v.grades, flags: v.flags, label: 'Sample grades, as if photos had been graded.' };
+      $('form').requestSubmit();
+    };
+    $('samples').appendChild(li);
+  }
+}).catch(() => {});
 
 $('clear').onclick = () => {
   $('vin').value = ''; $('vin').dispatchEvent(new Event('input'));
-  $('code-input').value = ''; codes = []; renderCodes();
-  photos = []; renderPhotos(); setTitle('unknown');
-  $('result').hidden = true; $('vin').focus();
+  codes.set([]); comps.set([]); $('clean').value = ''; photos = []; renderPhotos(); setTitle('unknown');
+  preset = null; state = null; $('result').hidden = true; $('vin').focus();
 };
 
-// ---- Submit ----
-$('form').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const pending = $('code-input').value.trim();
-  if (pending) { addCodes(pending); $('code-input').value = ''; }
-  const vin = $('vin').value.trim();
-  if (!VIN_RE.test(vin)) {
-    const hint = $('vin-hint');
-    hint.classList.add('bad');
-    hint.textContent = /[IOQ]/.test(vin)
-      ? 'VINs never use the letters I, O or Q. Check for a 1 or a 0.'
-      : `This VIN has ${vin.length} characters. A VIN has 17.`;
-    $('vin').focus();
-    return;
-  }
-  if (photoBytes() > MAX_BYTES) { $('drop').scrollIntoView({ block: 'center' }); return; }
-  const out = $('result');
-  $('go').disabled = true; $('go').textContent = photos.length ? 'Checking codes and photos…' : 'Checking…';
-  try {
-    const post = (url, body) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    const [res, photoRes] = await Promise.all([
-      post('/api/decode-codes', { vin, codes, title_status: getTitle() }),
-      photos.length ? post('/api/grade-photos', { vin, photos: photos.map((p) => p.dataUrl) }).catch((e) => e) : null,
-    ]);
-    const r = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(r.error || `The server answered ${res.status}.`);
-    showResult(r, await readPhotoResult(photoRes));
-  } catch (err) {
-    out.hidden = false;
-    out.innerHTML = `<div class="verdict error"><div class="lamp on-red">${glyph(false)}</div><div><h2>Couldn't check this vehicle</h2><p class="why">${esc(err.message)} Try again, or pick a sample vehicle below.</p></div></div>`;
-  } finally {
-    $('go').disabled = false; $('go').textContent = 'Check vehicle';
-  }
-});
-
-// Photo grading endpoint (api/grade-photos, Karthik). Returns the vision shape from CLAUDE.md.
+// ---- Run ----
 async function readPhotoResult(res) {
   if (res === null) return null;
   if (res instanceof Error) return { error: `The photo upload failed: ${res.message}` };
-  if (res.status === 404) return { error: 'Photo grading isn\'t connected yet. The page sends photos to POST /api/grade-photos once that endpoint is deployed.' };
+  if (res.status === 404) return { error: "Photo grading isn't connected on this deployment." };
   if (res.status === 413) return { error: 'The photos are too large to upload together. Remove a few and try again.' };
   const body = await res.json().catch(() => null);
   if (!res.ok || !body || !Array.isArray(body.parts)) return { error: (body && body.error) || `Photo grading answered ${res.status} without a parts list.` };
   return { data: body };
 }
 
-const GRADE = { fine: 'Fine', repairable: 'Repairable', replace: 'Replace', unknown: 'Not visible' };
-function photoSection(p) {
-  if (!p) return '';
-  if (p.error) return `<p class="notice">${esc(p.error)}</p>`;
-  const d = p.data;
-  const label = (s) => s.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
-  const counts = d.parts.reduce((m, x) => (m[x.grade] = (m[x.grade] || 0) + 1, m), {});
-  const yn = (v) => v === true ? 'Yes' : v === false ? 'No' : v === 'unknown' ? 'Unknown' : String(v);
-  const flags = Object.entries(d.flags || {}).map(([k, v]) => `${esc(label(k))}: <b>${esc(yn(v))}</b>`).join('; ');
-  return `
-    <div class="parts-head">
-      <h3>Condition from photos</h3>
-      <p>${counts.replace || 0} to replace, ${counts.repairable || 0} repairable, ${counts.unknown || 0} not visible</p>
-    </div>
-    <ul class="parts">
-      ${d.parts.map((x) => `
-        <li class="g-${esc(x.grade)}">
-          <span class="dot" aria-hidden="true"></span>
-          <span>${esc(label(x.part))}${x.evidence_photo ? ` <span class="ph">photo ${esc(x.evidence_photo)}</span>` : ''}</span>
-          <span class="grade">${esc(GRADE[x.grade] || x.grade)}</span>
-        </li>`).join('')}
-    </ul>
-    ${flags ? `<p class="flags">${flags}</p>` : ''}
-    ${(d.photo_gaps || []).length ? `<p class="flags">Missing angles: ${esc(d.photo_gaps.join('; '))}</p>` : ''}`;
+$('form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  codes.flush(); comps.flush();
+  const vin = $('vin').value.trim();
+  if (!VIN_RE.test(vin)) {
+    const hint = $('vin-hint'); hint.classList.add('bad');
+    hint.textContent = /[IOQ]/.test(vin) ? 'VINs never use the letters I, O or Q. Check for a 1 or a 0.' : `This VIN has ${vin.length} characters. A VIN has 17.`;
+    $('vin').focus(); return;
+  }
+  if (photoBytes() > MAX_BYTES) { $('drop').scrollIntoView({ block: 'center' }); return; }
+  $('go').disabled = true; $('go').textContent = photos.length ? 'Grading photos and codes…' : 'Checking…';
+  try {
+    const [cRes, pRes] = await Promise.all([
+      post('/api/decode-codes', { vin, codes: codes.get(), title_status: getTitle() }),
+      photos.length ? post('/api/grade-photos', { vin, photos: photos.map((p) => p.dataUrl) }).catch((x) => x) : null,
+    ]);
+    const c = await cRes.json().catch(() => ({}));
+    if (!cRes.ok) throw new Error(c.error || `The server answered ${cRes.status}.`);
+    const photo = await readPhotoResult(pRes);
+
+    const grades = new Map();
+    if (photo && photo.data) photo.data.parts.forEach((p) => grades.set(p.part, { grade: p.grade, photo: p.evidence_photo, edited: false }));
+    PARTS.forEach((p) => { if (!grades.has(p)) grades.set(p, { grade: preset ? (preset.grades[p] || 'fine') : 'unknown', photo: null, edited: false }); });
+    const flags = photo && photo.data ? { ...photo.data.flags } : preset ? { ...preset.flags } : { airbags_deployed: 'unknown', frame_suspected: 'unknown', fluid_leak: 'unknown' };
+    const gradeNote = photo && photo.data ? null : photo && photo.error ? photo.error + ' Set each part\'s grade by hand below.' : preset ? preset.label : 'No photos, so every part starts as not visible. Click a grade to set it by hand.';
+    state = { codes: c, photo, grades, flags, gradeNote, photoGaps: photo && photo.data ? photo.data.photo_gaps : [] };
+    await recompute(true);
+  } catch (err) {
+    $('result').hidden = false;
+    $('result').innerHTML = `<div class="verdict error"><div class="lamp on-red">${glyph(false)}</div><div><h2>Couldn't check this vehicle</h2><p class="why">${esc(err.message)} Try again, or pick a sample vehicle below.</p></div></div>`;
+  } finally {
+    $('go').disabled = false; $('go').textContent = 'Get recommendation';
+  }
+});
+
+let pending = 0;
+async function recompute(first = false) {
+  if (!state) return;
+  const ticket = ++pending;
+  const body = {
+    title_status: state.codes.title_status,
+    grades: [...state.grades].map(([part, g]) => ({ part, grade: g.grade })),
+    flags: state.flags,
+    codes: state.codes.codes.filter((c) => c.source !== 'invalid'),
+    values: readValues(),
+    assumptions: readAssumptions(),
+  };
+  const d = await post('/api/decide', body).then((r) => r.json());
+  if (ticket !== pending) return; // a newer edit is already on its way
+  render(d, first);
+}
+let debounce;
+const recomputeSoon = () => { clearTimeout(debounce); debounce = setTimeout(() => recompute(false), 250); };
+['clean'].forEach((id) => $(id).addEventListener('input', recomputeSoon));
+$('assume').addEventListener('input', recomputeSoon);
+comps.onChange = recomputeSoon;
+
+// Reviewer toggle: click a part or flag to change it, and the recommendation updates.
+$('result').addEventListener('click', (e) => {
+  const pb = e.target.closest('[data-part]'), fb = e.target.closest('[data-flag]');
+  if (pb && state) {
+    const g = state.grades.get(pb.dataset.part);
+    g.grade = GRADE_ORDER[(GRADE_ORDER.indexOf(g.grade) + 1) % GRADE_ORDER.length]; g.edited = true;
+    recompute(false);
+  } else if (fb && state) {
+    const order = [true, false, 'unknown'], k = fb.dataset.flag;
+    state.flags[k] = order[(order.indexOf(state.flags[k]) + 1) % order.length];
+    recompute(false);
+  }
+});
+
+// ---- Render ----
+function vehicleLine() {
+  const r = state.codes, v = r.vehicle;
+  const make = v.make && (v.make.length <= 3 ? v.make : v.make.replace(/\B\w+/g, (m) => m.toLowerCase()));
+  const car = [v.year, make, v.model, v.engine].filter(Boolean).join(' ') || 'Vehicle not found in the NHTSA database';
+  const ts = r.title_source && r.title_source.from === 'registry'
+    ? `${r.title_source.title_state ? ` (${esc(r.title_source.title_state)})` : ''}, verified from ${esc(SOURCE_LABEL[r.title_source.source] || r.title_source.source)}`
+    : r.title_status !== 'unknown' ? ', entered by seller' : '';
+  return `${esc(car)}. Title: ${esc(TITLE_LABEL[r.title_status] || 'Not sure')}${ts}.`;
 }
 
-function showResult(r, photoResult = null) {
-  const out = $('result');
-  const skip = r.triage !== 'full_inspection';
-  const none = r.summary.count === 0;
-  const make = r.vehicle.make && (r.vehicle.make.length <= 3 ? r.vehicle.make : r.vehicle.make.replace(/\B\w+/g, (m) => m.toLowerCase()));
-  const car = [r.vehicle.year, make, r.vehicle.model, r.vehicle.engine].filter(Boolean).join(' ');
-  const head = skip ? 'Skip the inspection. Sell it as-is.' : none ? 'No fault codes. Go ahead and inspect.' : 'Worth a full inspection.';
-  const lamp = skip ? 'on-red' : none ? 'on-green' : 'on-amber';
-  const sev = (s) => s === 'none' ? 'None' : s[0].toUpperCase() + s.slice(1);
+function verdictBlock(d) {
+  const pct = d.p_fix == null ? null : Math.round(d.p_fix * 100);
+  const V = {
+    fix: ['on-green', true, 'Fix it, then sell.', pct === 100 ? 'Fixing nets more in all 1,000 simulated outcomes.' : `Fixing nets more in ${pct}% of 1,000 simulated outcomes.`],
+    sell_as_is: ['on-red', false, 'Sell it as-is.', pct === 0 ? 'Selling as-is nets more in all 1,000 simulated outcomes.' : `Fixing nets more in only ${pct}% of 1,000 simulated outcomes.`],
+    too_close: ['on-amber', false, 'Too close to call.', `Fixing nets more in ${pct}% of 1,000 simulated outcomes. The ranges overlap too much to pick one.`],
+    not_fixable: ['on-red', false, 'Sell it as-is. It can\'t be fixed and resold.', 'A non-repairable title means the vehicle can\'t be registered again after repair.'],
+  }[d.verdict] || ['', false, 'Add market values to get a recommendation.', `Still needed: ${d.missing.join(' and ')}.`];
+  const check = d.check ? `<p class="check">One check would settle it: <b>${esc(d.check.label)}</b>. If it comes back clean, fixing wins ${Math.round(d.check.p_fix_if_resolved * 100)}% of the time.</p>` : '';
+  return `<div class="verdict"><div class="lamp ${V[0]}${state.first ? ' ignite' : ''}">${glyph(V[1])}</div><div>
+    <h2>${esc(V[2])}</h2><p class="why">${esc(V[3])}</p>${check}<p class="vehicle">${vehicleLine()}</p></div></div>`;
+}
 
-  out.hidden = false;
-  out.innerHTML = `
-    <div class="verdict">
-      <div class="lamp ${lamp} ignite">${glyph(none && !skip)}</div>
-      <div>
-        <h2>${esc(head)}</h2>
-        <p class="why">${esc(r.reason.replace(/^Skip inspection:\s*/, '').replace(/^./, (c) => c.toUpperCase()))}</p>
-        <p class="vehicle">${car ? esc(car) : 'Vehicle not found in the NHTSA database'}. Title: ${esc(TITLE_LABEL[r.title_status] || 'Not sure')}${r.title_source && r.title_source.from === 'registry' ? `${r.title_source.title_state ? ` (${esc(r.title_source.title_state)})` : ''}, verified from ${esc(SOURCE_LABEL[r.title_source.source] || r.title_source.source)}` : r.title_status && r.title_status !== 'unknown' ? ', entered by seller' : ''}.</p>
+function rangesBlock(d) {
+  if (!d.as_is_net) return '';
+  const rows = [d.fix_net && ['Fix and sell', 'fix', d.fix_net, d.days.fix], ['Sell as-is', 'sell', d.as_is_net, d.days.as_is]].filter(Boolean);
+  const min = Math.min(...rows.map((r) => r[2].low)), max = Math.max(...rows.map((r) => r[2].high));
+  const pad = (max - min) * 0.04 || 1, lo = min - pad, hi = max + pad;
+  const x = (v) => ((v - lo) / (hi - lo)) * 100;
+  const fixWins = d.verdict === 'fix', sellWins = d.verdict === 'sell_as_is' || d.verdict === 'not_fixable';
+  return `<div class="ranges">${rows.map(([name, cls, n, days]) => `
+    <div class="rrow${(cls === 'fix' && fixWins) || (cls === 'sell' && sellWins) ? ' win' : ''}">
+      <span class="name">${name}</span>
+      <div class="track" aria-hidden="true">
+        ${lo < 0 ? `<span class="zero" style="left:${x(0)}%"></span>` : ''}
+        <span class="whisker" style="left:${x(n.low)}%;width:${x(n.high) - x(n.low)}%"></span>
+        <span class="bar ${cls}" style="left:${x(n.p10)}%;width:${Math.max(0.8, x(n.p90) - x(n.p10))}%"></span>
+        <span class="mid" style="left:calc(${x(n.p50)}% - 1px)"></span>
       </div>
-    </div>
-    ${none ? '' : `
-    <dl class="figures">
-      <div><dt>Codes</dt><dd>${r.summary.count}</dd></div>
-      <div><dt>Worst severity</dt><dd>${esc(sev(r.summary.worst_severity))}</dd></div>
-      <div><dt>Repair estimate</dt><dd>${money(r.summary.cost_low)} to ${money(r.summary.cost_high)}</dd></div>
-    </dl>
-    <ul class="codelist">
-      ${r.codes.map((c) => `
-        <li class="sev-${esc(c.severity)}">
-          <span class="code">${esc(c.code)}</span>
-          <span class="desc">${c.description === 'unknown' ? 'Meaning unknown' : esc(c.description)}</span>
-          <span class="cost">${c.source === 'invalid' ? '' : `${money(c.cost_low)} to ${money(c.cost_high)}`}</span>
-          <span class="meta"><span class="sev">${esc(sev(c.severity))}</span>, ${esc(c.system)}, ${esc(SOURCE[c.source] || c.source)}</span>
-        </li>`).join('')}
-    </ul>`}
-    ${photoSection(photoResult)}
-    <details class="raw"><summary>Show the API response</summary><pre>${esc(JSON.stringify(photoResult && photoResult.data ? { codes: r, photos: photoResult.data } : r, null, 2))}</pre></details>`;
-  out.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+      <span class="nums">Nets <b>${money(n.p10)} to ${money(n.p90)}</b>, typically ${money(n.p50)}. Cash in about ${days} days.</span>
+    </div>`).join('')}
+    <p class="scale-note">Bars show the middle 80% of outcomes; the thin line is the full range; the amber tick is the typical outcome.</p></div>`;
+}
+
+function moneyBlock(d) {
+  const r = d.repair;
+  const lines = r.lines.map((l) => `<li><span>${esc(l.label)}</span><span class="amt">${money(l.low)} to ${money(l.high)}</span></li>`).join('');
+  const widen = r.widen.map((w) => `<li class="widen"><span>${esc(w.reason)}, could cost more</span><span class="amt">+${money(w.amount)}</span></li>`).join('');
+  const a = d.assumptions;
+  const t = state.codes.title_status, td = d.arv && d.arv.title_discount;
+  const arv = d.arv ? `<p>After repair it's worth <b>${money(d.arv.low)} to ${money(d.arv.high)}</b>: the clean wholesale value minus 5 to 12% for condition${td && td[1] > 0 ? `, and ${Math.round(td[0] * 100)} to ${Math.round(td[1] * 100)}% for a ${t === 'unknown' ? 'title we can\'t confirm' : `${TITLE_LABEL[t].toLowerCase()} title`}` : ''}.</p>` : '';
+  const asIs = d.as_is ? `<p>Sold as-is it brings <b>${money(d.as_is.low)} to ${money(d.as_is.high)}</b>, the range of ${d.as_is.comps} comparable salvage sales.</p>` : '';
+  return `<h3 class="sec">Where the numbers come from</h3>
+    <p class="sec-sub">Repair estimate at ${money(a.labor_rate)}/hour labor, with paint where a panel needs it.</p>
+    <ul class="lines">${lines || '<li><span>No damaged parts or fault codes yet</span><span class="amt">$0</span></li>'}${widen}
+      <li class="total"><span>Repair estimate</span><span class="amt">${money(r.low)} to ${money(r.high)}</span></li></ul>
+    <div class="money-notes">${arv}${asIs}<p>Fees: ${money(a.fix_selling_fee)} to sell after repair plus ${money(a.daily_cost)}/day holding; ${money(a.as_is_fee)} auction fee and ${money(a.transport)} transport to sell as-is.</p></div>`;
+}
+
+function partsBlock() {
+  const counts = {}; state.grades.forEach((g) => counts[g.grade] = (counts[g.grade] || 0) + 1);
+  const flagText = (v) => v === true ? 'Yes' : v === false ? 'No' : 'Unknown';
+  const gaps = (state.photoGaps || []).length ? `<p class="sec-sub" style="margin-top:12px">Missing angles: ${esc(state.photoGaps.join('; '))}</p>` : '';
+  return `<h3 class="sec">Condition</h3>
+    <p class="sec-sub">${counts.replace || 0} to replace, ${counts.repairable || 0} repairable, ${counts.unknown || 0} not visible. Click a grade or a flag to change it; the recommendation updates.</p>
+    ${state.gradeNote ? `<p class="notice">${esc(state.gradeNote)}</p>` : ''}
+    <ul class="parts">${[...state.grades].map(([part, g]) => `
+      <li class="g-${g.grade}"><button type="button" data-part="${part}" class="${g.edited ? 'edited' : ''}" aria-label="${esc(label(part))}: ${GRADE_LABEL[g.grade]}. Click to change.">
+        <span class="dot" aria-hidden="true"></span>
+        <span>${esc(label(part))}${g.photo ? ` <span class="ph">photo ${g.photo}</span>` : ''}</span>
+        <span class="grade">${GRADE_LABEL[g.grade]}${g.edited ? ', edited' : ''}</span>
+      </button></li>`).join('')}</ul>
+    <div class="flags">${Object.keys(FLAG_LABEL).map((k) => `<button type="button" data-flag="${k}" class="${state.flags[k] === true ? 'yes' : ''}">${FLAG_LABEL[k]}: <b>${flagText(state.flags[k])}</b></button>`).join('')}</div>${gaps}`;
+}
+
+function codesBlock() {
+  const r = state.codes;
+  if (!r.codes.length) return `<h3 class="sec">Fault codes</h3><p class="sec-sub">No codes from the scan tool.</p>`;
+  const sev = (s) => s[0].toUpperCase() + s.slice(1);
+  const inspect = r.triage === 'full_inspection' ? 'A full inspection is worth paying for.' : `A full inspection isn't worth paying for: ${r.reason.replace(/^Skip inspection:\s*/, '')}`;
+  return `<h3 class="sec">Fault codes</h3>
+    <p class="sec-sub">${r.summary.count} code${r.summary.count === 1 ? '' : 's'}, adding ${money(r.summary.cost_low)} to ${money(r.summary.cost_high)} to the repair estimate. ${esc(inspect)}</p>
+    <ul class="codelist">${r.codes.map((c) => `
+      <li class="sev-${esc(c.severity)}">
+        <span class="code">${esc(c.code)}</span>
+        <span class="desc">${c.description === 'unknown' ? 'Meaning unknown' : esc(c.description)}</span>
+        <span class="cost">${c.source === 'invalid' ? '' : `${money(c.cost_low)} to ${money(c.cost_high)}`}</span>
+        <span class="meta"><b>${esc(sev(c.severity))}</b>, ${esc(c.system)}, ${esc(CODE_SOURCE[c.source] || c.source)}</span>
+      </li>`).join('')}</ul>`;
+}
+
+function render(d, first) {
+  state.first = first;
+  const out = $('result');
+  const y = window.scrollY;
+  out.hidden = false;
+  out.innerHTML = verdictBlock(d) + rangesBlock(d) + moneyBlock(d) + partsBlock() + codesBlock() +
+    `<details class="raw"><summary>Show the API responses</summary><pre>${esc(JSON.stringify({ decision: d, codes: state.codes, photos: state.photo && state.photo.data }, null, 2))}</pre></details>`;
+  if (first) out.scrollIntoView({ behavior: reduceMotion() ? 'auto' : 'smooth', block: 'start' });
+  else window.scrollTo(0, y);
 }
 </script>
 </body>

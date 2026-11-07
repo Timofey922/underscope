@@ -19,10 +19,14 @@ const rows = JSON.parse(readFileSync('data/vehicles.local.json', 'utf8')).map((v
     !SOURCES.includes(v.source) && `source must be one of ${SOURCES.join(', ')}`,
     v.title_state && !/^[A-Z]{2}$/.test(v.title_state) && 'title_state must be a 2-letter state code',
   ].filter(Boolean);
+  if (v.clean_wholesale != null && !(Number(v.clean_wholesale) > 0)) problems.push('clean_wholesale must be a positive number');
+  if (v.salvage_comps != null && !(Array.isArray(v.salvage_comps) && v.salvage_comps.every((n: unknown) => Number(n) > 0))) problems.push('salvage_comps must be a list of positive numbers');
   if (problems.length) throw new Error(`Entry ${i + 1}: ${problems.join('; ')}`);
   return {
     vin, title_status: v.title_status, title_state: v.title_state ?? null,
-    odometer: v.odometer ?? null, source: v.source, note: v.note ?? null, updated_at: new Date().toISOString(),
+    odometer: v.odometer ?? null, source: v.source, note: v.note ?? null,
+    clean_wholesale: v.clean_wholesale ?? null, salvage_comps: v.salvage_comps ?? null, values_note: v.values_note ?? null,
+    updated_at: new Date().toISOString(),
   };
 });
 

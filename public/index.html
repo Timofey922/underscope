@@ -81,6 +81,36 @@
   .tag button { border: 0; background: none; color: inherit; font: 600 16px/1 var(--sans); padding: 0 4px; cursor: pointer; opacity: .75; }
   .tag button:hover { opacity: 1; }
 
+  /* Photos */
+  .drop { display: block; padding: 22px 20px; border: 2px dashed var(--steel); border-radius: 3px; background: var(--panel); cursor: pointer; }
+  .drop:hover, .drop.over { border-color: var(--ink); border-style: solid; }
+  .drop:focus-within { outline: 2px solid var(--focus); outline-offset: 3px; }
+  .drop-main { display: block; font-weight: 500; }
+  .drop-sub { display: block; color: var(--steel); font-size: 14px; margin-top: 2px; }
+  .thumbs { list-style: none; margin: 12px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; }
+  .thumbs:empty { display: none; }
+  .thumbs li { position: relative; aspect-ratio: 4 / 3; border-radius: 2px; overflow: hidden; background: var(--off); }
+  .thumbs img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .thumbs .n { position: absolute; left: 0; top: 0; background: var(--ink); color: var(--bg); font: 500 13px/1 var(--mono); padding: 5px 7px; }
+  .thumbs button { position: absolute; right: 4px; top: 4px; width: 26px; height: 26px; border: 0; border-radius: 50%; background: rgba(0,0,0,.6); color: #fff; font: 600 16px/1 var(--sans); cursor: pointer; }
+
+  /* Parts grid from photo grading */
+  .parts-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; margin: 40px 0 6px; }
+  .parts-head h3 { font: 700 24px/1.2 var(--cond); margin: 0; }
+  .parts-head p { margin: 0; color: var(--steel); font-size: 15px; }
+  .parts { list-style: none; margin: 12px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 0 24px; }
+  .parts li { display: grid; grid-template-columns: 12px 1fr auto; gap: 10px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 15px; }
+  .parts .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--off); }
+  .parts .g-fine .dot { background: var(--green); }
+  .parts .g-repairable .dot { background: var(--amber); }
+  .parts .g-replace .dot { background: var(--red); }
+  .parts .g-unknown .dot { background: transparent; border: 2px solid var(--steel); }
+  .parts .grade { color: var(--steel); font-size: 13px; text-align: right; }
+  .parts .ph { font: 500 12px var(--mono); color: var(--steel); }
+  .flags { margin: 18px 0 0; color: var(--steel); font-size: 15px; }
+  .flags b { color: var(--ink); font-weight: 600; }
+  .notice { margin-top: 36px; padding: 14px 16px; border-left: 4px solid var(--amber); background: var(--panel); font-size: 15px; }
+
   .actions { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
   .go { font: 600 18px/1 var(--cond); letter-spacing: .02em; padding: 15px 26px; background: var(--ink); color: var(--bg); border: 0; border-radius: 3px; cursor: pointer; }
   .go:hover { opacity: .88; }
@@ -165,6 +195,17 @@
     </div>
 
     <div class="field">
+      <span class="label" id="photos-label">Photos</span>
+      <label class="drop" id="drop">
+        <input id="photo-input" type="file" accept="image/*" multiple hidden>
+        <span class="drop-main">Drop photos here or <u>choose files</u></span>
+        <span class="drop-sub">Front, rear, both sides, interior, engine bay and underbody. Up to 30 photos, resized before upload.</span>
+      </label>
+      <ol class="thumbs" id="thumbs" aria-labelledby="photos-label"></ol>
+      <div class="hint" id="photos-hint"></div>
+    </div>
+
+    <div class="field">
       <span class="label" id="codes-label">Trouble codes</span>
       <div class="codes" id="codes" aria-labelledby="codes-label">
         <input id="code-input" autocomplete="off" spellcheck="false" placeholder="P0300" aria-labelledby="codes-label" aria-describedby="codes-hint">
@@ -242,6 +283,53 @@ $('code-input').addEventListener('keydown', (e) => {
 $('code-input').addEventListener('paste', (e) => { e.preventDefault(); addCodes(e.clipboardData.getData('text')); });
 $('codes').addEventListener('click', (e) => { if (e.target === $('codes')) $('code-input').focus(); });
 
+// ---- Photos ----
+// Each photo is resized in the browser to ~1000px on the long side (CLAUDE.md), stored as a JPEG data URL.
+const MAX_PHOTOS = 30, LONG_SIDE = 1000, MAX_BYTES = 4_000_000; // Vercel request bodies cap at ~4.5 MB
+let photos = []; // { name, dataUrl }
+
+async function resize(file) {
+  const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  const scale = Math.min(1, LONG_SIDE / Math.max(bmp.width, bmp.height));
+  const c = document.createElement('canvas');
+  c.width = Math.round(bmp.width * scale); c.height = Math.round(bmp.height * scale);
+  c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+  bmp.close();
+  return c.toDataURL('image/jpeg', 0.82);
+}
+async function addPhotos(files) {
+  const hint = $('photos-hint'); hint.classList.remove('bad');
+  const failed = [];
+  for (const f of [...files]) {
+    if (photos.length >= MAX_PHOTOS) { failed.push(`${f.name} (limit is ${MAX_PHOTOS} photos)`); continue; }
+    try { photos.push({ name: f.name, dataUrl: await resize(f) }); }
+    catch { failed.push(`${f.name} (this browser can't read that format; use JPEG or PNG)`); }
+  }
+  renderPhotos();
+  if (failed.length) { hint.classList.add('bad'); hint.textContent = `Skipped ${failed.join('; ')}.`; }
+}
+function photoBytes() { return photos.reduce((n, p) => n + p.dataUrl.length, 0); }
+function renderPhotos() {
+  const list = $('thumbs'); list.innerHTML = '';
+  photos.forEach((p, i) => {
+    const li = document.createElement('li');
+    li.innerHTML = `<img src="${p.dataUrl}" alt="Photo ${i + 1}: ${esc(p.name)}"><span class="n">${i + 1}</span><button type="button" aria-label="Remove photo ${i + 1}">×</button>`;
+    li.querySelector('button').onclick = () => { photos.splice(i, 1); renderPhotos(); };
+    list.appendChild(li);
+  });
+  const hint = $('photos-hint');
+  const b = photoBytes(), mb = b >= 1e6 ? `${(b / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1e3))} KB`;
+  hint.classList.toggle('bad', photoBytes() > MAX_BYTES);
+  hint.textContent = !photos.length ? '' : photoBytes() > MAX_BYTES
+    ? `${photos.length} photos, ${mb}. That's over the 4 MB upload limit; remove a few photos.`
+    : `${photos.length} photo${photos.length === 1 ? '' : 's'}, ${mb}. Numbers match the photo numbers in the results.`;
+}
+$('photo-input').addEventListener('change', (e) => { addPhotos(e.target.files); e.target.value = ''; });
+const drop = $('drop');
+['dragenter', 'dragover'].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add('over'); }));
+['dragleave', 'drop'].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.remove('over'); }));
+drop.addEventListener('drop', (e) => addPhotos([...e.dataTransfer.files].filter((f) => f.type.startsWith('image/'))));
+
 // ---- VIN field ----
 $('vin').addEventListener('input', (e) => {
   const v = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -266,6 +354,7 @@ SAMPLES.forEach(([label, vin, cs]) => {
 $('clear').onclick = () => {
   $('vin').value = ''; $('vin').dispatchEvent(new Event('input'));
   $('code-input').value = ''; codes = []; renderCodes();
+  photos = []; renderPhotos();
   $('result').hidden = true; $('vin').focus();
 };
 
@@ -284,13 +373,18 @@ $('form').addEventListener('submit', async (e) => {
     $('vin').focus();
     return;
   }
+  if (photoBytes() > MAX_BYTES) { $('drop').scrollIntoView({ block: 'center' }); return; }
   const out = $('result');
-  $('go').disabled = true; $('go').textContent = 'Checking…';
+  $('go').disabled = true; $('go').textContent = photos.length ? 'Checking codes and photos…' : 'Checking…';
   try {
-    const res = await fetch('/api/decode-codes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ vin, codes }) });
+    const post = (url, body) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const [res, photoRes] = await Promise.all([
+      post('/api/decode-codes', { vin, codes }),
+      photos.length ? post('/api/grade-photos', { vin, photos: photos.map((p) => p.dataUrl) }).catch((e) => e) : null,
+    ]);
     const r = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(r.error || `The server answered ${res.status}.`);
-    showResult(r);
+    showResult(r, await readPhotoResult(photoRes));
   } catch (err) {
     out.hidden = false;
     out.innerHTML = `<div class="verdict error"><div class="lamp on-red">${glyph(false)}</div><div><h2>Couldn't check this vehicle</h2><p class="why">${esc(err.message)} Try again, or pick a sample vehicle below.</p></div></div>`;
@@ -299,7 +393,44 @@ $('form').addEventListener('submit', async (e) => {
   }
 });
 
-function showResult(r) {
+// Photo grading endpoint (api/grade-photos, Karthik). Returns the vision shape from CLAUDE.md.
+async function readPhotoResult(res) {
+  if (res === null) return null;
+  if (res instanceof Error) return { error: `The photo upload failed: ${res.message}` };
+  if (res.status === 404) return { error: 'Photo grading isn\'t connected yet. The page sends photos to POST /api/grade-photos once that endpoint is deployed.' };
+  if (res.status === 413) return { error: 'The photos are too large to upload together. Remove a few and try again.' };
+  const body = await res.json().catch(() => null);
+  if (!res.ok || !body || !Array.isArray(body.parts)) return { error: (body && body.error) || `Photo grading answered ${res.status} without a parts list.` };
+  return { data: body };
+}
+
+const GRADE = { fine: 'Fine', repairable: 'Repairable', replace: 'Replace', unknown: 'Not visible' };
+function photoSection(p) {
+  if (!p) return '';
+  if (p.error) return `<p class="notice">${esc(p.error)}</p>`;
+  const d = p.data;
+  const label = (s) => s.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
+  const counts = d.parts.reduce((m, x) => (m[x.grade] = (m[x.grade] || 0) + 1, m), {});
+  const yn = (v) => v === true ? 'Yes' : v === false ? 'No' : v === 'unknown' ? 'Unknown' : String(v);
+  const flags = Object.entries(d.flags || {}).map(([k, v]) => `${esc(label(k))}: <b>${esc(yn(v))}</b>`).join('; ');
+  return `
+    <div class="parts-head">
+      <h3>Condition from photos</h3>
+      <p>${counts.replace || 0} to replace, ${counts.repairable || 0} repairable, ${counts.unknown || 0} not visible</p>
+    </div>
+    <ul class="parts">
+      ${d.parts.map((x) => `
+        <li class="g-${esc(x.grade)}">
+          <span class="dot" aria-hidden="true"></span>
+          <span>${esc(label(x.part))}${x.evidence_photo ? ` <span class="ph">photo ${esc(x.evidence_photo)}</span>` : ''}</span>
+          <span class="grade">${esc(GRADE[x.grade] || x.grade)}</span>
+        </li>`).join('')}
+    </ul>
+    ${flags ? `<p class="flags">${flags}</p>` : ''}
+    ${(d.photo_gaps || []).length ? `<p class="flags">Missing angles: ${esc(d.photo_gaps.join('; '))}</p>` : ''}`;
+}
+
+function showResult(r, photoResult = null) {
   const out = $('result');
   const skip = r.triage !== 'full_inspection';
   const none = r.summary.count === 0;
@@ -334,7 +465,8 @@ function showResult(r) {
           <span class="meta"><span class="sev">${esc(sev(c.severity))}</span>, ${esc(c.system)}, ${esc(SOURCE[c.source] || c.source)}</span>
         </li>`).join('')}
     </ul>`}
-    <details class="raw"><summary>Show the API response</summary><pre>${esc(JSON.stringify(r, null, 2))}</pre></details>`;
+    ${photoSection(photoResult)}
+    <details class="raw"><summary>Show the API response</summary><pre>${esc(JSON.stringify(photoResult && photoResult.data ? { codes: r, photos: photoResult.data } : r, null, 2))}</pre></details>`;
   out.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
 }
 </script>

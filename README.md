@@ -11,6 +11,7 @@ Built for UB Hacking as a demo for ACV, which is now part of Copart.
 - The page lets you decode a VIN and OBD-II fault codes, or click one of the demo scans.
 - The API is at `POST https://underscope-eight.vercel.app/api/decode-codes` with body `{ "vin": "...", "codes": ["P0300"] }`. CORS is open, so the Lovable app can call it from the browser.
 - Every push to `main` deploys automatically.
+- Photos added on the page are resized to ~1000px and sent to `POST /api/grade-photos` as `{ vin, photos: [JPEG data URLs] }`. That endpoint is Karthik's. Until it's deployed, the page says photo grading isn't connected. Once it returns the vision shape from CLAUDE.md, the page shows all 25 parts with their grades. See "Vision call" in CLAUDE.md for the contract.
 
 ## How it works
 

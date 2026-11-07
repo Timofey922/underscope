@@ -52,6 +52,12 @@ front_bumper, hood, grille, left_headlight, right_headlight, windshield, left_fr
 }
 ```
 - API key from environment variable `GEMINI_API_KEY`. Never put it in code or the front end.
+- Endpoint (owner: Karthik): `api/grade-photos.ts`, `POST { vin, photos }`. The demo page (`public/index.html`) already calls it:
+  - `photos` is an array of JPEG data URLs (`data:image/jpeg;base64,...`), already resized in the browser to ~1000 px long side, in upload order.
+  - `evidence_photo` in the response is 1-based and matches the numbers shown on the page's thumbnails.
+  - Return the output shape above with status 200; on failure return a 4xx/5xx with `{ "error": "..." }`.
+  - Vercel caps request bodies at ~4.5 MB; the page limits uploads to 30 photos / 4 MB.
+  - Create the Gemini client with `geminiClient()` from `api/_lib/gemini.ts`.
 
 ## Fault codes module (owner: Tim) — built: `api/decode-codes.ts`
 Input: VIN + list of OBD-II trouble codes from a scan tool (e.g. ["P0300", "C1232"]).

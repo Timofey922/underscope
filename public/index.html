@@ -3,101 +3,340 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Underscope API</title>
+<title>Underscope fault code check</title>
+<meta name="description" content="Enter a VIN and OBD-II fault codes to see whether a vehicle is worth a full inspection or should be sold as-is.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-  :root { --bg: #fafaf9; --fg: #1c1917; --muted: #78716c; --card: #fff; --line: #e7e5e4; --accent: #1d4ed8; --ok: #15803d; --bad: #b91c1c; }
-  @media (prefers-color-scheme: dark) {
-    :root { --bg: #1c1917; --fg: #f5f5f4; --muted: #a8a29e; --card: #292524; --line: #44403c; --accent: #60a5fa; --ok: #4ade80; --bad: #f87171; }
+  :root {
+    --bg: #E6EAEC;
+    --panel: #F3F5F6;
+    --ink: #14212C;
+    --steel: #5A6975;
+    --line: #C3CBD1;
+    --amber: #E39B00;
+    --red: #C42B1C;
+    --green: #2F7A4D;
+    --off: #B9C1C7;
+    --focus: #1F5FBF;
+    --sans: "Barlow", system-ui, sans-serif;
+    --cond: "Barlow Semi Condensed", "Barlow", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, monospace;
   }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0F151A; --panel: #161E25; --ink: #E3E8EB; --steel: #8D9BA6; --line: #2A3540;
+      --amber: #FFB020; --red: #FF5A48; --green: #4FC47F; --off: #33404B; --focus: #6EA8FF;
+    }
+  }
+
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, sans-serif; }
-  main { max-width: 760px; margin: 0 auto; padding: 32px 16px 64px; }
-  h1 { margin: 0 0 4px; font-size: 26px; }
-  p.sub { margin: 0 0 24px; color: var(--muted); }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 18px; margin-bottom: 16px; }
-  label { display: block; font-weight: 600; margin: 0 0 4px; }
-  input { width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); font: 14px ui-monospace, monospace; margin-bottom: 12px; }
-  button { padding: 9px 16px; border: 0; border-radius: 6px; background: var(--accent); color: #fff; font-weight: 600; cursor: pointer; }
-  button:disabled { opacity: .6; cursor: wait; }
-  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
-  .chip { background: transparent; color: var(--accent); border: 1px solid var(--line); font-weight: 500; padding: 5px 10px; font-size: 13px; }
-  .verdict { font-size: 18px; font-weight: 700; margin: 0 0 4px; }
-  .skip { color: var(--bad); } .full { color: var(--ok); }
-  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 10px; }
-  th, td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
-  pre { overflow-x: auto; font-size: 12px; background: var(--bg); padding: 10px; border-radius: 6px; margin: 10px 0 0; }
-  code { font-family: ui-monospace, monospace; font-size: 13px; }
-  .muted { color: var(--muted); }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 400 17px/1.55 var(--sans); }
+  main { max-width: 860px; margin: 0 auto; padding: 40px 20px 80px; }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+
+  /* Header */
+  .brand { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 44px; }
+  .brand b { font: 700 22px/1 var(--cond); letter-spacing: .01em; }
+  .brand span { color: var(--steel); font-size: 15px; }
+
+  h1 { font: 600 clamp(30px, 5.2vw, 46px)/1.08 var(--cond); margin: 0 0 12px; max-width: 18ch; }
+  .lede { color: var(--steel); margin: 0 0 36px; max-width: 58ch; }
+
+  /* Form */
+  form { border-top: 3px solid var(--ink); padding-top: 28px; }
+  .field { margin-bottom: 26px; }
+  .field > label, .field > .label { display: block; font: 600 17px/1.3 var(--cond); margin-bottom: 8px; }
+  .hint { color: var(--steel); font-size: 14px; margin-top: 6px; min-height: 1.4em; }
+  .hint.bad { color: var(--red); }
+
+  /* VIN plate: 17 stamped slots behind a monospace input */
+  .vin-wrap { display: inline-block; max-width: 100%; overflow-x: auto; }
+  .vin {
+    --cell: 1.5ch;
+    font: 500 clamp(17px, 4.6vw, 30px)/1 var(--mono);
+    width: calc(17 * var(--cell) + .5ch + 4px);
+    padding: .55em 0 .55em .25ch;
+    letter-spacing: calc(var(--cell) - 1ch);
+    text-transform: uppercase;
+    color: var(--ink);
+    background:
+      repeating-linear-gradient(90deg, transparent 0 calc(var(--cell) - 1px), var(--line) calc(var(--cell) - 1px) var(--cell)),
+      var(--panel);
+    border: 2px solid var(--ink);
+    border-radius: 3px;
+    caret-color: var(--amber);
+  }
+  .vin::placeholder { color: var(--off); }
+
+  /* Codes as tags */
+  .codes { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px; min-height: 52px;
+           background: var(--panel); border: 2px solid var(--ink); border-radius: 3px; cursor: text; }
+  .codes:focus-within { outline: 2px solid var(--focus); outline-offset: 3px; }
+  .codes input { flex: 1 0 120px; border: 0; background: transparent; color: var(--ink); font: 500 17px var(--mono); text-transform: uppercase; padding: 6px 4px; outline: none; }
+  .tag { display: inline-flex; align-items: center; gap: 6px; font: 500 15px/1 var(--mono); padding: 7px 6px 7px 10px; border-radius: 2px; background: var(--ink); color: var(--bg); }
+  .tag.invalid { background: var(--red); color: #fff; }
+  .tag button { border: 0; background: none; color: inherit; font: 600 16px/1 var(--sans); padding: 0 4px; cursor: pointer; opacity: .75; }
+  .tag button:hover { opacity: 1; }
+
+  .actions { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+  .go { font: 600 18px/1 var(--cond); letter-spacing: .02em; padding: 15px 26px; background: var(--ink); color: var(--bg); border: 0; border-radius: 3px; cursor: pointer; }
+  .go:hover { opacity: .88; }
+  .go:disabled { opacity: .55; cursor: progress; }
+  .clear { background: none; border: 0; color: var(--steel); font: 500 15px var(--sans); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; padding: 4px; }
+
+  /* Samples */
+  .samples { margin-top: 44px; }
+  .samples h2 { font: 600 17px/1.3 var(--cond); margin: 0 0 4px; }
+  .samples p { color: var(--steel); font-size: 15px; margin: 0 0 12px; }
+  .samples ul { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+  .samples li button {
+    display: grid; grid-template-columns: 1fr auto; gap: 4px 16px; width: 100%; text-align: left;
+    padding: 11px 4px; background: none; border: 0; border-bottom: 1px solid var(--line); color: var(--ink); cursor: pointer; font: inherit;
+  }
+  .samples li button:hover { background: var(--panel); }
+  .samples .car { font-weight: 500; }
+  .samples .sc { font: 400 14px var(--mono); color: var(--steel); text-align: right; }
+  @media (max-width: 560px) { .samples li button { grid-template-columns: 1fr; } .samples .sc { text-align: left; } }
+
+  /* Result */
+  .result { margin-top: 48px; padding-top: 28px; border-top: 3px solid var(--ink); }
+  .verdict { display: grid; grid-template-columns: auto 1fr; gap: 20px; align-items: start; }
+  .lamp { width: 54px; height: 54px; border-radius: 50%; background: var(--off); margin-top: 4px; position: relative; }
+  .lamp { display: grid; place-items: center; font: 700 30px/1 var(--cond); color: var(--bg); }
+  .lamp.on-red { background: var(--red); box-shadow: 0 0 0 6px color-mix(in srgb, var(--red) 18%, transparent), 0 0 28px color-mix(in srgb, var(--red) 55%, transparent); }
+  .lamp.on-green { background: var(--green); box-shadow: 0 0 0 6px color-mix(in srgb, var(--green) 18%, transparent); }
+  .lamp.on-amber { background: var(--amber); box-shadow: 0 0 0 6px color-mix(in srgb, var(--amber) 20%, transparent), 0 0 28px color-mix(in srgb, var(--amber) 50%, transparent); }
+  .lamp.ignite { animation: ignite .9s ease-out; }
+  @keyframes ignite { 0% { filter: brightness(.3); } 35% { filter: brightness(1.6); } 55% { filter: brightness(.8); } 100% { filter: brightness(1); } }
+  @media (prefers-reduced-motion: reduce) { .lamp.ignite { animation: none; } }
+
+  .verdict h2 { font: 700 clamp(28px, 4.8vw, 40px)/1.05 var(--cond); margin: 0 0 8px; }
+  .verdict .why { margin: 0; max-width: 60ch; }
+  .vehicle { color: var(--steel); margin: 6px 0 0; font-size: 15px; }
+
+  .figures { display: grid; grid-template-columns: repeat(3, auto); justify-content: start; gap: 8px 48px; margin: 30px 0 26px; }
+  .figures dt { color: var(--steel); font-size: 14px; }
+  .figures dd { margin: 0; font: 600 26px/1.15 var(--cond); }
+  @media (max-width: 560px) { .figures { grid-template-columns: 1fr 1fr; gap: 14px 24px; } }
+
+  .codelist { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+  .codelist li { display: grid; grid-template-columns: 74px 1fr auto; gap: 4px 18px; padding: 14px 0 14px 14px; border-bottom: 1px solid var(--line); border-left: 4px solid var(--off); }
+  .codelist li.sev-minor { border-left-color: var(--green); }
+  .codelist li.sev-moderate { border-left-color: var(--amber); }
+  .codelist li.sev-major, .codelist li.sev-critical { border-left-color: var(--red); }
+  .codelist li > *, .samples li button > *, .figures > * { min-width: 0; overflow-wrap: anywhere; }
+  .codelist .code { font: 500 16px/1.4 var(--mono); }
+  .codelist .desc { font-weight: 500; }
+  .codelist .meta { grid-column: 2; color: var(--steel); font-size: 14px; }
+  .codelist .cost { font: 600 18px/1.3 var(--cond); text-align: right; white-space: nowrap; }
+  .codelist .sev { font-weight: 600; color: var(--ink); }
+  @media (max-width: 560px) { .codelist li { grid-template-columns: 64px 1fr; } .codelist .cost { grid-column: 2; text-align: left; } }
+
+  .raw { margin-top: 18px; }
+  .raw summary { color: var(--steel); cursor: pointer; font-size: 15px; }
+  pre { overflow-x: auto; font: 400 13px/1.5 var(--mono); background: var(--panel); border: 1px solid var(--line); padding: 14px; border-radius: 3px; }
+
+  .error h2 { color: var(--red); }
+
+  /* Developer note */
+  .dev { margin-top: 64px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--steel); font-size: 15px; }
+  .dev h2 { font: 600 17px/1.3 var(--cond); color: var(--ink); margin: 0 0 6px; }
+  .dev code { font: 400 14px var(--mono); color: var(--ink); }
 </style>
 </head>
 <body>
 <main>
-  <h1>Underscope API</h1>
-  <p class="sub">Fault code decoder for the UB Hacking demo. Enter a VIN and OBD-II codes, or pick a demo scan.</p>
+  <header class="brand">
+    <b>Underscope</b>
+    <span>UB Hacking demo for ACV</span>
+  </header>
 
-  <div class="card">
-    <div class="chips" id="demos"></div>
-    <label for="vin">VIN</label>
-    <input id="vin" maxlength="17" placeholder="1FTYR2CM1KKA12345">
-    <label for="codes">Codes (comma separated)</label>
-    <input id="codes" placeholder="P0300, C0035">
-    <button id="go">Decode</button>
-  </div>
+  <h1>Is this vehicle worth a full inspection?</h1>
+  <p class="lede">Enter the VIN and the trouble codes from the scan tool. Underscope looks up each code, estimates the repair range, and tells you whether to inspect the vehicle or sell it as-is.</p>
 
-  <div class="card" id="out" hidden></div>
+  <form id="form" novalidate>
+    <div class="field">
+      <label for="vin">VIN</label>
+      <div class="vin-wrap"><input id="vin" class="vin" maxlength="17" autocomplete="off" spellcheck="false" placeholder="1FTYR2CM1KKA12345" aria-describedby="vin-hint"></div>
+      <div class="hint" id="vin-hint">17 characters, found on the dash or the driver's door jamb.</div>
+    </div>
 
-  <div class="card">
-    <strong>Use it from code</strong>
-    <pre>POST /api/decode-codes
-Content-Type: application/json
+    <div class="field">
+      <span class="label" id="codes-label">Trouble codes</span>
+      <div class="codes" id="codes" aria-labelledby="codes-label">
+        <input id="code-input" autocomplete="off" spellcheck="false" placeholder="P0300" aria-labelledby="codes-label" aria-describedby="codes-hint">
+      </div>
+      <div class="hint" id="codes-hint">Press Enter after each code. Leave empty if the scan found none.</div>
+    </div>
 
-{ "vin": "1FTYR2CM1KKA12345", "codes": ["C0035", "P0442", "P1450"] }</pre>
-    <p class="muted" style="margin:10px 0 0">Returns <code>vehicle</code>, <code>codes[]</code>, <code>summary</code>, <code>triage</code> and <code>reason</code>. CORS is open, so the Lovable app can call it directly.</p>
-  </div>
+    <div class="actions">
+      <button class="go" id="go" type="submit">Check vehicle</button>
+      <button class="clear" id="clear" type="button">Clear</button>
+    </div>
+  </form>
+
+  <section class="result" id="result" hidden aria-live="polite"></section>
+
+  <section class="samples">
+    <h2>Sample vehicles</h2>
+    <p>Real VIN formats with common fault patterns. Pick one to fill the form and run it.</p>
+    <ul id="samples"></ul>
+  </section>
+
+  <section class="dev">
+    <h2>Calling the API</h2>
+    <p>Send <code>POST /api/decode-codes</code> with <code>{ "vin": "…", "codes": ["P0300"] }</code>. The response has <code>vehicle</code>, <code>codes</code>, <code>summary</code>, <code>triage</code> and <code>reason</code>. Cross-origin requests are allowed, so the Lovable app can call it directly.</p>
+  </section>
 </main>
+
 <script>
-const DEMOS = [
-  ['Clean Ram 1500', '1C6RR7LT2HS512345', ''],
-  ['F-150 underboost', '1FTEW1EP6JKD12345', 'P0299, P0171'],
-  ['Silverado misfire', '3GCUYDED4KG123456', 'P0300, P0420'],
-  ['Transit + Ford code', '1FTYR2CM1KKA12345', 'C0035, P0442, P1450'],
-  ['Sierra transmission', '1GT12UEY2HF123456', 'P0700, P0730, P0868'],
-  ['Express airbags', '1GCWGAFP4J1123456', 'B0001, B0010, U0151'],
-  ['F-250 many codes', '1FT7W2BT8LEC12345', 'P0087, P2002, P20EE, P2463, P0401, P0562, U0100'],
+const SAMPLES = [
+  ['2017 Ram 1500, no codes', '1C6RR7LT2HS512345', []],
+  ['2018 Ford F-150, turbo underboost and lean', '1FTEW1EP6JKD12345', ['P0299', 'P0171']],
+  ['2019 Chevrolet Silverado, misfire and catalyst', '3GCUYDED4KG123456', ['P0300', 'P0420']],
+  ['2019 Ford Transit, Ford-specific EVAP code', '1FTYR2CM1KKA12345', ['C0035', 'P0442', 'P1450']],
+  ['2017 GMC Sierra 2500HD, transmission failure', '1GT12UEY2HF123456', ['P0700', 'P0730', 'P0868']],
+  ['2018 Chevrolet Express, airbags deployed', '1GCWGAFP4J1123456', ['B0001', 'B0010', 'U0151']],
+  ['2020 Ford F-250 diesel, seven codes', '1FT7W2BT8LEC12345', ['P0087', 'P2002', 'P20EE', 'P2463', 'P0401', 'P0562', 'U0100']],
 ];
+const CODE_RE = /^[PCBU][0-3][0-9A-F]{3}$/;
+const VIN_RE = /^[A-HJ-NPR-Z0-9]{17}$/;
+const SOURCE = { generic_table: 'from the code table', gemini: 'explained by Gemini for this make', unknown: 'meaning unknown for this make', invalid: 'not a valid code' };
+const glyph = (ok) => `<span aria-hidden="true">${ok ? '✓' : '!'}</span>`;
+
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const money = (n) => '$' + Number(n).toLocaleString('en-US');
+let codes = [];
 
-for (const [label, vin, codes] of DEMOS) {
-  const b = document.createElement('button');
-  b.className = 'chip'; b.textContent = label;
-  b.onclick = () => { $('vin').value = vin; $('codes').value = codes; decode(); };
-  $('demos').appendChild(b);
+// ---- Codes field ----
+function renderCodes() {
+  $('codes').querySelectorAll('.tag').forEach((t) => t.remove());
+  codes.forEach((c, i) => {
+    const t = document.createElement('span');
+    t.className = 'tag' + (CODE_RE.test(c) ? '' : ' invalid');
+    t.innerHTML = `${esc(c)}<button type="button" aria-label="Remove ${esc(c)}">×</button>`;
+    t.querySelector('button').onclick = () => { codes.splice(i, 1); renderCodes(); };
+    $('codes').insertBefore(t, $('code-input'));
+  });
+  const bad = codes.filter((c) => !CODE_RE.test(c));
+  const hint = $('codes-hint');
+  hint.classList.toggle('bad', bad.length > 0);
+  hint.textContent = bad.length
+    ? `${bad.join(', ')} doesn't look like an OBD-II code. Codes start with P, C, B or U, followed by 4 characters.`
+    : 'Press Enter after each code. Leave empty if the scan found none.';
 }
+function addCodes(text) {
+  text.toUpperCase().split(/[\s,;]+/).filter(Boolean).forEach((c) => { if (!codes.includes(c)) codes.push(c); });
+  renderCodes();
+}
+$('code-input').addEventListener('keydown', (e) => {
+  const v = e.target.value.trim();
+  if ((e.key === 'Enter' || e.key === ',' || e.key === ' ') && v) { e.preventDefault(); addCodes(v); e.target.value = ''; }
+  else if (e.key === 'Enter') { e.preventDefault(); $('form').requestSubmit(); }
+  else if (e.key === 'Backspace' && !v && codes.length) { codes.pop(); renderCodes(); }
+});
+$('code-input').addEventListener('paste', (e) => { e.preventDefault(); addCodes(e.clipboardData.getData('text')); });
+$('codes').addEventListener('click', (e) => { if (e.target === $('codes')) $('code-input').focus(); });
 
-async function decode() {
+// ---- VIN field ----
+$('vin').addEventListener('input', (e) => {
+  const v = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  e.target.value = v;
+  const hint = $('vin-hint');
+  hint.classList.remove('bad');
+  hint.textContent = v.length === 0 ? "17 characters, found on the dash or the driver's door jamb." : `${v.length} of 17 characters`;
+});
+
+// ---- Samples ----
+SAMPLES.forEach(([label, vin, cs]) => {
+  const li = document.createElement('li');
+  li.innerHTML = `<button type="button"><span class="car">${esc(label)}</span><span class="sc">${cs.length ? esc(cs.join(' ')) : 'no codes'}</span></button>`;
+  li.querySelector('button').onclick = () => {
+    $('vin').value = vin; $('vin').dispatchEvent(new Event('input'));
+    codes = [...cs]; renderCodes();
+    $('form').requestSubmit();
+  };
+  $('samples').appendChild(li);
+});
+
+$('clear').onclick = () => {
+  $('vin').value = ''; $('vin').dispatchEvent(new Event('input'));
+  $('code-input').value = ''; codes = []; renderCodes();
+  $('result').hidden = true; $('vin').focus();
+};
+
+// ---- Submit ----
+$('form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const pending = $('code-input').value.trim();
+  if (pending) { addCodes(pending); $('code-input').value = ''; }
   const vin = $('vin').value.trim();
-  const codes = $('codes').value.split(',').map((c) => c.trim()).filter(Boolean);
-  const out = $('out');
-  $('go').disabled = true; out.hidden = false; out.innerHTML = '<span class="muted">Decoding…</span>';
+  if (!VIN_RE.test(vin)) {
+    const hint = $('vin-hint');
+    hint.classList.add('bad');
+    hint.textContent = /[IOQ]/.test(vin)
+      ? 'VINs never use the letters I, O or Q. Check for a 1 or a 0.'
+      : `This VIN has ${vin.length} characters. A VIN has 17.`;
+    $('vin').focus();
+    return;
+  }
+  const out = $('result');
+  $('go').disabled = true; $('go').textContent = 'Checking…';
   try {
     const res = await fetch('/api/decode-codes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ vin, codes }) });
-    const r = await res.json();
-    if (!res.ok) { out.innerHTML = `<p class="verdict skip">Error ${res.status}</p><p>${esc(r.error)}</p>`; return; }
-    const v = [r.vehicle.year, r.vehicle.make, r.vehicle.model, r.vehicle.engine].filter(Boolean).join(' ') || 'Unknown vehicle';
-    const skip = r.triage !== 'full_inspection';
-    out.innerHTML = `
-      <p class="verdict ${skip ? 'skip' : 'full'}">${skip ? 'Skip inspection, sell as-is' : 'Full inspection'}</p>
-      <p style="margin:0">${esc(r.reason)}</p>
-      <p class="muted" style="margin:6px 0 0">${esc(v)} · ${r.summary.count} code(s) · worst: ${esc(r.summary.worst_severity)} · cost $${r.summary.cost_low.toLocaleString()}–$${r.summary.cost_high.toLocaleString()}</p>
-      ${r.codes.length ? `<table><tr><th>Code</th><th>Description</th><th>System</th><th>Severity</th><th>Cost</th><th>Source</th></tr>
-        ${r.codes.map((c) => `<tr><td><code>${esc(c.code)}</code></td><td>${esc(c.description)}</td><td>${esc(c.system)}</td><td>${esc(c.severity)}</td><td>$${c.cost_low}–$${c.cost_high}</td><td>${esc(c.source)}</td></tr>`).join('')}</table>` : ''}
-      <details style="margin-top:10px"><summary class="muted">Raw JSON</summary><pre>${esc(JSON.stringify(r, null, 2))}</pre></details>`;
-  } catch (e) {
-    out.innerHTML = `<p class="verdict skip">Request failed</p><p>${esc(e.message)}</p>`;
-  } finally { $('go').disabled = false; }
+    const r = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(r.error || `The server answered ${res.status}.`);
+    showResult(r);
+  } catch (err) {
+    out.hidden = false;
+    out.innerHTML = `<div class="verdict error"><div class="lamp on-red">${glyph(false)}</div><div><h2>Couldn't check this vehicle</h2><p class="why">${esc(err.message)} Try again, or pick a sample vehicle below.</p></div></div>`;
+  } finally {
+    $('go').disabled = false; $('go').textContent = 'Check vehicle';
+  }
+});
+
+function showResult(r) {
+  const out = $('result');
+  const skip = r.triage !== 'full_inspection';
+  const none = r.summary.count === 0;
+  const make = r.vehicle.make && (r.vehicle.make.length <= 3 ? r.vehicle.make : r.vehicle.make.replace(/\B\w+/g, (m) => m.toLowerCase()));
+  const car = [r.vehicle.year, make, r.vehicle.model, r.vehicle.engine].filter(Boolean).join(' ');
+  const head = skip ? 'Skip the inspection. Sell it as-is.' : none ? 'No fault codes. Go ahead and inspect.' : 'Worth a full inspection.';
+  const lamp = skip ? 'on-red' : none ? 'on-green' : 'on-amber';
+  const sev = (s) => s === 'none' ? 'None' : s[0].toUpperCase() + s.slice(1);
+
+  out.hidden = false;
+  out.innerHTML = `
+    <div class="verdict">
+      <div class="lamp ${lamp} ignite">${glyph(none)}</div>
+      <div>
+        <h2>${esc(head)}</h2>
+        <p class="why">${esc(r.reason.replace(/^Skip inspection:\s*/, ''))}</p>
+        <p class="vehicle">${car ? esc(car) : 'Vehicle not found in the NHTSA database'}</p>
+      </div>
+    </div>
+    ${none ? '' : `
+    <dl class="figures">
+      <div><dt>Codes</dt><dd>${r.summary.count}</dd></div>
+      <div><dt>Worst severity</dt><dd>${esc(sev(r.summary.worst_severity))}</dd></div>
+      <div><dt>Repair estimate</dt><dd>${money(r.summary.cost_low)} to ${money(r.summary.cost_high)}</dd></div>
+    </dl>
+    <ul class="codelist">
+      ${r.codes.map((c) => `
+        <li class="sev-${esc(c.severity)}">
+          <span class="code">${esc(c.code)}</span>
+          <span class="desc">${c.description === 'unknown' ? 'Meaning unknown' : esc(c.description)}</span>
+          <span class="cost">${c.source === 'invalid' ? '' : `${money(c.cost_low)} to ${money(c.cost_high)}`}</span>
+          <span class="meta"><span class="sev">${esc(sev(c.severity))}</span>, ${esc(c.system)}, ${esc(SOURCE[c.source] || c.source)}</span>
+        </li>`).join('')}
+    </ul>`}
+    <details class="raw"><summary>Show the API response</summary><pre>${esc(JSON.stringify(r, null, 2))}</pre></details>`;
+  out.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
 }
-$('go').onclick = decode;
 </script>
 </body>
 </html>

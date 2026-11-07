@@ -338,11 +338,35 @@ function repairTab(d) {
     </dl>`;
 }
 
+// What the photo grader saw beyond part grades (images branch): vehicle identity, VIN label check,
+// overall severity, summary, every problem found with its photos, and missing parts.
+const SEV_LABEL = { none: 'No damage', light: 'Light damage', moderate: 'Moderate damage', heavy: 'Heavy damage', total_loss_likely: 'Likely total loss' };
+function photoFindings() {
+  const d = state.photo && state.photo.data;
+  if (!d) return '';
+  const v = d.vehicle || {};
+  const seenCar = [v.year, v.make, v.model, v.trim].filter(Boolean).join(' ');
+  const vinNote = !v.vin_visible ? ''
+    : v.vin_check_digit_ok === false ? `The VIN on the label reads ${esc(v.vin_visible)}, but it fails the check digit, so at least one character is misread.`
+    : v.vin_matches_input === false ? `<b>The VIN on the label (${esc(v.vin_visible)}) doesn't match the VIN entered.</b>`
+    : v.vin_matches_input ? 'The VIN on the label matches the VIN entered.' : '';
+  const seen = seenCar || d.overall_severity ? `<p class="seen">${seenCar ? `Looks like a <b>${esc(seenCar)}</b>${v.color ? `, ${esc(v.color)}` : ''}${v.odometer_visible ? `, ${esc(Number(v.odometer_visible).toLocaleString('en-US'))} ${v.odometer_unit === 'km' ? 'km' : 'mi'} on the dash` : ''}. ` : ''}${d.overall_severity ? `<b>${esc(SEV_LABEL[d.overall_severity] || d.overall_severity)}</b>${d.primary_damage_area && !['none', 'unknown'].includes(d.primary_damage_area) ? `, mostly ${esc(label(d.primary_damage_area).toLowerCase())}` : ''}.` : ''} ${vinNote}</p>` : '';
+  const order = { severe: 0, moderate: 1, minor: 2 };
+  const damages = [...(d.damages || [])].sort((a, b) => (order[a.severity] ?? 3) - (order[b.severity] ?? 3));
+  const photosOf = (ps) => ps && ps.length ? `photo${ps.length > 1 ? 's' : ''} ${ps.join(', ')}` : '';
+  const problems = damages.length ? `<p class="sub">${damages.length} problem${damages.length > 1 ? 's' : ''} found</p>
+    <ul class="problems">${damages.map((x) => `
+      <li class="s-${esc(x.severity)}"><span class="what">${esc(String(x.description).replace(/^./, (c) => c.toUpperCase()))}</span><span class="ph">${esc(photosOf(x.photos))}</span>
+        <span class="where">${esc(label(x.part))}, ${esc(label(x.type).toLowerCase())}, ${esc(x.severity)}</span></li>`).join('')}</ul>` : '';
+  const missing = (d.missing_parts || []).length ? `<p class="tab-note" style="margin-top:10px">Missing: <b>${esc(d.missing_parts.map((m) => m.item).join('; '))}</b></p>` : '';
+  return `${seen}${d.summary ? `<p class="summary">${esc(d.summary)}</p>` : ''}${problems}${missing}<p class="sub">All ${state.grades.size} parts</p>`;
+}
+
 function conditionTab() {
   const counts = {}; state.grades.forEach((g) => counts[g.grade] = (counts[g.grade] || 0) + 1);
   const yn = (v) => v === true ? 'Yes' : v === false ? 'No' : 'Unknown';
   const gaps = (state.photoGaps || []).length ? `<p class="tab-note" style="margin-top:12px">Missing angles: ${esc(state.photoGaps.join('; '))}</p>` : '';
-  return `${state.gradeNote ? `<p class="notice">${esc(state.gradeNote)}</p>` : ''}
+  return `${state.gradeNote ? `<p class="notice">${esc(state.gradeNote)}</p>` : ''}${photoFindings()}
     <p class="tab-note">${counts.replace || 0} replace, ${counts.repairable || 0} repairable, ${counts.unknown || 0} not visible. Click a grade or flag to change it.</p>
     <ul class="parts">${[...state.grades].map(([part, g]) => `
       <li class="g-${g.grade}"><button type="button" data-part="${part}" class="${g.edited ? 'edited' : ''}" aria-label="${esc(label(part))}: ${GRADE_LABEL[g.grade]}. Click to change.">

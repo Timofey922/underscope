@@ -1,4 +1,4 @@
-// POST /api/grade-photos  { vin, photos: [JPEG data URLs] } -> part grades, flags, photo gaps.
+// POST /api/grade-photos  { vin, photos: [JPEG data URLs] } -> part grades, every visible problem, flags, photo gaps.
 // All photos of one vehicle go to OpenAI in ONE request (CLAUDE.md "Vision call").
 // A strict JSON schema with every part as a required key guarantees all 25 parts come back.
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -14,40 +14,109 @@ export const PARTS = [
   'wheels_and_tires', 'roof', 'interior', 'engine_bay', 'underbody',
 ] as const;
 const GRADES = ['fine', 'repairable', 'replace', 'unknown'] as const;
+const DAMAGE_TYPES = [
+  'dent', 'scratch', 'scrape', 'crack', 'broken', 'shattered_glass', 'missing', 'bent_or_deformed', 'crushed',
+  'misaligned_panel', 'rust', 'burn', 'water_line', 'deployed_airbag', 'flat_or_damaged_tire', 'fluid_leak', 'other',
+] as const;
+const FLAGS = ['airbags_deployed', 'frame_suspected', 'fluid_leak', 'flood_suspected', 'fire_damage', 'suspension_damage_suspected'] as const;
 
 export const GRADE_CONFIG = {
   maxPhotos: 30,
   imageDetail: 'high' as const,      // damage is small; low detail misses it
-  reasoningEffort: 'low' as const,   // GPT-5 models don't accept temperature 0; schema keeps output stable
+  reasoningEffort: 'low' as const,   // GPT-5 models don't accept temperature 0; low keeps a 13-photo car under Vercel's 60 s
 };
 
+type Tri = boolean | 'unknown';
+export type Damage = { part: string; type: string; severity: 'minor' | 'moderate' | 'severe'; description: string; photos: number[]; confidence: number };
 export type GradeResult = {
-  parts: { part: string; grade: string; confidence: number; evidence_photo: number | null }[];
-  flags: { airbags_deployed: boolean | 'unknown'; frame_suspected: boolean | 'unknown'; fluid_leak: boolean | 'unknown' };
+  photo_views: { photo: number; view: string; cue: string }[];
+  vehicle: {
+    year: number | null; make: string | null; model: string | null; trim: string | null; body_type: string; color: string | null;
+    identified_from: string;
+    vin_visible: string | null;            // read from a photo (door label, dash), if legible
+    vin_check_digit_ok: boolean | null;    // false = misread; never trust a VIN that fails this
+    vin_matches_input: boolean | null;     // photo VIN vs the VIN the seller typed
+    odometer_visible: number | null; odometer_unit: 'mi' | 'km' | 'unknown';
+  };
+  parts: { part: string; grade: string; confidence: number; evidence_photo: number | null; note: string }[];
+  damages: Damage[];
+  missing_parts: { item: string; part: string; photos: number[] }[];
+  flags: Record<(typeof FLAGS)[number], Tri>;
+  primary_damage_area: string;
+  overall_severity: 'none' | 'light' | 'moderate' | 'heavy' | 'total_loss_likely';
   photo_gaps: string[];
+  summary: string;
+  meta: { model: string; seconds: number; attempts: number; photos: number };
 };
 
 const triState = { anyOf: [{ type: 'boolean' }, { type: 'string', enum: ['unknown'] }] };
+const nullable = (type: string) => ({ anyOf: [{ type }, { type: 'null' }] });
+const photoList = { type: 'array', items: { type: 'integer' } };
 const partSchema = {
   type: 'object', additionalProperties: false,
-  required: ['grade', 'confidence', 'evidence_photo'],
+  required: ['grade', 'confidence', 'evidence_photo', 'note'],
   properties: {
     grade: { type: 'string', enum: GRADES },
     confidence: { type: 'number' },
-    evidence_photo: { anyOf: [{ type: 'integer' }, { type: 'null' }] },
+    evidence_photo: nullable('integer'),
+    note: { type: 'string' },
   },
 };
+const VIEWS = ['front', 'front_left', 'left_side', 'rear_left', 'rear', 'rear_right', 'right_side', 'front_right',
+  'interior', 'dashboard', 'engine_bay', 'underbody', 'label_or_document', 'detail', 'other'] as const;
+// Property order matters: the model writes photo_views first, so left/right is settled before any part is graded.
 const SCHEMA = {
   type: 'object', additionalProperties: false,
-  required: ['parts', 'flags', 'photo_gaps'],
+  required: ['photo_views', 'vehicle', 'parts', 'damages', 'missing_parts', 'flags', 'primary_damage_area', 'overall_severity', 'photo_gaps', 'summary'],
   properties: {
-    parts: { type: 'object', additionalProperties: false, required: [...PARTS], properties: Object.fromEntries(PARTS.map((p) => [p, partSchema])) },
-    flags: {
-      type: 'object', additionalProperties: false,
-      required: ['airbags_deployed', 'frame_suspected', 'fluid_leak'],
-      properties: { airbags_deployed: triState, frame_suspected: triState, fluid_leak: triState },
+    photo_views: {
+      type: 'array',
+      items: {
+        type: 'object', additionalProperties: false, required: ['photo', 'cue', 'view'],
+        properties: { photo: { type: 'integer' }, cue: { type: 'string' }, view: { type: 'string', enum: VIEWS } },
+      },
     },
+    vehicle: {
+      type: 'object', additionalProperties: false,
+      required: ['year', 'make', 'model', 'trim', 'body_type', 'color', 'identified_from', 'vin_visible', 'odometer_visible', 'odometer_unit'],
+      properties: {
+        year: nullable('integer'), make: nullable('string'), model: nullable('string'), trim: nullable('string'),
+        body_type: { type: 'string', enum: ['sedan', 'coupe', 'hatchback', 'wagon', 'suv', 'pickup', 'minivan', 'passenger_van', 'cargo_van', 'other', 'unknown'] },
+        color: nullable('string'),
+        identified_from: { type: 'string' },
+        vin_visible: nullable('string'),
+        odometer_visible: nullable('integer'),
+        odometer_unit: { type: 'string', enum: ['mi', 'km', 'unknown'] },
+      },
+    },
+    parts: { type: 'object', additionalProperties: false, required: [...PARTS], properties: Object.fromEntries(PARTS.map((p) => [p, partSchema])) },
+    damages: {
+      type: 'array',
+      items: {
+        type: 'object', additionalProperties: false,
+        required: ['part', 'type', 'severity', 'description', 'photos', 'confidence'],
+        properties: {
+          part: { type: 'string', enum: PARTS },
+          type: { type: 'string', enum: DAMAGE_TYPES },
+          severity: { type: 'string', enum: ['minor', 'moderate', 'severe'] },
+          description: { type: 'string' },
+          photos: photoList,
+          confidence: { type: 'number' },
+        },
+      },
+    },
+    missing_parts: {
+      type: 'array',
+      items: {
+        type: 'object', additionalProperties: false, required: ['item', 'part', 'photos'],
+        properties: { item: { type: 'string' }, part: { type: 'string', enum: PARTS }, photos: photoList },
+      },
+    },
+    flags: { type: 'object', additionalProperties: false, required: [...FLAGS], properties: Object.fromEntries(FLAGS.map((f) => [f, triState])) },
+    primary_damage_area: { type: 'string', enum: ['front', 'rear', 'left_side', 'right_side', 'roof', 'undercarriage', 'interior', 'all_over', 'none', 'unknown'] },
+    overall_severity: { type: 'string', enum: ['none', 'light', 'moderate', 'heavy', 'total_loss_likely'] },
     photo_gaps: { type: 'array', items: { type: 'string' } },
+    summary: { type: 'string' },
   },
 };
 
@@ -56,13 +125,32 @@ Grade every part:
 - fine: no visible damage
 - repairable: damaged but fixable (dent, scratch, repairable crack)
 - replace: broken, missing, or too damaged to repair
-- unknown: not visible or unclear in the photos. Use unknown rather than guess.
+- unknown: not visible or unclear in the photos. Use unknown rather than guess. A part you cannot see is never "fine".
 Left and right always mean the vehicle's own sides as seen from the driver's seat (US: left = driver side), never the viewer's left or right. A photo of the car's left side shows the left doors, and its front corner shows the left headlight.
+FIRST fill photo_views: for every exterior photo, decide which side of the vehicle it shows and write the cue you used. Rules:
+- In a side or 3/4 photo, if the vehicle's FRONT points toward the LEFT edge of the image, you are looking at its LEFT (driver) side. If the front points toward the RIGHT edge, you are looking at its RIGHT (passenger) side. For a rear 3/4 photo use the same rule with the front end's direction (the rear is at the opposite edge).
+- Cross-check with fixed cues: US steering wheel is on the left; a van's sliding side door and its long horizontal track rail are on the right (passenger) side; the fuel door side varies, so don't use it.
+Then grade every left_*/right_* part using those views, never by where the damage sits in the frame.
 Parts: ${PARTS.join(', ')}. "interior" covers seats, dash and airbags; "engine_bay" covers the radiator area and leaks; "underbody" covers frame rails, exhaust and catalytic converter.
-evidence_photo is the 1-based number of the photo that best shows the part, or null when the grade is unknown.
+evidence_photo is the 1-based number of the photo that best shows the part, or null when the grade is unknown. note is a few words on what you saw.
 confidence is 0 to 1.
-flags: true/false only when a photo clearly shows it, otherwise "unknown". frame_suspected is true when damage suggests the frame may be bent (crushed corners, misaligned panel gaps, deployed airbags with heavy front damage).
-photo_gaps: short notes on angles that are missing or unusable (e.g. "no clear underbody photo").`;
+damages: list EVERY distinct visible problem (each dent, scratch, crack, broken or missing item, deployed airbag, damaged tire, leak, rust, burn, water line), with a specific description (where, how big) and the photo numbers that show it.
+missing_parts: specific items that are absent (e.g. "front bumper cover", "left headlight assembly", "driver mirror glass").
+flags: true/false only when a photo clearly shows it, otherwise "unknown". frame_suspected is true when damage suggests the frame may be bent (crushed corners, pushed-in wheels, misaligned panel gaps, deployed airbags with heavy front damage).
+vehicle: year/make/model/trim/color only from badges, body shape or text visible in the photos; say what you used in identified_from. If a door-jamb label shows a build date (MM/YY), the model year is that year or the next one; it beats a guess from body shape. Copy a VIN or odometer reading only if you can actually read every character.
+photo_gaps: short notes on angles that are missing or unusable (e.g. "no clear underbody photo").
+summary: 2-3 plain sentences for a used-car manager: what is damaged, how badly, and what the photos cannot show. Physical damage only; no prices.`;
+
+// North American VIN check digit (position 9). A misread VIN almost always fails it.
+export function vinCheckDigitOk(vin: string | null): boolean | null {
+  if (!vin) return null;
+  const v = vin.toUpperCase().replace(/\s/g, '');
+  if (!/^[A-HJ-NPR-Z0-9]{17}$/.test(v)) return false;
+  const map: Record<string, number> = { A: 1, B: 2, C: 3, D: 4, E: 5, F: 6, G: 7, H: 8, J: 1, K: 2, L: 3, M: 4, N: 5, P: 7, R: 9, S: 2, T: 3, U: 4, V: 5, W: 6, X: 7, Y: 8, Z: 9 };
+  const weights = [8, 7, 6, 5, 4, 3, 2, 10, 0, 9, 8, 7, 6, 5, 4, 3, 2];
+  const sum = [...v].reduce((s, ch, i) => s + (/\d/.test(ch) ? Number(ch) : map[ch]) * weights[i], 0);
+  return v[8] === (sum % 11 === 10 ? 'X' : String(sum % 11));
+}
 
 export async function gradePhotos(vin: string, photos: string[]): Promise<GradeResult> {
   const client = openaiClient();
@@ -70,13 +158,16 @@ export async function gradePhotos(vin: string, photos: string[]): Promise<GradeR
   const { ai, model } = client;
 
   const content = [
-    { type: 'text' as const, text: `VIN ${vin}. ${photos.length} photo(s), numbered in order below. Grade all ${PARTS.length} parts as json.` },
+    { type: 'text' as const, text: `VIN ${vin}. ${photos.length} photo(s), numbered in order below. Grade all ${PARTS.length} parts and list every problem as json.` },
     ...photos.flatMap((url, i) => [
       { type: 'text' as const, text: `Photo ${i + 1}:` },
       { type: 'image_url' as const, image_url: { url, detail: GRADE_CONFIG.imageDetail } },
     ]),
   ];
 
+  const started = Date.now();
+  const okPhoto = (n: unknown) => Number.isInteger(n) && (n as number) >= 1 && (n as number) <= photos.length;
+  const clamp01 = (n: unknown) => Math.max(0, Math.min(1, Number(n) || 0));
   let lastError = '';
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
@@ -90,10 +181,32 @@ export async function gradePhotos(vin: string, photos: string[]): Promise<GradeR
       // Schema guarantees every part; clamp values the schema can't express.
       const parts = PARTS.map((part) => {
         const p = raw.parts[part];
-        const photo = Number.isInteger(p.evidence_photo) && p.evidence_photo >= 1 && p.evidence_photo <= photos.length ? p.evidence_photo : null;
-        return { part, grade: p.grade, confidence: Math.max(0, Math.min(1, Number(p.confidence) || 0)), evidence_photo: p.grade === 'unknown' ? null : photo };
+        const photo = okPhoto(p.evidence_photo) ? p.evidence_photo : null;
+        return { part, grade: p.grade, confidence: clamp01(p.confidence), evidence_photo: p.grade === 'unknown' ? null : photo, note: p.note };
       });
-      return { parts, flags: raw.flags, photo_gaps: raw.photo_gaps };
+      const v = raw.vehicle;
+      const photoVin = v.vin_visible ? String(v.vin_visible).toUpperCase().replace(/\s/g, '') : null;
+      const checkOk = vinCheckDigitOk(photoVin);
+      return {
+        photo_views: raw.photo_views.filter((p: { photo: number }) => okPhoto(p.photo)),
+        vehicle: {
+          year: v.year, make: v.make, model: v.model, trim: v.trim, body_type: v.body_type, color: v.color,
+          identified_from: v.identified_from,
+          vin_visible: photoVin,
+          vin_check_digit_ok: checkOk,
+          vin_matches_input: photoVin && checkOk ? photoVin === vin : null,
+          odometer_visible: v.odometer_visible, odometer_unit: v.odometer_unit,
+        },
+        parts,
+        damages: raw.damages.map((d: Damage) => ({ ...d, photos: d.photos.filter(okPhoto), confidence: clamp01(d.confidence) })),
+        missing_parts: raw.missing_parts.map((m: { item: string; part: string; photos: number[] }) => ({ ...m, photos: m.photos.filter(okPhoto) })),
+        flags: raw.flags,
+        primary_damage_area: raw.primary_damage_area,
+        overall_severity: raw.overall_severity,
+        photo_gaps: raw.photo_gaps,
+        summary: raw.summary,
+        meta: { model, seconds: Math.round((Date.now() - started) / 100) / 10, attempts: attempt + 1, photos: photos.length },
+      };
     } catch (e) {
       lastError = (e as Error).message;
       console.warn(`OpenAI grading attempt ${attempt + 1} failed: ${lastError.slice(0, 200)}`);
@@ -114,7 +227,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).json({
       endpoint: 'POST /api/grade-photos',
       body: { vin: '17-character VIN', photos: ['data:image/jpeg;base64,... (resized to ~1000px, up to 30)'] },
-      returns: 'parts[25] {part, grade, confidence, evidence_photo}, flags, photo_gaps',
+      returns: 'vehicle, parts[25] {part, grade, confidence, evidence_photo, note}, damages[], missing_parts[], flags, primary_damage_area, overall_severity, photo_gaps, summary, meta',
     });
   }
   if (req.method !== 'POST') return res.status(405).json({ error: 'Use POST' });

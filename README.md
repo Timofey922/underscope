@@ -23,7 +23,7 @@ photos + VIN + fault codes
 
 Every result is a range, never a single price. Photos can't show frame, mechanical or flood damage, so the model marks those `unknown` instead of guessing, and unknowns widen the repair band.
 
-**Scope:** full-size pickups and cargo vans only.
+**Scope:** all passenger vehicles (cars, SUVs, pickups, vans).
 
 The front end is a Lovable app. The seller uploads photos and a VIN, then sees a grid of parts with their grades, the two net bands, and the recommendation. A reviewer can change any grade and the numbers recompute live.
 

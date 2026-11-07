@@ -3,7 +3,7 @@
 // unlisted codes are explained by Gemini (which must say "unknown" rather than guess).
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
-import { geminiClient } from './_lib/gemini.ts';
+import { geminiClient } from './_lib/gemini.js';
 
 // ---- Config: every threshold and fallback lives here ----
 export const CONFIG = {

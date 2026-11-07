@@ -13,7 +13,7 @@ The demo is the first thin slice of a larger plan in two docs by Artem Denisenko
 Read them only when a task needs the bigger picture; this file is the source of truth for the demo. The full product is a channel-routing engine (ACV wholesale vs Copart lanes vs parts vs direct buyer); the demo is its two-channel version. Ideas the demo keeps: ranges and a probability of winning, never a single price; a close call names the one check that would change it; things photos can't show become `unknown` and widen the band; misses are weighted by dollars. Everything else in the docs is post-hackathon. The "Do NOT build" list below wins over the docs.
 
 ## Scope
-- Vehicles: full-size pickups and cargo vans only.
+- Vehicles: all passenger vehicles (cars, SUVs, pickups, vans).
 - 20 test vehicles in `test_vehicles/<id>/` (photos only, used for testing, never training).
 
 ## Stack

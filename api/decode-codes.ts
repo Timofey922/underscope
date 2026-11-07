@@ -3,7 +3,7 @@
 // unlisted codes are explained by Gemini (which must say "unknown" rather than guess).
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
-import { GoogleGenAI } from '@google/genai';
+import { geminiClient } from './_lib/gemini.ts';
 
 // ---- Config: every threshold and fallback lives here ----
 export const CONFIG = {
@@ -73,10 +73,9 @@ function unknownCode(code: string): DecodedCode {
 }
 
 async function askGemini(codes: string[], vehicle: Vehicle): Promise<DecodedCode[]> {
-  const apiKey = process.env.GEMINI_API_KEY, model = process.env.GEMINI_MODEL;
-  if (!apiKey || !model || codes.length === 0) return codes.map(unknownCode);
-
-  const ai = new GoogleGenAI({ apiKey });
+  const client = geminiClient();
+  if (!client || codes.length === 0) return codes.map(unknownCode);
+  const { ai, model } = client;
   const car = [vehicle.year, vehicle.make, vehicle.model, vehicle.engine].filter(Boolean).join(' ') || 'unknown vehicle';
   const system = [
     'You explain OBD-II diagnostic trouble codes for a specific vehicle. Reply with JSON only, no prose.',

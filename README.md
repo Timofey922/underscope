@@ -37,7 +37,7 @@ The front end is a Lovable app. The seller uploads photos and a VIN, then sees a
 | `data/` | `dtc_codes.csv` (60 generic OBD-II codes), `test_scans.json` (10 demo scans) |
 | `test_vehicles/` | 20 test vehicles (photos only, gitignored) |
 
-**Stack:** Lovable (React + TypeScript) front end on Vercel, Vercel functions in `api/`, Google Gemini (`@google/genai`), Supabase (Postgres).
+**Stack:** Lovable (React + TypeScript) front end on Vercel, Vercel functions in `api/`, Google Gemini via Vertex AI (`@google/genai`), Supabase (Postgres).
 
 ## Setup
 

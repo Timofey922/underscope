@@ -19,9 +19,9 @@ Read them only when a task needs the bigger picture; this file is the source of 
 ## Stack
 - Front end: Lovable app (React + TypeScript), hosted on Vercel.
 - Back end: Vercel serverless functions in `api/` (TypeScript). All AI calls happen here, never in the browser.
-- AI: Google Gemini API via `@google/genai`. Model name from env var `GEMINI_MODEL`.
+- AI: Google Gemini via `@google/genai`, called through Vertex AI (`GEMINI_USE_VERTEX=true`, billed to Google Cloud project `project-45b188c0-b276-4e00-a94`). Model name from env var `GEMINI_MODEL` (currently `gemini-3.8-flash`). Create clients only with `geminiClient()` from `api/_lib/gemini.ts`. `GEMINI_API_KEY` is an API key bound to service account `underscope-vertex` (Vertex AI User role); plain API keys are rejected by Vertex.
 - Database: Supabase (Postgres), project `zkewmumlgbofqonxpwin`. Tables are small and demo-only; row level security on. Migrations in `supabase/migrations/`.
-- Secrets only in environment variables (`.env` locally, Vercel project settings in production): `GEMINI_API_KEY`, `GEMINI_MODEL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (server only), `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` (front end). Never hardcode or commit keys.
+- Secrets only in environment variables (`.env` locally, Vercel project settings in production): `GEMINI_API_KEY`, `GEMINI_MODEL`, `GEMINI_USE_VERTEX`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (server only), `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` (front end). Never hardcode or commit keys.
 
 ## Repo layout
 - `api/` — Vercel functions (`decode-codes.ts` = fault codes module)

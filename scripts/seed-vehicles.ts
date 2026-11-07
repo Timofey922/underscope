@@ -8,7 +8,7 @@ const url = process.env.SUPABASE_URL, key = process.env.SUPABASE_SERVICE_ROLE_KE
 if (!url || !key) throw new Error('Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env');
 
 const TITLES = ['clean', 'salvage', 'rebuilt', 'flood', 'non_repairable', 'lemon'];
-const SOURCES = ['title_document', 'dealer_listing', 'nmvtis_report'];
+const SOURCES = ['title_document', 'dealer_listing', 'online_listing', 'nmvtis_report'];
 const VIN_RE = /^[A-HJ-NPR-Z0-9]{17}$/;
 
 const rows = JSON.parse(readFileSync('data/vehicles.local.json', 'utf8')).map((v: any, i: number) => {

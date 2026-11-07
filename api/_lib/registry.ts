@@ -5,7 +5,7 @@ import { createClient } from '@supabase/supabase-js';
 export type RegistryTitle = {
   title_status: 'clean' | 'salvage' | 'rebuilt' | 'flood' | 'non_repairable' | 'lemon';
   title_state: string | null;
-  source: 'title_document' | 'dealer_listing' | 'nmvtis_report';
+  source: 'title_document' | 'dealer_listing' | 'online_listing' | 'nmvtis_report';
   clean_wholesale: number | null;
   salvage_comps: number[] | null;
   values_note: string | null;

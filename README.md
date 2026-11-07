@@ -6,10 +6,10 @@ Built for UB Hacking as a demo for ACV, which is now part of Copart.
 
 ## Live demo
 
-**https://underscope-troshkintim-5657s-projects.vercel.app**
+**https://underscope-eight.vercel.app**
 
 - The page lets you decode a VIN and OBD-II fault codes, or click one of the demo scans.
-- The API is at `POST https://underscope-troshkintim-5657s-projects.vercel.app/api/decode-codes` with body `{ "vin": "...", "codes": ["P0300"] }`. CORS is open, so the Lovable app can call it from the browser.
+- The API is at `POST https://underscope-eight.vercel.app/api/decode-codes` with body `{ "vin": "...", "codes": ["P0300"] }`. CORS is open, so the Lovable app can call it from the browser.
 - Every push to `main` deploys automatically.
 
 ## How it works

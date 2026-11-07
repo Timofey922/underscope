@@ -6,7 +6,8 @@
     "seed:codes": "tsx scripts/seed-dtc-codes.ts",
     "seed:demo": "tsx scripts/seed-demo-scans.ts",
     "test:codes": "tsx scripts/test-decode-codes.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "seed:vehicles": "tsx scripts/seed-vehicles.ts"
   },
   "dependencies": {
     "@google/genai": "^3.0.0",

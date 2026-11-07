@@ -80,6 +80,7 @@ Steps:
 ```
 6. Triage rule: if many codes or any critical ones (airbag deployed, transmission, major engine), set "triage": "skip_inspection_sell_as_is", because a full inspection isn't worth the time and money. Thresholds live in one config object (`CONFIG` at the top of `api/decode-codes.ts`).
 7. Code costs are added to the repair band; critical codes also widen the band like an unknown flag.
+9. Demo registry (the VIN → title bridge): Supabase table `vehicles` holds real VINs whose title a teammate verified by hand (`source`: `title_document`, `dealer_listing`, `nmvtis_report`). RLS on, no policies, so only the server reads it. `GET /api/vehicle?vin=` returns `registered`, `title_status`, `title_state`, `source` (never odometer or notes); the page calls it to fill in the title. In `decode-codes`, a registry record wins over the seller's choice and the response says so in `title_source`. Load records from `data/vehicles.local.json` (gitignored; format in `data/vehicles.example.json`) with `npm run seed:vehicles`. Never commit real VINs. Label demo vehicles as verified or sample; never present a made-up VIN as a real car's history.
 8. Title status: entered by the seller on the page (no free API returns title brands by VIN; paid NMVTIS lookups are out of scope). Optional `title_status` in the request: `clean`, `salvage`, `rebuilt`, `flood`, `non_repairable`, `lemon`, `unknown` (default). It is echoed in the response; `flood` and `non_repairable` set triage to `skip_inspection_sell_as_is` (`CONFIG.triage.skipTitles`).
 
 ## Repair band

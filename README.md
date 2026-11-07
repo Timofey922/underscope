@@ -40,7 +40,7 @@ The front end is a Lovable app. The seller uploads photos and a VIN, then sees a
 
 | Folder | What's in it |
 |---|---|
-| `api/` | Vercel serverless functions (TypeScript). `decode-codes.ts`: POST `{ vin, codes, title_status? }` → decoded fault codes + triage. `grade-photos.ts`: POST `{ vin, photos }` → 25 part grades, flags, photo gaps |
+| `api/` | Vercel serverless functions (TypeScript). `vehicle.ts`: GET `?vin=` → verified title from the demo registry, if the VIN is in it. `decode-codes.ts`: POST `{ vin, codes, title_status? }` → decoded fault codes + triage. `grade-photos.ts`: POST `{ vin, photos }` → 25 part grades, flags, photo gaps |
 | `scripts/` | Seed and test scripts |
 | `supabase/migrations/` | Database schema (`dtc_codes`, `scans`) with row level security |
 | `data/` | `dtc_codes.csv` (60 generic OBD-II codes), `test_scans.json` (10 demo scans) |
@@ -57,6 +57,7 @@ npm install
 copy .env.example .env             # then fill in the values
 npm run seed:codes                 # load data/dtc_codes.csv into Supabase
 npm run seed:demo                  # decode the 10 demo scans and save them (is_demo = true)
+npm run seed:vehicles              # load real, verified VINs from data/vehicles.local.json (gitignored)
 npm run test:codes                 # run the 10 scans and print a summary table
 ```
 

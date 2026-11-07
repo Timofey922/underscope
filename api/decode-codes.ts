@@ -5,6 +5,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 import { geminiClient } from './_lib/gemini.js';
+import { lookupRegistry, type RegistryTitle } from './_lib/registry.js';
 
 // ---- Config: every threshold and fallback lives here ----
 export const CONFIG = {
@@ -38,6 +39,8 @@ export type Vehicle = { year: string | null; make: string | null; model: string 
 export type DecodeResult = {
   vehicle: Vehicle;
   title_status: TitleStatus;
+  // 'registry' = verified record in the demo registry (wins over the seller's choice); 'seller' = picked on the page.
+  title_source: { from: 'registry'; source: RegistryTitle['source']; title_state: string | null } | { from: 'seller' };
   codes: DecodedCode[];
   summary: { count: number; worst_severity: string; cost_low: number; cost_high: number };
   triage: 'full_inspection' | 'skip_inspection_sell_as_is';
@@ -139,7 +142,10 @@ export async function decodeScan(vin: string, rawCodes: string[], title: TitleSt
   const valid = codes.filter((c) => CODE_RE.test(c));
   const invalid = codes.filter((c) => !CODE_RE.test(c));
 
-  const [vehicle, table] = await Promise.all([decodeVin(vin), valid.length ? lookupTable(valid) : new Map()]);
+  const [vehicle, table, registered] = await Promise.all([
+    decodeVin(vin), valid.length ? lookupTable(valid) : new Map(), lookupRegistry(vin),
+  ]);
+  if (registered) title = registered.title_status;
   // Not in the table (includes every manufacturer-specific code, 2nd char "1") -> Gemini.
   const missing = valid.filter((c) => !table.has(c));
   const fromGemini = new Map((await askGemini(missing, vehicle)).map((d) => [d.code, d]));
@@ -151,6 +157,7 @@ export async function decodeScan(vin: string, rawCodes: string[], title: TitleSt
   return {
     vehicle,
     title_status: title,
+    title_source: registered ? { from: 'registry', source: registered.source, title_state: registered.title_state } : { from: 'seller' },
     codes: [
       ...decoded,
       ...invalid.map((code) => ({ code, description: 'invalid code format', system: 'unknown', severity: 'unknown', cost_low: 0, cost_high: 0, source: 'invalid' as const })),

@@ -4,3 +4,5 @@ venv/
 test_vehicles/
 node_modules/
 .vercel/
+# Real VINs for the demo registry: never commit
+data/*.local.json

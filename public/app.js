@@ -5,7 +5,7 @@ const GRADE_ORDER = ['fine', 'repairable', 'replace', 'unknown'];
 const GRADE_LABEL = { fine: 'Fine', repairable: 'Repairable', replace: 'Replace', unknown: 'Not visible' };
 const TITLE_LABEL = { clean: 'Clean', salvage: 'Salvage', rebuilt: 'Rebuilt', flood: 'Flood', non_repairable: 'Non-repairable', lemon: 'Lemon buyback', unknown: 'Title not confirmed' };
 const SOURCE_LABEL = { title_document: 'title document', dealer_listing: 'dealer listing', online_listing: 'online listing', nmvtis_report: 'NMVTIS report' };
-const CODE_SOURCE = { generic_table: 'code table', gemini: 'explained by Gemini for this make', unknown: 'meaning unknown for this make', invalid: 'not a valid code' };
+const CODE_SOURCE = { generic_table: 'code table', openai: 'explained by OpenAI for this make', unknown: 'meaning unknown for this make', invalid: 'not a valid code' };
 const FLAG_LABEL = { airbags_deployed: 'Airbags deployed', frame_suspected: 'Frame damage', fluid_leak: 'Fluid leak' };
 const ASSUME = [
   ['labor_rate', 'Labor ($/hr)', 95], ['daily_cost', 'Holding ($/day)', 20], ['fix_days', 'Days to fix + resell', 30], ['as_is_days', 'Days to sell as-is', 7],
@@ -304,9 +304,32 @@ async function recompute(first = false) {
     values: readValues(),
     assumptions: readAssumptions(),
   };
-  const d = await post('/api/decide', body).then((r) => r.json());
+  // The engine (engine/, via /api/route) decides where to send the car: ACV or Copart.
+  const routeBody = { vin: state.vin, vehicle: state.codes.vehicle, title_status: body.title_status,
+    grades: body.grades, flags: body.flags, codes: body.codes, values: body.values };
+  const [d, rt] = await Promise.all([
+    post('/api/decide', body).then((r) => r.json()),
+    post('/api/route', routeBody).then(async (r) => (r.ok ? r.json() : { error: (await r.json().catch(() => ({}))).error || `engine answered ${r.status}` }))
+      .catch((e) => ({ error: e.message })),
+  ]);
   if (ticket !== pending) return;
+  state.route = rt;
   render(d, first);
+}
+
+const DEST_CLASS = { ACV: 'ok', Copart: 'bad', 'Parts buyer': 'warn' };
+function routeBlock() {
+  const r = state.route;
+  if (!r) return '';
+  if (r.error) return `<div class="sec"><h3>Where to send it</h3><p class="notice">The routing engine isn't available: ${esc(r.error)}</p></div>`;
+  const rows = r.options.map((o, i) => `<tr${i === 0 ? ' class="total"' : ''}><td>${esc(o.label[0].toUpperCase() + o.label.slice(1))}</td><td><span class="badge ${DEST_CLASS[o.destination] || ''}">${esc(o.destination)}</span></td><td class="amt">${money(o.p10)} to ${money(o.p90)}</td><td class="amt">${money(o.expected)}</td></tr>`).join('');
+  return `<div class="sec route">
+    <h3>Where to send it: <span class="dest dest-${esc(r.destination.split(' ')[0].toLowerCase())}">${esc(r.destination)}</span></h3>
+    <p class="tab-note">${esc(r.answer || '')} The engine ranks four exits by net proceeds over 1,000 simulated outcomes.${r.needs_human_review ? ' <b>A human should review this one.</b>' : ''}</p>
+    <table class="lines"><tbody><tr><td><b>Exit</b></td><td><b>Goes to</b></td><td class="amt"><b>Middle 80%</b></td><td class="amt"><b>Expected net</b></td></tr>${rows}</tbody></table>
+    ${r.flip_conditions && r.flip_conditions.length ? `<p class="tab-note" style="margin-top:12px"><b>What would flip it:</b> ${esc(r.flip_conditions.join(' '))}</p>` : ''}
+    <details style="margin-top:8px"><summary style="cursor:pointer;color:var(--steel);font-size:13px">How the engine read your inputs</summary><ul class="tab-note" style="margin:8px 0 0">${r.notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul></details>
+  </div>`;
 }
 let debounce;
 const recomputeSoon = () => { clearTimeout(debounce); debounce = setTimeout(() => recompute(false), 250); };
@@ -494,7 +517,7 @@ function render(d, first) {
     <div class="vehbar"><h2>${esc(vehicleName())}</h2><span class="vin-code">${esc(state.vin)}</span>${engine}${titleBadge()}<span class="spacer"></span>
       <button class="btn btn-ghost btn-sm" type="button" data-copy>Copy link</button>
       <button class="btn btn-ghost btn-sm" type="button" data-download>Download JSON</button></div>
-    ${recBlock(d, first)}${rangesBlock(d)}
+    ${recBlock(d, first)}${rangesBlock(d)}${routeBlock()}
     <div class="sec"><h3>Where the numbers come from</h3>${repairTab(d)}</div>
     <div class="sec"><h3>Condition</h3>${conditionTab()}</div>
     <div class="sec"><h3>Fault codes</h3>${codesTab()}</div>

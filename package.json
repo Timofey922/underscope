@@ -13,7 +13,6 @@
     "test:decision": "tsx scripts/test-decision.ts"
   },
   "dependencies": {
-    "@google/genai": "^3.0.0",
     "@supabase/supabase-js": "^2.119.0",
     "openai": "^7.53.0"
   },

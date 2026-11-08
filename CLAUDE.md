@@ -19,10 +19,13 @@ Read them only when a task needs the bigger picture; this file is the source of 
 ## Stack
 - Front end: Lovable app (React + TypeScript), hosted on Vercel.
 - Back end: Vercel serverless functions in `api/` (TypeScript). All AI calls happen here, never in the browser.
-- AI for photos: OpenAI via `openai` (Karthik's credit). `api/grade-photos.ts`, model from `OPENAI_MODEL` (currently `gpt-5.5`), client from `openaiClient()` in `api/_lib/openai.ts`.
-- AI for fault codes: Google Gemini via `@google/genai`, called through Vertex AI (`GEMINI_USE_VERTEX=true`, billed to Google Cloud project `project-45b188c0-b276-4e00-a94`). Model name from env var `GEMINI_MODEL` (currently `gemini-3.8-flash`). Create clients only with `geminiClient()` from `api/_lib/gemini.ts`. `GEMINI_API_KEY` is an API key bound to service account `underscope-vertex` (Vertex AI User role); plain API keys are rejected by Vertex.
+- AI: OpenAI only, called at request time (team decision: no model training; not feasible in the hackathon window). Package `openai`, key `OPENAI_API_KEY` (Karthik's credit).
+  - Photo grading `api/grade-photos.ts`: `OPENAI_MODEL` (currently `gpt-5.5`), client from `openaiClient()` in `api/_lib/openai.ts`.
+  - Photo classification `api/classify-photos.ts`: `OPENAI_CLASSIFY_MODEL` (default `gpt-4o-mini`).
+  - Fault-code explanations `api/decode-codes.ts`: `OPENAI_CODES_MODEL` (defaults to `OPENAI_MODEL`); strict JSON schema, "unknown" allowed. About 9 s with gpt-5.5; set `OPENAI_CODES_MODEL=gpt-4o-mini` if speed matters more.
+  - Gemini/Vertex was removed. The Google Cloud project (`project-45b188c0-b276-4e00-a94`, service account `underscope-vertex`) is no longer used by the app.
 - Database: Supabase (Postgres), project `zkewmumlgbofqonxpwin`. Tables are small and demo-only; row level security on. Migrations in `supabase/migrations/`.
-- Secrets only in environment variables (`.env` locally, Vercel project settings in production): `GEMINI_API_KEY`, `GEMINI_MODEL`, `GEMINI_USE_VERTEX`, `OPENAI_API_KEY`, `OPENAI_MODEL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (server only), `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` (front end). Never hardcode or commit keys.
+- Secrets only in environment variables (`.env` locally, Vercel project settings in production): `OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_CLASSIFY_MODEL`, `OPENAI_CODES_MODEL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (server only), `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` (front end). Never hardcode or commit keys.
 
 ## Repo layout
 - `api/` — Vercel functions (`decode-codes.ts` = fault codes module)
@@ -30,6 +33,9 @@ Read them only when a task needs the bigger picture; this file is the source of 
 - `supabase/migrations/` — SQL migrations
 - `data/` — `dtc_codes.csv` (seeds the `dtc_codes` table), `test_scans.json` (10 demo scans)
 - `test_vehicles/` — test photos, gitignored
+- `engine/` — Artem's Python engine (merged from denisenkoartem/underscop with its history): damage detector, evaluation harness, calibration, review sheets, JSON Schema contracts (`engine/docs/contracts`). It has its own `CLAUDE.md` and `README.md`; read those when working inside `engine/`. Setup: `cd engine && python -m venv .venv && .venv/Scripts/pip install -e ".[dev]"` (Windows) then `.venv/Scripts/python -m pytest -q`. Its vision detector uses OpenAI (`--detector openai`, `OPENAI_API_KEY` from the nearest `.env`); `underscope check VIN --photos DIR` runs a real car, `underscope learn` refits confidence calibration from checker-confirmed reviews.
+  - Routing (ACV vs Copart): `POST /api/route` (`api/route.py`, Vercel Python function; deps in root `requirements.txt`; `vercel.json` ships `engine/src` and `engine/config`) maps the page's inputs through `engine/src/underscope/bridge.py` and returns the engine's destination and four exits. The page shows it as "Where to send it".
+  - Known gap: `/api/decide` (fix vs sell as-is) and the engine use different repair-cost assumptions (`data/repair_costs.csv` vs `engine/config/assumptions.yaml`), so they can disagree on the same car.
 
 ## Part list (25) — every part must appear in model output
 front_bumper, hood, grille, left_headlight, right_headlight, windshield, left_front_fender, right_front_fender, left_front_door, right_front_door, left_rear_door, right_rear_door, left_mirror, right_mirror, left_rear_quarter, right_rear_quarter, tailgate_or_rear_doors, rear_bumper, left_taillight, right_taillight, wheels_and_tires, roof, interior (seats, dash, airbags), engine_bay (radiator area, leaks), underbody (frame rail, exhaust, catalytic converter)
@@ -60,14 +66,15 @@ front_bumper, hood, grille, left_headlight, right_headlight, windshield, left_fr
   - Return the output shape above with status 200; on failure return a 4xx/5xx with `{ "error": "..." }`.
   - Vercel caps request bodies at ~4.5 MB; the page limits uploads to 30 photos / 4 MB.
   - Create the OpenAI client with `openaiClient()` from `api/_lib/openai.ts`. Tuning knobs (image detail, reasoning effort, max photos) are in `GRADE_CONFIG`.
+  - Two stages (Karthik): `POST /api/classify-photos` uses a cheap model (`OPENAI_CLASSIFY_MODEL`, default `gpt-4o-mini`, ~3 s) to label each photo's view (front_right, left_side, ...) and box close-up regions; the page cuts full-resolution crops and sends `views` + `crops` to `/api/grade-photos`. Side rule the models use: if the vehicle's nose points to the right edge of the picture, you're looking at its right side. Grading took ~30 s for one photo in testing; watch the 60 s Vercel limit on large photo sets.
 
 ## Fault codes module (owner: Tim) — built: `api/decode-codes.ts`
 Input: VIN + list of OBD-II trouble codes from a scan tool (e.g. ["P0300", "C1232"]).
 Steps:
 1. Validate format: letter + 4 characters. Letter = system: P powertrain, C chassis, B body, U network. Second character 0 = generic (same meaning for all makes), 1 = manufacturer-specific (meaning depends on make from VIN).
 2. Generic codes: look up the description in the Supabase table `dtc_codes` (code, description, system, severity, cost_low, cost_high), seeded from `data/dtc_codes.csv`.
-3. Manufacturer-specific or not found: ask Gemini to explain it given the make/model from the NHTSA vPIC VIN decode; it must answer "unknown" if unsure, never guess.
-4. Map each code to: system (engine, transmission, brakes/ABS, airbag/SRS, electrical, emissions, body), severity (minor, moderate, major, critical) and a repair cost band low/high. Table codes use the costs in `dtc_codes`; Gemini-explained codes use a cost band per severity from the config object.
+3. Manufacturer-specific or not found: ask OpenAI to explain it given the make/model from the NHTSA vPIC VIN decode; it must answer "unknown" if unsure, never guess.
+4. Map each code to: system (engine, transmission, brakes/ABS, airbag/SRS, electrical, emissions, body), severity (minor, moderate, major, critical) and a repair cost band low/high. Table codes use the costs in `dtc_codes`; OpenAI-explained codes use a cost band per severity from the config object.
 5. Output per vehicle (plus `vehicle` from vPIC and a `reason` for the triage):
 ```json
 {

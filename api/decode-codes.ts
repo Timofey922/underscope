@@ -51,7 +51,7 @@ export type DecodeResult = {
 
 // ---- Steps ----
 
-async function decodeVin(vin: string): Promise<Vehicle> {
+export async function decodeVin(vin: string): Promise<Vehicle> {
   const empty: Vehicle = { year: null, make: null, model: null, engine: null };
   try {
     const url = `https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues/${vin}?format=json`;

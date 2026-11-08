@@ -4,7 +4,7 @@
 // Stage 1 of photo grading. A cheap model (OPENAI_CLASSIFY_MODEL, default gpt-4o-mini) answers only simple
 // questions about the image ("are the headlights on the left or right of the picture?", "which grid cells hold the
 // dent?"). Turning that into the vehicle's left/right is done in code, because small models get it wrong when asked
-// directly. The page draws the grid (see drawGrid in public/index.html), cuts the boxes out of the full-resolution
+// directly. The page draws the grid (see drawGrid in public/app.js), cuts the boxes out of the full-resolution
 // photos and sends photos + views + crops to /api/grade-photos (stage 2).
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import OpenAI from 'openai';

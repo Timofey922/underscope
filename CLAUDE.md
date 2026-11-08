@@ -126,6 +126,7 @@ Decision: `npm run test:decision` runs every vehicle in `public/demo_vehicles.js
 
 ## Do NOT build
 Fine-tuning, dataset downloads, scraping, logins, payments, extra database tables beyond what a step needs, VIN enrichment beyond the free NHTSA vPIC call, any Copart/ACV integration.
+Exception: market fit (`api/market-fit.ts`, ACV vs Copart scorecard in `docs/channel-scorecard.md`) may run one Firecrawl search of public listings (`FIRECRAWL_API_KEY`); never ACV, Copart or other auction sites.
 
 ## Known limitation
 The vision model is weak on dents/scratches, strong on broken glass, missing bumpers, flat tires. Pick demo vehicles where the decision depends on obvious damage.

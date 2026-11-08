@@ -78,6 +78,9 @@ const readValues = () => ({ clean_wholesale: Number(String($('clean').value).rep
 const TITLE_HINT = 'Non-repairable can\'t be fixed and resold. Flood and salvage lower the value after repair.';
 const getTitle = () => (document.querySelector('input[name=title]:checked') || {}).value || 'unknown';
 const setTitle = (v) => { const r = document.querySelector(`input[name=title][value="${v}"]`); if (r) r.checked = true; };
+const getDrivable = () => (document.querySelector('input[name=drivable]:checked') || {}).value || 'unknown';
+const setDrivable = (v) => { const r = document.querySelector(`input[name=drivable][value="${v}"]`); if (r) r.checked = true; };
+const getState = () => $('state').value || null;
 $('title-hint').textContent = TITLE_HINT;
 
 // ---------- Photos ----------
@@ -235,7 +238,7 @@ const samplesReady = fetch('/demo_vehicles.json').then((r) => r.json()).then(({ 
 
 $('clear').onclick = () => {
   $('vin').value = ''; $('vin').dispatchEvent(new Event('input'));
-  codes.set([]); comps.set([]); $('clean').value = ''; photos = []; renderPhotos(); setTitle('unknown');
+  codes.set([]); comps.set([]); $('clean').value = ''; photos = []; renderPhotos(); setTitle('unknown'); setDrivable('unknown'); $('state').value = '';
   preset = null; state = null; $('result').hidden = true; $('empty').hidden = false;
   history.replaceState(null, '', '/'); $('vin').focus();
 };
@@ -263,23 +266,28 @@ $('form').addEventListener('submit', async (e) => {
   if (photoBytes() > MAX_BYTES) { $('drop').scrollIntoView({ block: 'center' }); return; }
   $('go').disabled = true; $('go').textContent = photos.length ? 'Sorting photos…' : 'Running…';
   try {
-    const [cRes, flow] = await Promise.all([
+    const [cRes, flow, market] = await Promise.all([
       post('/api/decode-codes', { vin, codes: codes.get(), title_status: getTitle() }),
       photos.length ? gradePhotoFlow(vin, (t) => { $('go').textContent = t; }).catch((x) => x) : null,
+      // Market fit for the ACV vs Copart scorecard: public listings of this model in the seller's state.
+      post('/api/market-fit', { vin, state: getState() }).then((r) => r.json()).catch((e) => ({ ran: false, error: e.message })),
     ]);
     const c = await cRes.json().catch(() => ({}));
     if (!cRes.ok) throw new Error(c.error || `The server answered ${cRes.status}.`);
     const photo = await readPhotoResult(flow === null || flow instanceof Error ? flow : flow.res);
     if (photo && flow && !(flow instanceof Error)) Object.assign(photo, { stage1: flow.stage1, crops: flow.crops });
     const grades = new Map();
-    if (photo && photo.data) photo.data.parts.forEach((p) => grades.set(p.part, { grade: p.grade, photo: p.evidence_photo, edited: false }));
+    if (photo && photo.data) photo.data.parts.forEach((p) => grades.set(p.part, { grade: p.grade, severity: p.severity || null, photo: p.evidence_photo, edited: false }));
     PARTS.forEach((p) => { if (!grades.has(p)) grades.set(p, { grade: preset ? (preset.grades[p] || 'fine') : 'unknown', photo: null, edited: false }); });
     const flags = photo && photo.data ? { ...photo.data.flags } : preset ? { ...preset.flags } : { airbags_deployed: 'unknown', frame_suspected: 'unknown', fluid_leak: 'unknown' };
     const gradeNote = photo && photo.data ? null
       : photo && photo.error ? `${photo.error} Set grades by hand below.`
       : preset ? 'Sample grades, standing in for graded photos.'
       : 'No photos, so every part starts as not visible. Click a grade to set it.';
-    state = { vin, codes: c, photo, grades, flags, gradeNote, photoGaps: photo && photo.data ? photo.data.photo_gaps : [], sampleId: preset && preset.id };
+    const odo = photo && photo.data && photo.data.vehicle && photo.data.vehicle.odometer_unit === 'mi' ? photo.data.vehicle.odometer_visible : null;
+    if (market && market.mileage == null && odo) market.mileage = odo;
+    state = { vin, codes: c, photo, grades, flags, gradeNote, photoGaps: photo && photo.data ? photo.data.photo_gaps : [], sampleId: preset && preset.id,
+      drivable: getDrivable(), region: getState(), market };
 
     await recompute(true);
   } catch (err) {
@@ -297,11 +305,14 @@ async function recompute(first = false) {
   const ticket = ++pending;
   const body = {
     title_status: state.codes.title_status,
-    grades: [...state.grades].map(([part, g]) => ({ part, grade: g.grade })),
+    vehicle_class: (state.photo && state.photo.data && state.photo.data.vehicle && state.photo.data.vehicle.price_class) || 'unknown',
+    grades: [...state.grades].map(([part, g]) => ({ part, grade: g.grade, severity: g.severity || null })),
     flags: state.flags,
     codes: state.codes.codes.filter((c) => c.source !== 'invalid'),
     values: readValues(),
     assumptions: readAssumptions(),
+    drivable: state.drivable,
+    market: state.market,
   };
   // The engine (engine/, via /api/route) decides where to send the car: ACV or Copart.
   // One repair cost: the engine gets the same repair estimate the page shows (parts table,
@@ -310,7 +321,8 @@ async function recompute(first = false) {
   if (ticket !== pending) return;
   const routeBody = { vin: state.vin, vehicle: state.codes.vehicle, title_status: body.title_status,
     grades: body.grades, flags: body.flags, codes: body.codes, values: body.values,
-    repair: d.repair ? { low: d.repair.low, high: d.repair.high } : undefined };
+    repair: d.repair ? { low: d.repair.low, high: d.repair.high } : undefined,
+    ...(state.region ? { region: state.region } : {}), ...(state.market && state.market.mileage ? { mileage: state.market.mileage } : {}) };
   const rt = await post('/api/route', routeBody)
     .then(async (r) => (r.ok ? r.json() : { error: (await r.json().catch(() => ({}))).error || `engine answered ${r.status}` }))
     .catch((e) => ({ error: e.message }));
@@ -353,6 +365,31 @@ function routeExits() {
     <details style="margin-top:8px"><summary style="cursor:pointer;color:var(--steel);font-size:13px">How the engine read your inputs</summary><ul class="tab-note" style="margin:8px 0 0">${r.notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul></details>
   </div>`;
 }
+// ACV vs Copart points scorecard (api/_lib/scorecard.ts, returned by /api/decide as `channel`).
+const CH_LABEL = { acv: 'ACV', copart: 'Copart', too_close: 'Too close to call' };
+function scorecardBlock(d) {
+  const s = d.channel;
+  if (!s) return '';
+  const pts = (n) => (n ? `+${n}` : '');
+  const rows = s.categories.map((c) => `<tr class="cat"><td>${esc(c.label)}</td><td class="pts">${pts(c.acv)}</td><td class="pts">${pts(c.copart)}</td></tr>`
+    + c.rows.map((r) => `<tr><td>${esc(r.finding[0].toUpperCase() + r.finding.slice(1))}<small style="display:block;color:var(--steel);font-size:12px">${esc(r.reason)}</small></td><td class="pts">${pts(r.acv)}</td><td class="pts">${pts(r.copart)}</td></tr>`).join('')).join('');
+  const m = state.market;
+  const listings = m && m.ran && m.sample && m.sample.length
+    ? `<details style="margin-top:8px"><summary style="cursor:pointer;color:var(--steel);font-size:13px">Listings found${m.price_low ? ` (${money(m.price_low)} to ${money(m.price_high)})` : ''}</summary><ul class="tab-note" style="margin:8px 0 0">${m.sample.map((x) => `<li><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.title || x.url)}</a></li>`).join('')}</ul></details>` : '';
+  // Cross-check on the engine's headline: say plainly whether the points agree.
+  const eng = state.route && !state.route.error ? state.route.destination : null;
+  const agree = !eng || s.winner === 'too_close' ? ''
+    : (eng === 'ACV') === (s.winner === 'acv')
+      ? `<p class="tab-note"><b>Agrees with the engine</b> (${esc(eng)}).</p>`
+      : `<p class="notice">The points favor ${esc(CH_LABEL[s.winner])} but the engine, which prices every exit, says ${esc(eng)}. Look at the categories below for the reason.</p>`;
+  return `<div class="sec scorecard">
+    <h3>Points check: <span class="dest">${esc(CH_LABEL[s.winner])}</span></h3>${agree}
+    <div class="totals"><div class="tot${s.winner === 'acv' ? ' win' : ''}">ACV<b>${s.acv}</b></div><div class="tot${s.winner === 'copart' ? ' win' : ''}">Copart<b>${s.copart}</b></div></div>
+    <p class="tab-note">${s.forced ? esc(s.forced) + ' ' : ''}Each finding adds points to the channel it favors; ${s.margin < 5 && !s.forced ? 'the totals are within 5 points, so it\'s too close to call' : 'the higher total wins'}.${s.missing.length ? ` Not scored yet: ${esc(s.missing.join(', '))}.` : ''}</p>
+    <table class="lines"><tbody><tr><td><b>Finding</b></td><td class="pts"><b>ACV</b></td><td class="pts"><b>Copart</b></td></tr>${rows}
+      <tr class="total"><td>Total</td><td class="pts">${s.acv}</td><td class="pts">${s.copart}</td></tr></tbody></table>${listings}
+  </div>`;
+}
 let debounce;
 const recomputeSoon = () => { clearTimeout(debounce); debounce = setTimeout(() => recompute(false), 250); };
 $('clean').addEventListener('input', recomputeSoon);
@@ -362,7 +399,7 @@ comps.onChange = recomputeSoon;
 // Reviewer toggle, tabs, copy link
 $('result').addEventListener('click', (e) => {
   const pb = e.target.closest('[data-part]'), fb = e.target.closest('[data-flag]'), cl = e.target.closest('[data-copy]');
-  if (pb && state) { const g = state.grades.get(pb.dataset.part); g.grade = GRADE_ORDER[(GRADE_ORDER.indexOf(g.grade) + 1) % GRADE_ORDER.length]; g.edited = true; recompute(false); }
+  if (pb && state) { const g = state.grades.get(pb.dataset.part); g.grade = GRADE_ORDER[(GRADE_ORDER.indexOf(g.grade) + 1) % GRADE_ORDER.length]; g.severity = null; g.edited = true; recompute(false); }
   else if (fb && state) { const order = [true, false, 'unknown'], k = fb.dataset.flag; state.flags[k] = order[(order.indexOf(state.flags[k]) + 1) % order.length]; recompute(false); }
 
   else if (cl) { copyLink(); }
@@ -375,6 +412,8 @@ function shareUrl() {
   const reg = state.codes.title_source && state.codes.title_source.from === 'registry';
   if (!reg && state.codes.title_status !== 'unknown') u.searchParams.set('title', state.codes.title_status);
   const cs = codes.get(); if (cs.length) u.searchParams.set('codes', cs.join(','));
+  if (state.drivable && state.drivable !== 'unknown') u.searchParams.set('drivable', state.drivable);
+  if (state.region) u.searchParams.set('state', state.region);
   const v = readValues();
   if (!reg && v.clean_wholesale) u.searchParams.set('clean', v.clean_wholesale);
   if (!reg && v.salvage_comps.length) u.searchParams.set('comps', v.salvage_comps.join(','));
@@ -433,11 +472,15 @@ function rangesBlock(d) {
 
 function repairTab(d) {
   const r = d.repair, a = d.assumptions, t = state.codes.title_status, td = d.arv && d.arv.title_discount;
-  const rows = r.lines.map((l) => `<tr><td>${esc(l.label)}</td><td class="amt">${money(l.low)} to ${money(l.high)}</td></tr>`).join('')
+  const span = (p) => p[0] === p[1] ? money(p[0]) : `${money(p[0])}–${money(p[1])}`;
+  const hrs = (p) => p[0] === p[1] ? `${p[0]}` : `${p[0]}–${p[1]}`;
+  const parts = (l) => !l.parts_cost ? '' : `<small style="display:block;color:var(--steel);font-size:12px">Parts ${span(l.parts_cost)} · labor ${hrs(l.labor_hours)} h (${span(l.labor_cost)})${l.paint_cost[1] ? ` · paint ${span(l.paint_cost)}` : ''}</small>`;
+  const rows = r.lines.map((l) => `<tr><td>${esc(l.label)}${parts(l)}</td><td class="amt">${money(l.low)} to ${money(l.high)}</td></tr>`).join('')
     || '<tr><td>No damaged parts or fault codes</td><td class="amt">$0</td></tr>';
   const widen = r.widen.map((w) => `<tr class="widen"><td>${esc(w.reason)} (could cost more)</td><td class="amt">+${money(w.amount)}</td></tr>`).join('');
   const titleNote = td && td[1] > 0 ? `${Math.round(td[0] * 100)}–${Math.round(td[1] * 100)}% off for ${t === 'unknown' ? 'an unconfirmed' : `a ${TITLE_LABEL[t].toLowerCase()}`} title` : 'no title discount';
-  return `<p class="tab-note">Parts plus labor at ${money(a.labor_rate)}/hr, paint where a panel needs it, plus fault-code repairs.</p>
+  const cls = r.vehicle_class && r.vehicle_class !== 'unknown' ? ` Parts priced for a ${r.vehicle_class} vehicle.` : '';
+  return `<p class="tab-note">Parts plus labor at ${money(a.labor_rate)}/hr, paint where a panel needs it, plus fault-code repairs. How badly each part is damaged narrows its range.${cls}</p>
     <table class="lines"><tbody>${rows}${widen}<tr class="total"><td>Repair estimate</td><td class="amt">${money(r.low)} to ${money(r.high)}</td></tr></tbody></table>
     <dl class="facts">
       ${d.arv ? `<div class="fact"><dt>Value after repair</dt><dd>${money(d.arv.low)} to ${money(d.arv.high)}<small>Clean wholesale less 5–12% for condition, ${esc(titleNote)}</small></dd></div>` : ''}
@@ -503,8 +546,20 @@ function buildReport(d) {
     input: { vin: state.vin, codes: state.codes.codes.map((c) => c.code), title_status: state.codes.title_status, photos: photos.map((x) => x.name), sample: state.sampleId || null },
     decision: d,
     fault_codes: state.codes,
-    part_grades: [...state.grades].map(([part, g]) => ({ part, grade: g.grade, evidence_photo: g.photo, edited_by_reviewer: g.edited })),
+    // Each part with its price (from /api/decide, so reviewer edits and the labor rate are included).
+    part_grades: [...state.grades].map(([part, g]) => {
+      const l = d.repair.lines.find((x) => x.part === part && !/airbags deployed/.test(x.label));
+      return { part, grade: g.grade, severity: g.severity || null, evidence_photo: g.photo, edited_by_reviewer: g.edited,
+        price: l ? { low: l.low, high: l.high, parts_cost: l.parts_cost, labor_hours: l.labor_hours, labor_cost: l.labor_cost, paint_cost: l.paint_cost } : null };
+    }),
+    repair_estimate: {
+      low: d.repair.low, high: d.repair.high, labor_rate: d.repair.labor_rate, vehicle_class: d.repair.vehicle_class,
+      lines: d.repair.lines, could_cost_more: d.repair.widen,
+    },
     flags: state.flags,
+    drivable: state.drivable || 'unknown',
+    channel_scorecard: d.channel || null,
+    market_fit: state.market || null,
     photos: !p ? null : p.error ? { error: p.error } : { classification: p.stage1 || null, crops: p.crops || [], grading: p.data },
   };
 }
@@ -527,8 +582,8 @@ function render(d, first) {
       <button class="btn btn-ghost btn-sm" type="button" data-copy>Copy link</button>
       <button class="btn btn-ghost btn-sm" type="button" data-download>Download JSON</button></div>
     ${state.route && !state.route.error
-      ? `${routeHero(first)}${routeExits()}<div class="sec"><h3>Repair or sell as-is?</h3>${recBlock(d, false, true)}${rangesBlock(d)}</div>`
-      : `${recBlock(d, first)}${rangesBlock(d)}${routeExits()}`}
+      ? `${routeHero(first)}${routeExits()}${scorecardBlock(d)}<div class="sec"><h3>Repair or sell as-is?</h3>${recBlock(d, false, true)}${rangesBlock(d)}</div>`
+      : `${recBlock(d, first)}${rangesBlock(d)}${routeExits()}${scorecardBlock(d)}`}
     <div class="sec"><h3>Where the numbers come from</h3>${repairTab(d)}</div>
     <div class="sec"><h3>Condition</h3>${conditionTab()}</div>
     <div class="sec"><h3>Fault codes</h3>${codesTab()}</div>
@@ -551,6 +606,8 @@ function render(d, first) {
   $('vin').value = vin; $('vin').dispatchEvent(new Event('input'));
   if (VIN_RE.test(vin)) await checkRegistry(vin);
   if (q.get('title')) setTitle(q.get('title'));
+  if (q.get('drivable')) setDrivable(q.get('drivable'));
+  if (q.get('state')) $('state').value = q.get('state').toUpperCase();
   if (q.get('codes')) codes.set(q.get('codes').split(','));
   if (q.get('clean')) $('clean').value = q.get('clean');
   if (q.get('comps')) comps.set(q.get('comps').split(','));

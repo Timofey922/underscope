@@ -94,6 +94,14 @@ input, button { font-family: inherit; }
 .tag.invalid { background: #FCEBEC; border-color: var(--red); color: var(--red); }
 .tag button { border: 0; background: none; color: inherit; font: 700 13px/1 var(--sans); padding: 0 3px; cursor: pointer; opacity: .55; }
 .tag button:hover { opacity: 1; }
+.select { background: var(--surface); border: 1px solid var(--line); border-radius: 4px; color: var(--ink); font: 500 15px var(--sans); padding: 8px 10px; min-width: 140px; }
+.select:focus { border-color: var(--orange); box-shadow: 0 0 0 3px rgba(211, 67, 25, .15); outline: none; }
+.scorecard .totals { display: flex; gap: 10px; flex-wrap: wrap; margin: 4px 0 12px; }
+.scorecard .tot { border: 1px solid var(--line); border-radius: 4px; padding: 8px 14px; min-width: 120px; }
+.scorecard .tot.win { border-color: var(--orange); background: var(--orange-bg); }
+.scorecard .tot b { display: block; font: 700 22px var(--mono); }
+.scorecard td.pts { text-align: right; font-family: var(--mono); white-space: nowrap; }
+.scorecard tr.cat td { font-weight: 500; background: var(--soft); }
 .money { display: flex; align-items: center; background: var(--surface); border: 1px solid var(--line); border-radius: 4px; }
 .money span { padding: 0 0 0 10px; font: 500 15px var(--mono); color: var(--steel); }
 .money input { width: 100%; border: 0; background: transparent; color: var(--ink); font: 500 15px var(--mono); padding: 9px 10px 9px 3px; outline: none; }

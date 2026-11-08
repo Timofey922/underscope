@@ -250,3 +250,9 @@ footer { max-width: 880px; margin: 0 auto; padding: 8px 20px 28px; color: var(--
 .problems .what { font-weight: 500; }
 .problems .where { color: var(--steel); font-size: 12.5px; }
 .problems .ph { font: 500 11.5px var(--mono); color: var(--steel); text-align: right; white-space: nowrap; }
+
+/* Engine routing: where to send the car */
+.route h3 .dest { display: inline-block; padding: 1px 10px; border-radius: 4px; color: #fff; background: var(--steel); }
+.route h3 .dest-acv { background: var(--green); }
+.route h3 .dest-copart { background: var(--orange); }
+.route .lines td { vertical-align: middle; }

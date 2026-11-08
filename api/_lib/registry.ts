@@ -45,7 +45,7 @@ export async function similarComps(vin: string): Promise<SimilarComps> {
     && Math.abs((d.data.year ?? 0) - (me.data.year ?? 0)) <= SIMILAR.years);
   const comps = hits.flatMap(({ r }) => (r.salvage_comps as number[]) ?? []).filter((n) => n > 0).sort((a, b) => a - b);
   if (comps.length < SIMILAR.minComps) return null;
-  const make = (m: string | null) => (m && m.length > 3 ? m.replace(/Bw+/g, (w) => w.toLowerCase()) : m); // MAZDA -> Mazda, BMW stays
+  const make = (m: string | null) => (m && m.length > 3 ? m.replace(/\B\w+/g, (w) => w.toLowerCase()) : m); // MAZDA -> Mazda, BMW stays
   const from = hits.map(({ d }) => (d.ok ? `${d.data.year} ${make(d.data.make)} ${d.data.model}` : ''));
   return { comps, from, label: 'estimated from similar vehicles' };
 }

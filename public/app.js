@@ -154,11 +154,19 @@ async function cropFrom(file, box) {
 
 async function gradePhotoFlow(vin, status) {
   status('Sorting photos…');
-  const s1 = await post('/api/classify-photos', { photos: await Promise.all(photos.map((p) => drawGrid(p.file))) });
-  const stage1 = await s1.json().catch(() => null);
-  if (!s1.ok || !stage1 || !Array.isArray(stage1.photos)) throw new Error((stage1 && stage1.error) || `Photo sorting answered ${s1.status}.`);
-  status('Cutting close-ups…');
-  const regions = pickRegions(stage1.photos, MAX_CROPS);
+  // Photo sorting only adds views and close-ups (it already retries once on the server). If it still fails, grade the
+  // photos without them rather than failing the whole check.
+  let stage1;
+  try {
+    const s1 = await post('/api/classify-photos', { photos: await Promise.all(photos.map((p) => drawGrid(p.file))) });
+    const j = await s1.json().catch(() => null);
+    stage1 = s1.ok && j && Array.isArray(j.photos) ? j : { error: (j && j.error) || `Photo sorting answered ${s1.status}.` };
+  } catch (e) {
+    stage1 = { error: e.message };
+  }
+  const sorted = Array.isArray(stage1.photos);
+  status(sorted ? 'Cutting close-ups…' : 'Photo sorting failed; grading without close-ups…');
+  const regions = sorted ? pickRegions(stage1.photos, MAX_CROPS) : [];
   const crops = [];
   let bytes = photoBytes();
   for (const r of regions) {
@@ -168,8 +176,8 @@ async function gradePhotoFlow(vin, status) {
     crops.push({ photo: r.photo, kind: r.kind, part: r.part, note: r.note, image });
   }
   status('Grading photos…');
-  const views = stage1.photos.map((p) => (['exterior_unknown_side', 'other'].includes(p.view) ? null : p.view));
-  const res = await post('/api/grade-photos', { vin, photos: photos.map((p) => p.dataUrl), views, crops });
+  const views = sorted ? stage1.photos.map((p) => (['exterior_unknown_side', 'other'].includes(p.view) ? null : p.view)) : undefined;
+  const res = await post('/api/grade-photos', { vin, photos: photos.map((p) => p.dataUrl), ...(views ? { views } : {}), crops });
   return { res, stage1, crops: crops.map(({ image, ...meta }) => meta) };
 }
 

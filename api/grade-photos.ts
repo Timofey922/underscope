@@ -245,8 +245,30 @@ export function mergePasses(a: Raw, b: Raw): Raw {
     ...a, vehicle, parts, damages, missing_parts: missing, flags, drivability,
     primary_damage_area: lead.primary_damage_area, summary: lead.summary,
     overall_severity: OVERALL[Math.max(OVERALL.indexOf(a.overall_severity), OVERALL.indexOf(b.overall_severity))],
-    photo_gaps: [...new Set([...a.photo_gaps, ...b.photo_gaps])],
+    photo_gaps: [...lead.photo_gaps, ...(lead === a ? b : a).photo_gaps],
   };
+}
+
+// The two passes word the same missing angle differently ("No clear underbody photo." / "no dedicated underbody
+// photo"). Keep the first of any gaps about the same area: same text, or one's areas within the other's.
+const GAP_AREAS: [string, RegExp][] = [
+  ['underbody', /under ?(body|carriage|side)|frame rail|beneath/i], ['roof', /\broof|overhead|from above/i],
+  ['engine_bay', /engine|open[- ]hood|hood (open|up|raised)/i], ['interior', /interior|seat|cabin|airbag/i],
+  ['dashboard', /dash|odometer|instrument|cluster|mileage/i], ['vin', /\bvin\b|door[- ]?jamb|label|sticker/i],
+  ['wheels', /wheel|\btires?\b|tyre|suspension/i], ['glass', /windshield|glass|window/i],
+  ['left', /\bleft\b|driver/i], ['right', /\bright\b|passenger/i], ['front', /\bfront\b|grille/i],
+  ['rear', /\brear\b|\bback\b|trunk|tailgate|liftgate|cargo/i],
+];
+export function dedupeGaps(gaps: string[]): string[] {
+  const kept: { text: string; norm: string; areas: Set<string> }[] = [];
+  for (const g of gaps.map((x) => String(x).trim()).filter(Boolean)) {
+    const norm = g.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const areas = new Set(GAP_AREAS.filter(([, re]) => re.test(g)).map(([k]) => k));
+    const within = (x: Set<string>, y: Set<string>) => x.size > 0 && [...x].every((k) => y.has(k));
+    if (kept.some((k) => k.norm === norm || within(areas, k.areas) || within(k.areas, areas))) continue;
+    kept.push({ text: g.replace(/\.$/, ''), norm, areas });
+  }
+  return kept.map((k) => k.text);
 }
 
 // Side panels and mirrors only show from their own side. When every photo that shows a part's damage is a view of
@@ -366,7 +388,9 @@ export async function gradePhotos(vin: string, photos: string[], opts: GradeOpti
 
   // 1. Grade in C.passes passes at once; pass 2 sees the photos and crops in reverse order.
   const n = photos.length, idx = (k: number) => Array.from({ length: k }, (_, i) => i);
-  const intro = `VIN ${vin}. ${n} photo(s), each labeled with its number; refer to photos by these numbers. Grade all ${PARTS.length} parts and list every problem as json.`;
+  // The VIN typed on the page is NOT in the prompt: the model would copy it into vin_visible as if read from a label,
+  // and the page would then say the label matches. vin_matches_input is worked out in code below.
+  const intro = `${n} photo(s), each labeled with its number; refer to photos by these numbers. Grade all ${PARTS.length} parts and list every problem as json.`;
   const orders = [[idx(n), idx(crops.length)], [idx(n).reverse(), idx(crops.length).reverse()]].slice(0, Math.max(1, C.passes));
   const settled = await Promise.allSettled(orders.map(([po, co]) => ask('vehicle_grades', SYSTEM, SCHEMA, content(po, co, intro))));
   const passes = settled.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []));
@@ -429,7 +453,9 @@ export async function gradePhotos(vin: string, photos: string[], opts: GradeOpti
     return { part, grade: p.grade, severity, confidence: clamp01(p.confidence), evidence_photo: p.grade === 'unknown' ? null : photo, note: p.note };
   });
   const v = raw.vehicle;
-  const photoVin = v.vin_visible ? String(v.vin_visible).toUpperCase().replace(/\s/g, '') : null;
+  // One character repeated (00000000000000000) is a placeholder, never a VIN read from a label.
+  const readVin = v.vin_visible ? String(v.vin_visible).toUpperCase().replace(/\s/g, '') : null;
+  const photoVin = readVin && !/^(.)\1+$/.test(readVin) ? readVin : null;
   const checkOk = vinCheckDigitOk(photoVin);
   // Replaced parts priced from eBay for the vehicle seen in the photos (the page reprices with the VIN's vehicle via /api/decide).
   const part_prices = await ebayPartPrices({ year: v.year, make: v.make, model: v.model, body_type: v.body_type }, parts.filter((p) => p.grade === 'replace').map((p) => p.part));
@@ -454,7 +480,7 @@ export async function gradePhotos(vin: string, photos: string[], opts: GradeOpti
     })) as Drivability,
     primary_damage_area: raw.primary_damage_area,
     overall_severity: raw.overall_severity,
-    photo_gaps: raw.photo_gaps,
+    photo_gaps: dedupeGaps(raw.photo_gaps),
     summary: raw.summary,
     repair_estimate,
     meta: {

@@ -161,6 +161,10 @@ Prices in `part_grades` and `repair_estimate` come from `/api/decide`, so they f
 
 Both stages switch automatically between models: gpt-5.x and o-series models get `reasoning_effort: low`, gpt-4o gets `temperature: 0`.
 
+Stage 1 cuts each attempt off at 25 s and tries once more (`timeoutMs`, `attempts`; the OpenAI SDK's own retries are off), so it answers inside Vercel's 60 s even when OpenAI is slow. If it still fails, the page grades the photos without views and close-ups instead of failing the check.
+
+The VIN typed on the page is not sent to the grading model; otherwise it copied it as "read from the label". `vin_matches_input` is worked out in code, and a VIN of one repeated character is dropped. `photo_gaps` from the two passes are merged, so the same missing angle ("no clear underbody photo" / "no dedicated underbody photo") is listed once (`dedupeGaps()`).
+
 Tuning knobs: `CLASSIFY_CONFIG` in `api/classify-photos.ts` (model, boxes per photo), `GRADE_CONFIG` in `api/grade-photos.ts` (max photos, max crops, image detail, passes, second look and its time budget), and in `public/app.js` `MAX_CROPS` and `REQUEST_BUDGET` (4.3 MB, the page skips crops that would go over Vercel's limit).
 
 ## Testing

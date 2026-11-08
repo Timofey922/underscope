@@ -255,7 +255,7 @@ const GAP_AREAS: [string, RegExp][] = [
   ['underbody', /under ?(body|carriage|side)|frame rail|beneath/i], ['roof', /\broof|overhead|from above/i],
   ['engine_bay', /engine|open[- ]hood|hood (open|up|raised)/i], ['interior', /interior|seat|cabin|airbag/i],
   ['dashboard', /dash|odometer|instrument|cluster|mileage/i], ['vin', /\bvin\b|door[- ]?jamb|label|sticker/i],
-  ['wheels', /wheel|\btires?\b|tyre|suspension/i], ['glass', /windshield|glass|window/i],
+  ['wheels', /wheel|\btires?\b|tyre|tread|brake|rotor|suspension/i], ['glass', /windshield|glass|window/i],
   ['left', /\bleft\b|driver/i], ['right', /\bright\b|passenger/i], ['front', /\bfront\b|grille/i],
   ['rear', /\brear\b|\bback\b|trunk|tailgate|liftgate|cargo/i],
 ];

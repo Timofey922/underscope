@@ -4,6 +4,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { openaiClient } from './_lib/openai.js';
 import { repairBand, DECISION_CONFIG, type Decision } from './_lib/decision.js';
+import { ebayPartPrices } from './_lib/parts-prices.js';
 
 export const config = { maxDuration: 60 };
 
@@ -223,7 +224,9 @@ export async function gradePhotos(vin: string, photos: string[], opts: GradeOpti
       const v = raw.vehicle;
       const photoVin = v.vin_visible ? String(v.vin_visible).toUpperCase().replace(/\s/g, '') : null;
       const checkOk = vinCheckDigitOk(photoVin);
-      const repair_estimate = repairBand({ grades: parts, flags: raw.flags, vehicle_class: v.price_class }, DECISION_CONFIG.defaults.labor_rate);
+      // Replaced parts priced from eBay for the vehicle seen in the photos (the page reprices with the VIN's vehicle via /api/decide).
+      const part_prices = await ebayPartPrices({ year: v.year, make: v.make, model: v.model, body_type: v.body_type }, parts.filter((p) => p.grade === 'replace').map((p) => p.part));
+      const repair_estimate = repairBand({ grades: parts, flags: raw.flags, vehicle_class: v.price_class, part_prices }, DECISION_CONFIG.defaults.labor_rate);
       return {
         photo_views: raw.photo_views.filter((p: { photo: number }) => okPhoto(p.photo)),
         vehicle: {
@@ -269,7 +272,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         views: ['optional, per photo: view from /api/classify-photos, or null'],
         crops: [{ photo: 1, kind: 'damage | vin_label | odometer', part: 'part name or none', note: '...', image: 'data:image/jpeg;base64,...' }],
       },
-      returns: 'vehicle, parts[25] {part, grade, severity, confidence, evidence_photo, note}, damages[], missing_parts[], flags, primary_damage_area, overall_severity, photo_gaps, summary, repair_estimate {low, high, lines[] per part: parts_cost, labor_hours, labor_cost, paint_cost}, meta',
+      returns: 'vehicle, parts[25] {part, grade, severity, confidence, evidence_photo, note}, damages[], missing_parts[], flags, primary_damage_area, overall_severity, photo_gaps, summary, repair_estimate {low, high, lines[] per part: parts_cost, parts_source (ebay | table), labor_hours, labor_cost, paint_cost}, meta',
     });
   }
   if (req.method !== 'POST') return res.status(405).json({ error: 'Use POST' });

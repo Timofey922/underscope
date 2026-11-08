@@ -303,6 +303,11 @@ let pending = 0;
 async function recompute(first = false) {
   if (!state) return;
   const ticket = ++pending;
+  // Vehicle for eBay parts prices: the VIN decode when it names one, else what the photos show. Samples keep table prices.
+  const pv = (state.photo && state.photo.data && state.photo.data.vehicle) || {}, cv = state.codes.vehicle || {};
+  const vehicle = state.sampleId ? null : cv.make && cv.model
+    ? { year: cv.year, make: cv.make, model: cv.model, body_type: pv.body_type || null }
+    : pv.make && pv.model ? { year: pv.year, make: pv.make, model: pv.model, body_type: pv.body_type || null } : null;
   const body = {
     title_status: state.codes.title_status,
     vehicle_class: (state.photo && state.photo.data && state.photo.data.vehicle && state.photo.data.vehicle.price_class) || 'unknown',
@@ -313,6 +318,7 @@ async function recompute(first = false) {
     assumptions: readAssumptions(),
     drivable: state.drivable,
     market: state.market,
+    vehicle,
   };
   // The engine (engine/, via /api/route) decides where to send the car: ACV or Copart.
   const routeBody = { vin: state.vin, vehicle: state.codes.vehicle, title_status: body.title_status,
@@ -445,13 +451,14 @@ function repairTab(d) {
   const r = d.repair, a = d.assumptions, t = state.codes.title_status, td = d.arv && d.arv.title_discount;
   const span = (p) => p[0] === p[1] ? money(p[0]) : `${money(p[0])}–${money(p[1])}`;
   const hrs = (p) => p[0] === p[1] ? `${p[0]}` : `${p[0]}–${p[1]}`;
-  const parts = (l) => !l.parts_cost ? '' : `<small style="display:block;color:var(--steel);font-size:12px">Parts ${span(l.parts_cost)} · labor ${hrs(l.labor_hours)} h (${span(l.labor_cost)})${l.paint_cost[1] ? ` · paint ${span(l.paint_cost)}` : ''}</small>`;
+  const parts = (l) => !l.parts_cost ? '' : `<small style="display:block;color:var(--steel);font-size:12px">Parts ${span(l.parts_cost)}${l.parts_source === 'ebay' ? ` (eBay, ${l.parts_listings} listings)` : ''} · labor ${hrs(l.labor_hours)} h (${span(l.labor_cost)})${l.paint_cost[1] ? ` · paint ${span(l.paint_cost)}` : ''}</small>`;
   const rows = r.lines.map((l) => `<tr><td>${esc(l.label)}${parts(l)}</td><td class="amt">${money(l.low)} to ${money(l.high)}</td></tr>`).join('')
     || '<tr><td>No damaged parts or fault codes</td><td class="amt">$0</td></tr>';
   const widen = r.widen.map((w) => `<tr class="widen"><td>${esc(w.reason)} (could cost more)</td><td class="amt">+${money(w.amount)}</td></tr>`).join('');
   const titleNote = td && td[1] > 0 ? `${Math.round(td[0] * 100)}–${Math.round(td[1] * 100)}% off for ${t === 'unknown' ? 'an unconfirmed' : `a ${TITLE_LABEL[t].toLowerCase()}`} title` : 'no title discount';
-  const cls = r.vehicle_class && r.vehicle_class !== 'unknown' ? ` Parts priced for a ${r.vehicle_class} vehicle.` : '';
-  return `<p class="tab-note">Parts plus labor at ${money(a.labor_rate)}/hr, paint where a panel needs it, plus fault-code repairs. How badly each part is damaged narrows its range.${cls}</p>
+  const cls = r.vehicle_class && r.vehicle_class !== 'unknown' ? ` Table prices are for a ${r.vehicle_class} vehicle.` : '';
+  const ebay = r.lines.some((l) => l.parts_source === 'ebay') ? ' Replaced parts are priced from eBay listings that fit this vehicle (asking prices, new and used); the rest from a generic table.' : '';
+  return `<p class="tab-note">Parts plus labor at ${money(a.labor_rate)}/hr, paint where a panel needs it, plus fault-code repairs. How badly each part is damaged narrows its labor.${ebay}${cls}</p>
     <table class="lines"><tbody>${rows}${widen}<tr class="total"><td>Repair estimate</td><td class="amt">${money(r.low)} to ${money(r.high)}</td></tr></tbody></table>
     <dl class="facts">
       ${d.arv ? `<div class="fact"><dt>Value after repair</dt><dd>${money(d.arv.low)} to ${money(d.arv.high)}<small>Clean wholesale less 5–12% for condition, ${esc(titleNote)}</small></dd></div>` : ''}
@@ -521,7 +528,7 @@ function buildReport(d) {
     part_grades: [...state.grades].map(([part, g]) => {
       const l = d.repair.lines.find((x) => x.part === part && !/airbags deployed/.test(x.label));
       return { part, grade: g.grade, severity: g.severity || null, evidence_photo: g.photo, edited_by_reviewer: g.edited,
-        price: l ? { low: l.low, high: l.high, parts_cost: l.parts_cost, labor_hours: l.labor_hours, labor_cost: l.labor_cost, paint_cost: l.paint_cost } : null };
+        price: l ? { low: l.low, high: l.high, parts_cost: l.parts_cost, parts_source: l.parts_source, parts_listings: l.parts_listings ?? null, labor_hours: l.labor_hours, labor_cost: l.labor_cost, paint_cost: l.paint_cost } : null };
     }),
     repair_estimate: {
       low: d.repair.low, high: d.repair.high, labor_rate: d.repair.labor_rate, vehicle_class: d.repair.vehicle_class,

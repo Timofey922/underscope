@@ -272,7 +272,7 @@ $('form').addEventListener('submit', async (e) => {
     const photo = await readPhotoResult(flow === null || flow instanceof Error ? flow : flow.res);
     if (photo && flow && !(flow instanceof Error)) Object.assign(photo, { stage1: flow.stage1, crops: flow.crops });
     const grades = new Map();
-    if (photo && photo.data) photo.data.parts.forEach((p) => grades.set(p.part, { grade: p.grade, photo: p.evidence_photo, edited: false }));
+    if (photo && photo.data) photo.data.parts.forEach((p) => grades.set(p.part, { grade: p.grade, severity: p.severity || null, photo: p.evidence_photo, edited: false }));
     PARTS.forEach((p) => { if (!grades.has(p)) grades.set(p, { grade: preset ? (preset.grades[p] || 'fine') : 'unknown', photo: null, edited: false }); });
     const flags = photo && photo.data ? { ...photo.data.flags } : preset ? { ...preset.flags } : { airbags_deployed: 'unknown', frame_suspected: 'unknown', fluid_leak: 'unknown' };
     const gradeNote = photo && photo.data ? null
@@ -297,7 +297,8 @@ async function recompute(first = false) {
   const ticket = ++pending;
   const body = {
     title_status: state.codes.title_status,
-    grades: [...state.grades].map(([part, g]) => ({ part, grade: g.grade })),
+    vehicle_class: (state.photo && state.photo.data && state.photo.data.vehicle && state.photo.data.vehicle.price_class) || 'unknown',
+    grades: [...state.grades].map(([part, g]) => ({ part, grade: g.grade, severity: g.severity || null })),
     flags: state.flags,
     codes: state.codes.codes.filter((c) => c.source !== 'invalid'),
     values: readValues(),
@@ -316,7 +317,7 @@ comps.onChange = recomputeSoon;
 // Reviewer toggle, tabs, copy link
 $('result').addEventListener('click', (e) => {
   const pb = e.target.closest('[data-part]'), fb = e.target.closest('[data-flag]'), cl = e.target.closest('[data-copy]');
-  if (pb && state) { const g = state.grades.get(pb.dataset.part); g.grade = GRADE_ORDER[(GRADE_ORDER.indexOf(g.grade) + 1) % GRADE_ORDER.length]; g.edited = true; recompute(false); }
+  if (pb && state) { const g = state.grades.get(pb.dataset.part); g.grade = GRADE_ORDER[(GRADE_ORDER.indexOf(g.grade) + 1) % GRADE_ORDER.length]; g.severity = null; g.edited = true; recompute(false); }
   else if (fb && state) { const order = [true, false, 'unknown'], k = fb.dataset.flag; state.flags[k] = order[(order.indexOf(state.flags[k]) + 1) % order.length]; recompute(false); }
 
   else if (cl) { copyLink(); }
@@ -387,11 +388,15 @@ function rangesBlock(d) {
 
 function repairTab(d) {
   const r = d.repair, a = d.assumptions, t = state.codes.title_status, td = d.arv && d.arv.title_discount;
-  const rows = r.lines.map((l) => `<tr><td>${esc(l.label)}</td><td class="amt">${money(l.low)} to ${money(l.high)}</td></tr>`).join('')
+  const span = (p) => p[0] === p[1] ? money(p[0]) : `${money(p[0])}–${money(p[1])}`;
+  const hrs = (p) => p[0] === p[1] ? `${p[0]}` : `${p[0]}–${p[1]}`;
+  const parts = (l) => !l.parts_cost ? '' : `<small style="display:block;color:var(--steel);font-size:12px">Parts ${span(l.parts_cost)} · labor ${hrs(l.labor_hours)} h (${span(l.labor_cost)})${l.paint_cost[1] ? ` · paint ${span(l.paint_cost)}` : ''}</small>`;
+  const rows = r.lines.map((l) => `<tr><td>${esc(l.label)}${parts(l)}</td><td class="amt">${money(l.low)} to ${money(l.high)}</td></tr>`).join('')
     || '<tr><td>No damaged parts or fault codes</td><td class="amt">$0</td></tr>';
   const widen = r.widen.map((w) => `<tr class="widen"><td>${esc(w.reason)} (could cost more)</td><td class="amt">+${money(w.amount)}</td></tr>`).join('');
   const titleNote = td && td[1] > 0 ? `${Math.round(td[0] * 100)}–${Math.round(td[1] * 100)}% off for ${t === 'unknown' ? 'an unconfirmed' : `a ${TITLE_LABEL[t].toLowerCase()}`} title` : 'no title discount';
-  return `<p class="tab-note">Parts plus labor at ${money(a.labor_rate)}/hr, paint where a panel needs it, plus fault-code repairs.</p>
+  const cls = r.vehicle_class && r.vehicle_class !== 'unknown' ? ` Parts priced for a ${r.vehicle_class} vehicle.` : '';
+  return `<p class="tab-note">Parts plus labor at ${money(a.labor_rate)}/hr, paint where a panel needs it, plus fault-code repairs. How badly each part is damaged narrows its range.${cls}</p>
     <table class="lines"><tbody>${rows}${widen}<tr class="total"><td>Repair estimate</td><td class="amt">${money(r.low)} to ${money(r.high)}</td></tr></tbody></table>
     <dl class="facts">
       ${d.arv ? `<div class="fact"><dt>Value after repair</dt><dd>${money(d.arv.low)} to ${money(d.arv.high)}<small>Clean wholesale less 5–12% for condition, ${esc(titleNote)}</small></dd></div>` : ''}
@@ -457,7 +462,16 @@ function buildReport(d) {
     input: { vin: state.vin, codes: state.codes.codes.map((c) => c.code), title_status: state.codes.title_status, photos: photos.map((x) => x.name), sample: state.sampleId || null },
     decision: d,
     fault_codes: state.codes,
-    part_grades: [...state.grades].map(([part, g]) => ({ part, grade: g.grade, evidence_photo: g.photo, edited_by_reviewer: g.edited })),
+    // Each part with its price (from /api/decide, so reviewer edits and the labor rate are included).
+    part_grades: [...state.grades].map(([part, g]) => {
+      const l = d.repair.lines.find((x) => x.part === part && !/airbags deployed/.test(x.label));
+      return { part, grade: g.grade, severity: g.severity || null, evidence_photo: g.photo, edited_by_reviewer: g.edited,
+        price: l ? { low: l.low, high: l.high, parts_cost: l.parts_cost, labor_hours: l.labor_hours, labor_cost: l.labor_cost, paint_cost: l.paint_cost } : null };
+    }),
+    repair_estimate: {
+      low: d.repair.low, high: d.repair.high, labor_rate: d.repair.labor_rate, vehicle_class: d.repair.vehicle_class,
+      lines: d.repair.lines, could_cost_more: d.repair.widen,
+    },
     flags: state.flags,
     photos: !p ? null : p.error ? { error: p.error } : { classification: p.stage1 || null, crops: p.crops || [], grading: p.data },
   };

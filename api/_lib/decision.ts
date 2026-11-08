@@ -27,14 +27,21 @@ export const DECISION_CONFIG = {
   // Fixed amounts added to the TOP of the repair band, each recorded with its reason.
   widen: { frame_suspected: 3000, airbags_unknown: 1500, fluid_leak_unknown: 500, critical_code: 2000, many_unknown_parts: 1000 },
   manyUnknownParts: 5,
+  // Per-part pricing from the photo grader. Severity picks the slice of the table's low..high range
+  // (parts cost and labor hours) a part lands in; no severity (e.g. a reviewer edit) keeps the whole range.
+  severityShare: { minor: [0, 0.4], moderate: [0.3, 0.7], severe: [0.6, 1] } as Record<string, [number, number]>,
+  // Parts cost multiplier by the vehicle's price class (a luxury headlight costs more). Labor and paint are not scaled.
+  partsPriceFactor: { economy: 0.85, mainstream: 1, premium: 1.3, luxury: 1.7, unknown: 1 } as Record<string, number>,
 };
 
-export type Grade = { part: string; grade: 'fine' | 'repairable' | 'replace' | 'unknown' };
+export type Severity = 'minor' | 'moderate' | 'severe';
+export type Grade = { part: string; grade: 'fine' | 'repairable' | 'replace' | 'unknown'; severity?: Severity | null };
 type Tri = boolean | 'unknown';
 export type Flags = { airbags_deployed?: Tri; frame_suspected?: Tri; fluid_leak?: Tri };
 export type CodeIn = { code: string; description?: string; severity?: string; cost_low: number; cost_high: number };
 export type DecideInput = {
   title_status?: string;
+  vehicle_class?: string;   // economy | mainstream | premium | luxury | unknown (from the photo grader)
   grades: Grade[];
   flags?: Flags;
   codes?: CodeIn[];
@@ -42,13 +49,19 @@ export type DecideInput = {
   assumptions?: Partial<typeof DECISION_CONFIG.defaults>;
 };
 
-type Line = { label: string; low: number; high: number };
+type Pair = [number, number];
+// label/low/high for every line; part lines also carry the price breakdown.
+type Line = {
+  label: string; low: number; high: number;
+  part?: string; grade?: string; severity?: Severity | null;
+  parts_cost?: Pair; labor_hours?: Pair; labor_cost?: Pair; paint_cost?: Pair;
+};
 type Widen = { key: string; reason: string; check: string; amount: number };
 type Band = { low: number; high: number };
 type Net = Band & { p10: number; p50: number; p90: number };
 
 export type Decision = {
-  repair: Band & { lines: Line[]; widen: Widen[] };
+  repair: Band & { lines: Line[]; widen: Widen[]; labor_rate: number; vehicle_class: string };
   arv: (Band & { title_discount: [number, number] }) | null;
   as_is: (Band & { comps: number }) | null;
   fix_net: Net | null;
@@ -76,26 +89,38 @@ function costTable(): Map<string, CostRow> {
 
 const label = (p: string) => p.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
 
-function partLine(part: string, grade: string, rate: number, note = ''): Line | null {
+function partLine(part: string, grade: string, rate: number, opts: { note?: string; severity?: Severity | null; vehicleClass?: string } = {}): Line | null {
   const r = costTable().get(`${part}:${grade}`);
   if (!r) return null;
-  const [pl, ph] = r.paint ? DECISION_CONFIG.paintPerPanel : [0, 0];
+  const C = DECISION_CONFIG;
+  const sev = opts.severity && C.severityShare[opts.severity] ? opts.severity : null;
+  const [s0, s1] = sev ? C.severityShare[sev] : [0, 1];
+  const k = C.partsPriceFactor[opts.vehicleClass ?? 'unknown'] ?? 1;
+  const slice = (lo: number, hi: number): Pair => [lo + (hi - lo) * s0, lo + (hi - lo) * s1];
+  const partsCost = slice(r.parts_low, r.parts_high).map((x) => Math.round(x * k)) as Pair;
+  const hours = slice(r.labor_low, r.labor_high).map((x) => Math.round(x * 10) / 10) as Pair;
+  const labor = hours.map((h) => Math.round(h * rate)) as Pair;
+  const paint: Pair = r.paint ? [...C.paintPerPanel] : [0, 0];
   return {
-    label: `${label(part)}, ${grade}${note}`,
-    low: Math.round(r.parts_low + r.labor_low * rate + pl),
-    high: Math.round(r.parts_high + r.labor_high * rate + ph),
+    label: `${label(part)}, ${grade}${sev ? ` (${sev})` : ''}${opts.note ?? ''}`,
+    low: partsCost[0] + labor[0] + paint[0],
+    high: partsCost[1] + labor[1] + paint[1],
+    part, grade, severity: sev, parts_cost: partsCost, labor_hours: hours, labor_cost: labor, paint_cost: paint,
   };
 }
 
 export function repairBand(inp: DecideInput, rate: number): Decision['repair'] {
   const lines: Line[] = [];
   const grades = new Map(inp.grades.map((g) => [g.part, g.grade]));
-  for (const [part, grade] of grades) {
-    if (grade === 'repairable' || grade === 'replace') { const l = partLine(part, grade, rate); if (l) lines.push(l); }
+  const vehicleClass = inp.vehicle_class;
+  for (const g of new Map(inp.grades.map((g) => [g.part, g])).values()) {
+    if (g.grade === 'repairable' || g.grade === 'replace') {
+      const l = partLine(g.part, g.grade, rate, { severity: g.severity, vehicleClass }); if (l) lines.push(l);
+    }
   }
   const f = inp.flags ?? {};
   if (f.airbags_deployed === true && grades.get('interior') !== 'replace') {
-    const l = partLine('interior', 'replace', rate, ' (airbags deployed)'); if (l) lines.push(l);
+    const l = partLine('interior', 'replace', rate, { note: ' (airbags deployed)', vehicleClass }); if (l) lines.push(l);
   }
   for (const c of inp.codes ?? []) {
     if (c.cost_high > 0) lines.push({ label: `${c.code}${c.description && c.description !== 'unknown' ? ` ${c.description}` : ''}`, low: c.cost_low, high: c.cost_high });
@@ -116,7 +141,7 @@ export function repairBand(inp: DecideInput, rate: number): Decision['repair'] {
 
   const low = lines.reduce((s, l) => s + l.low, 0);
   const high = lines.reduce((s, l) => s + l.high, 0) + widen.reduce((s, w) => s + w.amount, 0);
-  return { low, high, lines, widen };
+  return { low, high, lines, widen, labor_rate: rate, vehicle_class: vehicleClass ?? 'unknown' };
 }
 
 // ---- Seeded random so the same inputs always give the same answer ----

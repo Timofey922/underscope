@@ -3,6 +3,7 @@
 // A strict JSON schema with every part as a required key guarantees all 25 parts come back.
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { openaiClient } from './_lib/openai.js';
+import { repairBand, DECISION_CONFIG, type Decision } from './_lib/decision.js';
 
 export const config = { maxDuration: 60 };
 
@@ -14,6 +15,7 @@ export const PARTS = [
   'wheels_and_tires', 'roof', 'interior', 'engine_bay', 'underbody',
 ] as const;
 const GRADES = ['fine', 'repairable', 'replace', 'unknown'] as const;
+const PRICE_CLASSES = ['economy', 'mainstream', 'premium', 'luxury', 'unknown'] as const;
 const DAMAGE_TYPES = [
   'dent', 'scratch', 'scrape', 'crack', 'broken', 'shattered_glass', 'missing', 'bent_or_deformed', 'crushed',
   'misaligned_panel', 'rust', 'burn', 'water_line', 'deployed_airbag', 'flat_or_damaged_tire', 'fluid_leak', 'other',
@@ -37,13 +39,14 @@ export type GradeResult = {
   photo_views: { photo: number; view: string; cue: string }[];
   vehicle: {
     year: number | null; make: string | null; model: string | null; trim: string | null; body_type: string; color: string | null;
+    price_class: (typeof PRICE_CLASSES)[number];  // scales parts prices in the repair estimate
     identified_from: string;
     vin_visible: string | null;            // read from a photo (door label, dash), if legible
     vin_check_digit_ok: boolean | null;    // false = misread; never trust a VIN that fails this
     vin_matches_input: boolean | null;     // photo VIN vs the VIN the seller typed
     odometer_visible: number | null; odometer_unit: 'mi' | 'km' | 'unknown';
   };
-  parts: { part: string; grade: string; confidence: number; evidence_photo: number | null; note: string }[];
+  parts: { part: string; grade: string; severity: 'minor' | 'moderate' | 'severe' | null; confidence: number; evidence_photo: number | null; note: string }[];
   damages: Damage[];
   missing_parts: { item: string; part: string; photos: number[] }[];
   flags: Record<(typeof FLAGS)[number], Tri>;
@@ -51,6 +54,8 @@ export type GradeResult = {
   overall_severity: 'none' | 'light' | 'moderate' | 'heavy' | 'total_loss_likely';
   photo_gaps: string[];
   summary: string;
+  // Priced from data/repair_costs.csv at the default labor rate; /api/decide reprices with the seller's rate and reviewer edits.
+  repair_estimate: Decision['repair'];
   meta: { model: string; seconds: number; attempts: number; photos: number; crops: number };
 };
 
@@ -83,11 +88,12 @@ const SCHEMA = {
     },
     vehicle: {
       type: 'object', additionalProperties: false,
-      required: ['year', 'make', 'model', 'trim', 'body_type', 'color', 'identified_from', 'vin_visible', 'odometer_visible', 'odometer_unit'],
+      required: ['year', 'make', 'model', 'trim', 'body_type', 'color', 'price_class', 'identified_from', 'vin_visible', 'odometer_visible', 'odometer_unit'],
       properties: {
         year: nullable('integer'), make: nullable('string'), model: nullable('string'), trim: nullable('string'),
         body_type: { type: 'string', enum: ['sedan', 'coupe', 'hatchback', 'wagon', 'suv', 'pickup', 'minivan', 'passenger_van', 'cargo_van', 'other', 'unknown'] },
         color: nullable('string'),
+        price_class: { type: 'string', enum: PRICE_CLASSES },
         identified_from: { type: 'string' },
         vin_visible: nullable('string'),
         odometer_visible: nullable('integer'),
@@ -148,12 +154,13 @@ Parts: ${PARTS.join(', ')}. "interior" covers seats, dash and airbags; "engine_b
 evidence_photo is the number of the photo that best shows the part (never a crop number), or null when the grade is unknown. note is a few words on what you saw. confidence is 0 to 1.
 
 STEP 4 - the rest:
-- damages: every distinct problem that needs repair (not dirt or wear), with a specific description (where, how big) and the photo numbers that show it.
+- damages: every distinct problem that needs repair (not dirt or wear), with a specific description (where, how big) and the photo numbers that show it. Every part graded repairable or replace needs at least one entry. severity sets that part's price: minor = one small spot (a small dent, a short scratch, a chipped lens); moderate = a larger area or several spots; severe = most of the part, deep or torn damage, or crushed or missing with its mounts.
 - missing_parts: specific items that are absent (e.g. "front bumper cover", "left headlight assembly", "driver mirror glass").
 - flags: true/false only when a photo clearly shows it, otherwise "unknown". frame_suspected is true when damage suggests the frame may be bent (crushed corners, pushed-in wheels, misaligned panel gaps, deployed airbags with heavy front damage).
+- vehicle.price_class sets parts prices: economy (Kia, Hyundai, Nissan Versa-type small cars), mainstream (Toyota, Honda, Ford, Chevrolet, most pickups and SUVs), premium (Acura, Lexus, Buick, Volvo, loaded full-size trucks), luxury (BMW, Mercedes-Benz, Audi, Porsche, Land Rover, Tesla), unknown if you cannot tell the make.
 - vehicle: year/make/model/trim/color only from badges, labels, body shape or text visible in the photos; say what you used in identified_from. If a door-jamb label shows a build date (MM/YY), the model year is that year or the next one. Read the VIN from the VIN-label crop if there is one, character by character; copy a VIN or odometer reading only if you can read every character, otherwise null.
 - photo_gaps: angles that are missing or unusable (e.g. "no clear underbody photo").
-- summary: 2-3 plain sentences for a used-car manager: what is damaged, how badly, and what the photos cannot show. Physical damage only; no prices.`;
+- summary: 2-3 plain sentences for a used-car manager: what is damaged, how badly, and what the photos cannot show. Physical damage only; no prices (they are worked out from your grades and severities).`;
 
 // North American VIN check digit (position 9). A misread VIN almost always fails it.
 export function vinCheckDigitOk(vin: string | null): boolean | null {
@@ -201,20 +208,27 @@ export async function gradePhotos(vin: string, photos: string[], opts: GradeOpti
         messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content }],
       });
       const raw = JSON.parse(res.choices[0].message.content ?? '');
+      // A part's severity (it prices the part) = the worst problem listed on it in damages.
+      const SEV = ['minor', 'moderate', 'severe'];
+      const worst = new Map<string, number>();
+      for (const d of raw.damages as Damage[]) worst.set(d.part, Math.max(worst.get(d.part) ?? -1, SEV.indexOf(d.severity)));
       // Schema guarantees every part; clamp values the schema can't express.
       const parts = PARTS.map((part) => {
         const p = raw.parts[part];
         const photo = okPhoto(p.evidence_photo) ? p.evidence_photo : null;
-        return { part, grade: p.grade, confidence: clamp01(p.confidence), evidence_photo: p.grade === 'unknown' ? null : photo, note: p.note };
+        const w = worst.get(part) ?? -1;
+        const severity = (p.grade === 'repairable' || p.grade === 'replace') && w >= 0 ? (SEV[w] as Damage['severity']) : null;
+        return { part, grade: p.grade, severity, confidence: clamp01(p.confidence), evidence_photo: p.grade === 'unknown' ? null : photo, note: p.note };
       });
       const v = raw.vehicle;
       const photoVin = v.vin_visible ? String(v.vin_visible).toUpperCase().replace(/\s/g, '') : null;
       const checkOk = vinCheckDigitOk(photoVin);
+      const repair_estimate = repairBand({ grades: parts, flags: raw.flags, vehicle_class: v.price_class }, DECISION_CONFIG.defaults.labor_rate);
       return {
         photo_views: raw.photo_views.filter((p: { photo: number }) => okPhoto(p.photo)),
         vehicle: {
           year: v.year, make: v.make, model: v.model, trim: v.trim, body_type: v.body_type, color: v.color,
-          identified_from: v.identified_from,
+          price_class: v.price_class, identified_from: v.identified_from,
           vin_visible: photoVin,
           vin_check_digit_ok: checkOk,
           vin_matches_input: photoVin && checkOk ? photoVin === vin : null,
@@ -228,6 +242,7 @@ export async function gradePhotos(vin: string, photos: string[], opts: GradeOpti
         overall_severity: raw.overall_severity,
         photo_gaps: raw.photo_gaps,
         summary: raw.summary,
+        repair_estimate,
         meta: { model, seconds: Math.round((Date.now() - started) / 100) / 10, attempts: attempt + 1, photos: photos.length, crops: crops.length },
       };
     } catch (e) {
@@ -254,7 +269,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         views: ['optional, per photo: view from /api/classify-photos, or null'],
         crops: [{ photo: 1, kind: 'damage | vin_label | odometer', part: 'part name or none', note: '...', image: 'data:image/jpeg;base64,...' }],
       },
-      returns: 'vehicle, parts[25] {part, grade, confidence, evidence_photo, note}, damages[], missing_parts[], flags, primary_damage_area, overall_severity, photo_gaps, summary, meta',
+      returns: 'vehicle, parts[25] {part, grade, severity, confidence, evidence_photo, note}, damages[], missing_parts[], flags, primary_damage_area, overall_severity, photo_gaps, summary, repair_estimate {low, high, lines[] per part: parts_cost, labor_hours, labor_cost, paint_cost}, meta',
     });
   }
   if (req.method !== 'POST') return res.status(405).json({ error: 'Use POST' });

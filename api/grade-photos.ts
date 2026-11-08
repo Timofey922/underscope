@@ -5,6 +5,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { openaiClient } from './_lib/openai.js';
 import { repairBand, DECISION_CONFIG, type Decision } from './_lib/decision.js';
 import { ebayPartPrices } from './_lib/parts-prices.js';
+import { DRIVE_ITEMS, DRIVE_STATUS, worse, type Drivability } from './_lib/scorecard.js';
 
 export const config = { maxDuration: 60 };
 
@@ -55,6 +56,7 @@ export type GradeResult = {
   damages: Damage[];
   missing_parts: { item: string; part: string; photos: number[] }[];
   flags: Record<(typeof FLAGS)[number], Tri>;
+  drivability: Drivability;               // read from the photos; feeds the ACV vs Copart scorecard
   primary_damage_area: string;
   overall_severity: 'none' | 'light' | 'moderate' | 'heavy' | 'total_loss_likely';
   photo_gaps: string[];
@@ -87,7 +89,7 @@ const VIEWS = ['front', 'front_left', 'left_side', 'rear_left', 'rear', 'rear_ri
 // Property order matters: the model writes photo_views first, so left/right is settled before any part is graded.
 const SCHEMA = {
   type: 'object', additionalProperties: false,
-  required: ['photo_views', 'vehicle', 'parts', 'damages', 'missing_parts', 'flags', 'primary_damage_area', 'overall_severity', 'photo_gaps', 'summary'],
+  required: ['photo_views', 'vehicle', 'parts', 'damages', 'missing_parts', 'flags', 'drivability', 'primary_damage_area', 'overall_severity', 'photo_gaps', 'summary'],
   properties: {
     photo_views: {
       type: 'array',
@@ -134,6 +136,13 @@ const SCHEMA = {
       },
     },
     flags: { type: 'object', additionalProperties: false, required: [...FLAGS], properties: Object.fromEntries(FLAGS.map((f) => [f, triState])) },
+    drivability: {
+      type: 'object', additionalProperties: false, required: [...DRIVE_ITEMS],
+      properties: Object.fromEntries(DRIVE_ITEMS.map((k) => [k, {
+        type: 'object', additionalProperties: false, required: ['status', 'note', 'photos'],
+        properties: { status: { type: 'string', enum: DRIVE_STATUS[k] }, note: { type: 'string' }, photos: photoList },
+      }])),
+    },
     primary_damage_area: { type: 'string', enum: ['front', 'rear', 'left_side', 'right_side', 'roof', 'undercarriage', 'interior', 'all_over', 'none', 'unknown'] },
     overall_severity: { type: 'string', enum: ['none', 'light', 'moderate', 'heavy', 'total_loss_likely'] },
     photo_gaps: { type: 'array', items: { type: 'string' } },
@@ -175,6 +184,14 @@ STEP 4 - the rest:
 - damages: every distinct problem that needs repair (not dirt or wear), with a specific description (where, how big) and the photo numbers that show it. Every part graded repairable or replace needs at least one entry. severity sets that part's price: minor = one small spot (a small dent, a short scratch, a chipped lens); moderate = a larger area or several spots; severe = most of the part, deep or torn damage, or crushed or missing with its mounts.
 - missing_parts: specific items that are absent (e.g. "front bumper cover", "left headlight assembly", "driver mirror glass").
 - flags: true/false only when a photo clearly shows it, otherwise "unknown". frame_suspected is true when damage suggests the frame may be bent (crushed corners, pushed-in wheels, misaligned panel gaps, deployed airbags with heavy front damage).
+- drivability: could the car be driven, judged from the photos. One status per item, "unknown" when no photo shows it, each with a short note and the photo numbers:
+  - damage_location: none; cosmetic (damage only to panels, bumper covers, trim, lights or glass: it could still be driven); affects_driving (damage to the front structure or cooling/radiator area, a wheel, the suspension, steering or the frame that keeps it from being driven safely).
+  - fluids, from the engine bay and the ground under the car: dry; seepage (damp or oily spots, no drips); leaking (drips, puddles, sprayed or soaked parts).
+  - rust: none; surface (light rust on brakes, exhaust or chips); heavy (flaking or holes, rusted-through panels, rocker or frame rot).
+  - tires: good; worn (low tread, cracked sidewalls, mismatched tires); flat_or_damaged (flat, torn, off the rim, bent wheel).
+  - brakes: ok (a lit instrument cluster shows no brake or ABS warning and no brake damage shows); warning (brake or ABS warning lit, or rotors deeply scored); damaged (brake parts broken, missing or leaking). unknown when neither the dashboard lights nor the brakes show.
+  - glass: intact; chipped (small chips, no cracks); cracked_or_broken (any windshield crack, a broken or missing window).
+  - modifications: none (looks stock); minor (window tint, aftermarket wheels, racks, small trim); major (lift or lowering kit, oversized tires, engine or exhaust modifications, body kits, removed or added body parts, off-road or racing builds).
 - vehicle.price_class sets parts prices: economy (Kia, Hyundai, Nissan Versa-type small cars), mainstream (Toyota, Honda, Ford, Chevrolet, most pickups and SUVs), premium (Acura, Lexus, Buick, Volvo, loaded full-size trucks), luxury (BMW, Mercedes-Benz, Audi, Porsche, Land Rover, Tesla), unknown if you cannot tell the make.
 - vehicle: year/make/model/trim/color only from badges, labels, body shape or text visible in the photos; say what you used in identified_from. If a door-jamb label shows a build date (MM/YY), the model year is that year or the next one. Read the VIN from the VIN-label crop if there is one, character by character; copy a VIN or odometer reading only if you can read every character, otherwise null.
 - photo_gaps: angles that are missing or unusable (e.g. "no clear underbody photo").
@@ -216,12 +233,16 @@ export function mergePasses(a: Raw, b: Raw): Raw {
   const seen = new Set<string>();
   const missing = [...a.missing_parts, ...b.missing_parts].filter((m: { item: string; part: string }) =>
     isDamaged(parts[m.part]?.grade ?? '') && !seen.has(m.item.toLowerCase()) && !!seen.add(m.item.toLowerCase()));
+  const drivability = Object.fromEntries(DRIVE_ITEMS.map((k) => {
+    const x = a.drivability?.[k], y = b.drivability?.[k];
+    return [k, worse(k, x?.status, y?.status) === x?.status ? x ?? y : y];
+  }));
   const count = (r: Raw) => PARTS.filter((p) => isDamaged(r.parts[p].grade)).length;
   const lead = count(b) > count(a) ? b : a;
   const vehicle = { ...a.vehicle };
   for (const k of Object.keys(b.vehicle)) if (vehicle[k] == null) vehicle[k] = b.vehicle[k];
   return {
-    ...a, vehicle, parts, damages, missing_parts: missing, flags,
+    ...a, vehicle, parts, damages, missing_parts: missing, flags, drivability,
     primary_damage_area: lead.primary_damage_area, summary: lead.summary,
     overall_severity: OVERALL[Math.max(OVERALL.indexOf(a.overall_severity), OVERALL.indexOf(b.overall_severity))],
     photo_gaps: [...new Set([...a.photo_gaps, ...b.photo_gaps])],
@@ -427,6 +448,10 @@ export async function gradePhotos(vin: string, photos: string[], opts: GradeOpti
     damages: raw.damages.map((d: Damage) => ({ ...d, photos: d.photos.filter(okPhoto), confidence: clamp01(d.confidence) })),
     missing_parts: raw.missing_parts.map((m: { item: string; part: string; photos: number[] }) => ({ ...m, photos: m.photos.filter(okPhoto) })),
     flags: raw.flags,
+    drivability: Object.fromEntries(DRIVE_ITEMS.map((k) => {
+      const d = raw.drivability?.[k] ?? { status: 'unknown', note: '', photos: [] };
+      return [k, { status: DRIVE_STATUS[k].includes(d.status) ? d.status : 'unknown', note: d.note, photos: (d.photos ?? []).filter(okPhoto) }];
+    })) as Drivability,
     primary_damage_area: raw.primary_damage_area,
     overall_severity: raw.overall_severity,
     photo_gaps: raw.photo_gaps,
@@ -455,7 +480,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         views: ['optional, per photo: view from /api/classify-photos, or null'],
         crops: [{ photo: 1, kind: 'damage | vin_label | odometer', part: 'part name or none', note: '...', image: 'data:image/jpeg;base64,...' }],
       },
-      returns: 'vehicle, parts[25] {part, grade, severity, confidence, evidence_photo, note}, damages[], missing_parts[], flags, primary_damage_area, overall_severity, photo_gaps, summary, repair_estimate {low, high, lines[] per part: parts_cost, parts_source (ebay | table), labor_hours, labor_cost, paint_cost}, meta',
+      returns: 'vehicle, parts[25] {part, grade, severity, confidence, evidence_photo, note}, damages[], missing_parts[], flags, drivability {damage_location, fluids, rust, tires, brakes, glass, modifications: {status, note, photos}}, primary_damage_area, overall_severity, photo_gaps, summary, repair_estimate {low, high, lines[] per part: parts_cost, parts_source (ebay | table), labor_hours, labor_cost, paint_cost}, meta',
     });
   }
   if (req.method !== 'POST') return res.status(405).json({ error: 'Use POST' });

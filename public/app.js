@@ -326,6 +326,9 @@ async function recompute(first = false) {
     values: readValues(),
     assumptions: readAssumptions(),
     drivable: state.drivable,
+    // OpenAI's reads for the ACV vs Copart scorecard: drivability from the photos, all fault codes priced together.
+    drivability: (state.photo && state.photo.data && state.photo.data.drivability) || null,
+    code_assessment: state.codes.combination || null,
     market: state.market,
     vehicle,
   };
@@ -357,21 +360,23 @@ function routeBlock() {
     <details style="margin-top:8px"><summary style="cursor:pointer;color:var(--steel);font-size:13px">How the engine read your inputs</summary><ul class="tab-note" style="margin:8px 0 0">${r.notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul></details>
   </div>`;
 }
-// ACV vs Copart points scorecard (api/_lib/scorecard.ts, returned by /api/decide as `channel`).
+// ACV vs Copart scorecard (api/_lib/scorecard.ts, returned by /api/decide as `channel`): five weighted categories, 100 points.
 const CH_LABEL = { acv: 'ACV', copart: 'Copart', too_close: 'Too close to call' };
 function scorecardBlock(d) {
   const s = d.channel;
   if (!s) return '';
   const pts = (n) => (n ? `+${n}` : '');
-  const rows = s.categories.map((c) => `<tr class="cat"><td>${esc(c.label)}</td><td class="pts">${pts(c.acv)}</td><td class="pts">${pts(c.copart)}</td></tr>`
+  const weights = s.categories.map((c) => `${c.label.toLowerCase()} ${c.weight}`).join(', ');
+  const rows = s.categories.map((c) => `<tr class="cat"><td>${esc(c.label)} <small style="color:var(--steel);font-weight:400">(up to ${c.weight})</small></td><td class="pts">${pts(c.acv)}</td><td class="pts">${pts(c.copart)}</td></tr>`
     + c.rows.map((r) => `<tr><td>${esc(r.finding[0].toUpperCase() + r.finding.slice(1))}<small style="display:block;color:var(--steel);font-size:12px">${esc(r.reason)}</small></td><td class="pts">${pts(r.acv)}</td><td class="pts">${pts(r.copart)}</td></tr>`).join('')).join('');
   const m = state.market;
   const listings = m && m.ran && m.sample && m.sample.length
     ? `<details style="margin-top:8px"><summary style="cursor:pointer;color:var(--steel);font-size:13px">Listings found${m.price_low ? ` (${money(m.price_low)} to ${money(m.price_high)})` : ''}</summary><ul class="tab-note" style="margin:8px 0 0">${m.sample.map((x) => `<li><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.title || x.url)}</a></li>`).join('')}</ul></details>` : '';
+  const close = s.close_margin ?? 5;
   return `<div class="sec scorecard">
     <h3>ACV vs Copart scorecard: <span class="dest">${esc(CH_LABEL[s.winner])}</span></h3>
     <div class="totals"><div class="tot${s.winner === 'acv' ? ' win' : ''}">ACV<b>${s.acv}</b></div><div class="tot${s.winner === 'copart' ? ' win' : ''}">Copart<b>${s.copart}</b></div></div>
-    <p class="tab-note">${s.forced ? esc(s.forced) + ' ' : ''}Each finding adds points to the channel it favors; ${s.margin < 5 && !s.forced ? 'the totals are within 5 points, so it\'s too close to call' : 'the higher total wins'}.${s.missing.length ? ` Not scored yet: ${esc(s.missing.join(', '))}.` : ''}</p>
+    <p class="tab-note">${s.forced ? esc(s.forced) + ' ' : ''}Out of 100 points (${esc(weights)}). Each finding gives its share of a category to the channel it favors; ${s.margin < close && !s.forced ? `the totals are within ${close} points, so it's too close to call` : 'the higher total wins'}.${s.missing.length ? ` Not scored yet: ${esc(s.missing.join(', '))}.` : ''}</p>
     <table class="lines"><tbody><tr><td><b>Finding</b></td><td class="pts"><b>ACV</b></td><td class="pts"><b>Copart</b></td></tr>${rows}
       <tr class="total"><td>Total</td><td class="pts">${s.acv}</td><td class="pts">${s.copart}</td></tr></tbody></table>${listings}
   </div>`;
@@ -518,7 +523,13 @@ function codesTab() {
   if (!r.codes.length) return '<p class="tab-note">No codes from the scan tool.</p>';
   const sev = (s) => s[0].toUpperCase() + s.slice(1);
   const inspect = r.triage === 'full_inspection' ? 'A full inspection is worth paying for.' : `A full inspection isn't worth paying for: ${r.reason.replace(/^Skip inspection:\s*/, '')}`;
-  return `<p class="tab-note">${r.summary.count} code${r.summary.count === 1 ? '' : 's'}, ${money(r.summary.cost_low)} to ${money(r.summary.cost_high)} in the repair estimate. ${esc(inspect)}</p>
+  // OpenAI's price for all codes fixed together (from /api/decode-codes) is what the repair estimate uses when present.
+  const k = r.combination;
+  const priced = k && k.cost_high > 0
+    ? `${r.summary.count} code${r.summary.count === 1 ? '' : 's'} priced together at ${money(k.cost_low)} to ${money(k.cost_high)} in the repair estimate (${k.confidence} confidence; one by one they'd add ${money(r.summary.cost_low)} to ${money(r.summary.cost_high)}).`
+    : `${r.summary.count} code${r.summary.count === 1 ? '' : 's'}, ${money(r.summary.cost_low)} to ${money(r.summary.cost_high)} in the repair estimate.`;
+  const causes = k && k.root_causes.length ? `<ul class="tab-note" style="margin:10px 0 0">${k.root_causes.map((x) => `<li><b>${esc(x.codes.join(', '))}</b>: ${esc(x.repair)} (${money(x.cost_low)} to ${money(x.cost_high)})</li>`).join('')}${k.modules.map((m) => `<li>Module: ${esc(m.module.replace(/_/g, ' '))}, ${m.status === 'replacement_likely' ? 'replacement likely' : 'fault reported'} (${esc(m.codes.join(', '))})</li>`).join('')}</ul>` : '';
+  return `<p class="tab-note">${priced} ${esc(inspect)}</p>${causes}
     <ul class="codelist">${r.codes.map((c) => `
       <li class="sev-${esc(c.severity)}"><span class="code">${esc(c.code)}</span><span class="desc">${c.description === 'unknown' ? 'Meaning unknown' : esc(c.description)}</span>
         <span class="cost">${c.source === 'invalid' ? '' : `${money(c.cost_low)} to ${money(c.cost_high)}`}</span>

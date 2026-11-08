@@ -2,7 +2,7 @@
 // Pure logic, no AI: cheap enough to rerun on every reviewer edit.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { scoreChannels, type Scorecard, type MarketFit } from './scorecard.js';
+import { scoreChannels, type Scorecard, type MarketFit, type Drivability, type CodeAssessment } from './scorecard.js';
 import type { PartPrice } from './parts-prices.js';
 
 // ---- Config: every assumption lives here ----
@@ -41,8 +41,8 @@ export const DECISION_CONFIG = {
 export type Severity = 'minor' | 'moderate' | 'severe';
 export type Grade = { part: string; grade: 'fine' | 'repairable' | 'replace' | 'unknown'; severity?: Severity | null };
 type Tri = boolean | 'unknown';
-export type Flags = { airbags_deployed?: Tri; frame_suspected?: Tri; fluid_leak?: Tri; flood_suspected?: Tri; fire_damage?: Tri };
-export type CodeIn = { code: string; description?: string; severity?: string; cost_low: number; cost_high: number };
+export type Flags = { airbags_deployed?: Tri; frame_suspected?: Tri; fluid_leak?: Tri; flood_suspected?: Tri; fire_damage?: Tri; suspension_damage_suspected?: Tri };
+export type CodeIn = { code: string; description?: string; severity?: string; system?: string; source?: string; cost_low: number; cost_high: number };
 export type DecideInput = {
   title_status?: string;
   vehicle_class?: string;   // economy | mainstream | premium | luxury | unknown (from the photo grader)
@@ -51,7 +51,9 @@ export type DecideInput = {
   codes?: CodeIn[];
   values?: { clean_wholesale?: number; salvage_comps?: number[] };
   assumptions?: Partial<typeof DECISION_CONFIG.defaults>;
-  drivable?: 'yes' | 'no' | 'unknown';   // seller's answer, for the ACV vs Copart scorecard
+  drivable?: 'yes' | 'no' | 'unknown';   // seller's answer; the scorecard uses it only when the photos gave no drivability
+  drivability?: Drivability | null;      // /api/grade-photos: OpenAI's read of drivability from the photos
+  code_assessment?: CodeAssessment | null; // /api/decode-codes: OpenAI's price for all codes together + modules
   market?: MarketFit | null;             // /api/market-fit response
   part_prices?: Record<string, PartPrice>; // eBay prices for replaced parts (filled in by /api/decide from `vehicle`)
 };
@@ -134,8 +136,16 @@ export function repairBand(inp: DecideInput, rate: number): Decision['repair'] {
   if (f.airbags_deployed === true && grades.get('interior') !== 'replace') {
     const l = partLine('interior', 'replace', rate, { note: ' (airbags deployed)', vehicleClass }); if (l) lines.push(l);
   }
-  for (const c of inp.codes ?? []) {
-    if (c.cost_high > 0) lines.push({ label: `${c.code}${c.description && c.description !== 'unknown' ? ` ${c.description}` : ''}`, low: c.cost_low, high: c.cost_high });
+  // Fault codes: OpenAI's price for fixing them all together (codes often share one root cause) when the page sends
+  // it from /api/decode-codes; otherwise each code at its own table or severity price.
+  const scanned = (inp.codes ?? []).filter((c) => c.source !== 'invalid');
+  const combo = inp.code_assessment;
+  if (combo && scanned.length && combo.cost_high > 0) {
+    lines.push({ label: `Fault codes together (${scanned.map((c) => c.code).join(', ')})`, low: combo.cost_low, high: combo.cost_high });
+  } else {
+    for (const c of inp.codes ?? []) {
+      if (c.cost_high > 0) lines.push({ label: `${c.code}${c.description && c.description !== 'unknown' ? ` ${c.description}` : ''}`, low: c.cost_low, high: c.cost_high });
+    }
   }
 
   const W = DECISION_CONFIG.widen;
@@ -197,7 +207,8 @@ export function decide(inp: DecideInput): Decision {
     ? { low: Math.round(clean * (1 - h[1]) * (1 - disc[1])), high: Math.round(clean * (1 - h[0]) * (1 - disc[0])), title_discount: disc }
     : null;
   const channel = scoreChannels({
-    title_status: title, drivable: inp.drivable, grades: inp.grades, flags: inp.flags, codes: inp.codes,
+    title_status: title, drivable: inp.drivable, drivability: inp.drivability, grades: inp.grades, flags: inp.flags,
+    codes: inp.codes, code_assessment: inp.code_assessment,
     repair, clean_wholesale: clean, arv_high: arv?.high ?? null, market: inp.market,
   });
   const base = { repair, arv, as_is: asIs, days: { fix: a.fix_days, as_is: a.as_is_days }, missing, assumptions: a, channel };

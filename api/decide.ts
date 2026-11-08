@@ -22,6 +22,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         values: { clean_wholesale: 18000, salvage_comps: [6200, 6900, 7400] },
         assumptions: DECISION_CONFIG.defaults,
         vehicle: { year: 2019, make: 'Toyota', model: 'Tacoma', body_type: 'pickup', note: 'optional: prices replaced parts from eBay' },
+        drivability: 'optional: /api/grade-photos `drivability` (OpenAI read of the photos); the scorecard uses `drivable` only without it',
+        code_assessment: 'optional: /api/decode-codes `combination` (all fault codes priced together + non-engine modules)',
       },
     });
   }

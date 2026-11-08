@@ -79,6 +79,7 @@ The grid is drawn by `drawGrid()` in `public/app.js` (and `gridded()` in `script
 | `damages` | every problem: part, type (dent, crack, missing...), severity, description, photos |
 | `missing_parts` | specific items that are gone |
 | `flags` | airbags deployed, frame suspected, fluid leak, flood, fire, suspension: true / false / "unknown" |
+| `drivability` | could it be driven, per item with a note and photos: `damage_location` (none / cosmetic / affects_driving), `fluids` (dry / seepage / leaking), `rust` (none / surface / heavy), `tires` (good / worn / flat_or_damaged), `brakes` (ok / warning / damaged), `glass` (intact / chipped / cracked_or_broken), `modifications` (none / minor / major), each "unknown" when no photo shows it. The two passes keep the worse status. Feeds the ACV vs Copart scorecard (`docs/channel-scorecard.md`). |
 | `primary_damage_area`, `overall_severity`, `photo_gaps`, `summary` | overview for a person |
 | `repair_estimate` | the priced repair, see below (default $95/hr labor) |
 | `meta` | model, seconds, attempts, photo and crop counts |

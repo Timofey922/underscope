@@ -104,7 +104,7 @@ Repair band = sum of rows for flagged parts. If any flag is "unknown" or frame_s
 
 ## As-is band
 Hand-entered per vehicle: 5-10 comparable sold salvage lots + one clean wholesale value with a condition haircut. Band = low/high of comps.
-- Clean wholesale is entered on the page; salvage comps are not (team decision: no comps field on the page). Both are stored per VIN in the registry (`clean_wholesale`, `salvage_comps`, `values_note`) and filled in automatically. At least 3 comps are required for fix vs sell as-is; without them that section is hidden and the engine headline uses its own salvage estimate.
+- Clean wholesale is entered on the page; registry vehicles bring both (`clean_wholesale`, `salvage_comps`, `values_note`), filled in automatically. For a VIN not in the registry the page shows a comps field, pre-filled from registry cars of the same make and model within ±3 model years when there are 3+ (`similar` from `GET /api/vehicle`, labeled "estimated from similar vehicles"; never demo/sample values, never AI). At least 3 comps and a clean value are required: without them there is no headline, no nets and no engine run (it would use placeholder prices); the page shows the decoded vehicle, photo grades and codes and one line on what is missing.
 - After-repair value = clean wholesale × (1 − condition haircut 5–12%) × (1 − title discount). Title discounts: rebuilt/salvage 20–40% (salvage becomes rebuilt after repair), flood 30–50%, lemon 15–30%, unknown 0–20%. `non_repairable` means fixing isn't allowed: verdict `not_fixable`.
 
 ## Decision

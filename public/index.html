@@ -134,8 +134,8 @@
               <div class="money"><span>$</span><input id="clean" inputmode="numeric" autocomplete="off" placeholder="18000"></div>
               <div class="hint" id="clean-hint">Same year, model and mileage, no damage, clean title.</div>
             </div>
-            <!-- Salvage comps aren't typed in: they come from the verified registry (or a ?comps= link). -->
-            <div class="field" hidden>
+            <!-- Shown only for VINs that aren't in the verified registry (registry cars bring their own comps). -->
+            <div class="field" id="comps-field" hidden>
               <span class="label" id="comps-label">Salvage comps (sold prices)</span>
               <div class="tags" id="comps"><input id="comp-input" inputmode="numeric" autocomplete="off" placeholder="6500" aria-labelledby="comps-label"></div>
               <div class="hint" id="comps-hint"></div>
@@ -156,6 +156,7 @@
       <button class="btn btn-primary" id="next" type="button">Next</button>
       <button class="btn btn-primary" id="go" type="submit" form="form" hidden>Run check</button>
     </div>
+    <ol class="progress" id="progress" hidden aria-live="polite"></ol>
   </section>
 
   <section class="panel result" id="result" hidden aria-live="polite"></section>

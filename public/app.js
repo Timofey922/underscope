@@ -81,6 +81,13 @@ const setTitle = (v) => { const r = document.querySelector(`input[name=title][va
 const getDrivable = () => (document.querySelector('input[name=drivable]:checked') || {}).value || 'unknown';
 const setDrivable = (v) => { const r = document.querySelector(`input[name=drivable][value="${v}"]`); if (r) r.checked = true; };
 const getState = () => $('state').value || null;
+const getMileage = () => { const n = Number($('mileage').value.replace(/[^0-9]/g, '')); return n > 0 ? n : null; };
+const MILEAGE_HINT = "From the dash. Left blank, it's read from an odometer photo if there is one.";
+$('mileage').addEventListener('input', () => { $('mileage-hint').textContent = MILEAGE_HINT; });
+$('mileage').addEventListener('change', () => {
+  if (!state || !state.market) return;
+  state.market.mileage = getMileage(); recompute(); // a corrected reading re-runs the check
+});
 $('title-hint').textContent = TITLE_HINT;
 
 // ---------- Photos ----------
@@ -233,7 +240,7 @@ const samplesReady = fetch('/demo_vehicles.json').then((r) => r.json()).then(({ 
 
 $('clear').onclick = () => {
   $('vin').value = ''; $('vin').dispatchEvent(new Event('input'));
-  codes.set([]); comps.set([]); $('clean').value = ''; photos = []; renderPhotos(); setTitle('unknown'); setDrivable('unknown'); $('state').value = '';
+  codes.set([]); comps.set([]); $('clean').value = ''; photos = []; renderPhotos(); setTitle('unknown'); setDrivable('unknown'); $('state').value = ''; $('mileage').value = ''; $('mileage-hint').textContent = MILEAGE_HINT;
   preset = null; state = null; $('result').hidden = true; $('empty').hidden = false;
   history.replaceState(null, '', '/'); $('vin').focus();
 };
@@ -265,7 +272,7 @@ $('form').addEventListener('submit', async (e) => {
       post('/api/decode-codes', { vin, codes: codes.get(), title_status: getTitle() }),
       photos.length ? gradePhotoFlow(vin, (t) => { $('go').textContent = t; }).catch((x) => x) : null,
       // Market fit for the ACV vs Copart scorecard: public listings of this model in the seller's state.
-      post('/api/market-fit', { vin, state: getState() }).then((r) => r.json()).catch((e) => ({ ran: false, error: e.message })),
+      post('/api/market-fit', { vin, state: getState(), mileage: getMileage() }).then((r) => r.json()).catch((e) => ({ ran: false, error: e.message })),
     ]);
     const c = await cRes.json().catch(() => ({}));
     if (!cRes.ok) throw new Error(c.error || `The server answered ${cRes.status}.`);
@@ -280,7 +287,12 @@ $('form').addEventListener('submit', async (e) => {
       : preset ? 'Sample grades, standing in for graded photos.'
       : 'No photos, so every part starts as not visible. Click a grade to set it.';
     const odo = photo && photo.data && photo.data.vehicle && photo.data.vehicle.odometer_unit === 'mi' ? photo.data.vehicle.odometer_visible : null;
-    if (market && market.mileage == null && odo) market.mileage = odo;
+    // Typed mileage wins; otherwise use the dash reading and show it in the field so it can be corrected.
+    if (!getMileage() && odo) {
+      $('mileage').value = odo;
+      $('mileage-hint').textContent = `Read from the dash photo: ${Number(odo).toLocaleString('en-US')} mi. Correct it if that's wrong.`;
+    }
+    if (market) market.mileage = getMileage();
     state = { vin, codes: c, photo, grades, flags, gradeNote, photoGaps: photo && photo.data ? photo.data.photo_gaps : [], sampleId: preset && preset.id,
       drivable: getDrivable(), region: getState(), market };
 
@@ -409,6 +421,7 @@ function shareUrl() {
   const cs = codes.get(); if (cs.length) u.searchParams.set('codes', cs.join(','));
   if (state.drivable && state.drivable !== 'unknown') u.searchParams.set('drivable', state.drivable);
   if (state.region) u.searchParams.set('state', state.region);
+  if (getMileage()) u.searchParams.set('mileage', getMileage());
   const v = readValues();
   if (!reg && v.clean_wholesale) u.searchParams.set('clean', v.clean_wholesale);
   if (!reg && v.salvage_comps.length) u.searchParams.set('comps', v.salvage_comps.join(','));
@@ -603,6 +616,7 @@ function render(d, first) {
   if (q.get('title')) setTitle(q.get('title'));
   if (q.get('drivable')) setDrivable(q.get('drivable'));
   if (q.get('state')) $('state').value = q.get('state').toUpperCase();
+  if (q.get('mileage')) $('mileage').value = q.get('mileage').replace(/[^0-9]/g, '');
   if (q.get('codes')) codes.set(q.get('codes').split(','));
   if (q.get('clean')) $('clean').value = q.get('clean');
   if (q.get('comps')) comps.set(q.get('comps').split(','));

@@ -60,6 +60,7 @@ front_bumper, hood, grille, left_headlight, right_headlight, windshield, left_fr
   - Return the output shape above with status 200; on failure return a 4xx/5xx with `{ "error": "..." }`.
   - Vercel caps request bodies at ~4.5 MB; the page limits uploads to 30 photos / 4 MB.
   - Create the OpenAI client with `openaiClient()` from `api/_lib/openai.ts`. Tuning knobs (image detail, reasoning effort, max photos) are in `GRADE_CONFIG`.
+  - Two stages (Karthik): `POST /api/classify-photos` uses a cheap model (`OPENAI_CLASSIFY_MODEL`, default `gpt-4o-mini`, ~3 s) to label each photo's view (front_right, left_side, ...) and box close-up regions; the page cuts full-resolution crops and sends `views` + `crops` to `/api/grade-photos`. Side rule the models use: if the vehicle's nose points to the right edge of the picture, you're looking at its right side. Grading took ~30 s for one photo in testing; watch the 60 s Vercel limit on large photo sets.
 
 ## Fault codes module (owner: Tim) — built: `api/decode-codes.ts`
 Input: VIN + list of OBD-II trouble codes from a scan tool (e.g. ["P0300", "C1232"]).

@@ -4,6 +4,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { openaiClient } from './_lib/openai.js';
 import { repairBand, DECISION_CONFIG, type Decision } from './_lib/decision.js';
+import { ebayPartPrices } from './_lib/parts-prices.js';
 
 export const config = { maxDuration: 60 };
 
@@ -24,9 +25,13 @@ const FLAGS = ['airbags_deployed', 'frame_suspected', 'fluid_leak', 'flood_suspe
 
 export const GRADE_CONFIG = {
   maxPhotos: 30,
-  maxCrops: 10,                      // full-resolution close-ups cut by the page from /api/classify-photos boxes
+  maxCrops: 16,                      // full-resolution close-ups cut by the page from /api/classify-photos boxes
   imageDetail: 'high' as const,      // damage is small; low detail misses it
   reasoningEffort: 'low' as const,   // only for reasoning models (gpt-5.x, o-series); gpt-4o takes temperature 0 instead
+  passes: 2,                         // grade twice at once (pass 2 sees the photos in reverse order), keep the worse grade per part
+  recheck: true,                     // second look at fine parts next to damage
+  recheckAfterS: 35,                 // skip the second look when the passes took longer (Vercel stops a function at 60 s)
+  recheckMaxParts: 10, recheckMaxPhotos: 6, recheckMaxCrops: 6,
 };
 
 // Close-up cut from photo `photo` around a region stage 1 flagged.
@@ -56,7 +61,12 @@ export type GradeResult = {
   summary: string;
   // Priced from data/repair_costs.csv at the default labor rate; /api/decide reprices with the seller's rate and reviewer edits.
   repair_estimate: Decision['repair'];
-  meta: { model: string; seconds: number; attempts: number; photos: number; crops: number };
+  meta: {
+    model: string; seconds: number; attempts: number; photos: number; crops: number;
+    passes: Record<string, string>[];      // each grading pass's grade per part, before merging
+    side_fixes: SideFix[];                 // damage moved to the mirror-image part
+    recheck: { parts: string[]; upgraded: string[]; seconds: number; skipped?: string };
+  };
 };
 
 const triState = { anyOf: [{ type: 'boolean' }, { type: 'string', enum: ['unknown'] }] };
@@ -131,6 +141,20 @@ const SCHEMA = {
   },
 };
 
+// Grade definitions, shared by the grading passes and the second look at parts next to damage.
+const GRADE_RULES = `- fine: visible in at least one photo (even at an angle or partly) and undamaged.
+- repairable: damaged but fixable: any dent or crease (even small), scrape or scratch through the paint, repairable crack, scuffed or torn bumper cover.
+- replace: broken, cracked through, shattered, missing, crushed or torn, or too damaged to repair. A deployed airbag makes interior "replace".
+- unknown: ONLY when no photo shows the part at all (typically the underbody, the top of the roof, or a side that was not photographed). Every part you can see in any photo gets fine, repairable or replace.
+- Glass, lights, mirrors, wheels and tires have fixed rules. Check each of them in every photo before grading:
+  - windshield: replace if it has any crack, a hole, or a chip with cracks running from it; a single small chip with no cracks is repairable.
+  - headlights and taillights: replace if the lens is cracked, broken, holed or missing, the light is hanging, pushed in or out of its opening, or has water inside; a scuffed lens with no crack is repairable.
+  - mirrors: replace if the mirror is missing, hanging, folded flat by a hit, its housing is cracked or broken, or its glass is cracked or missing; a scraped mirror cap is repairable.
+  - wheels_and_tires: replace if any tire is flat, torn or off the rim, or any wheel is bent, cracked, broken or missing; curb rash on a wheel is repairable.
+- Missing real damage costs more than one extra "repairable", so when a panel looks dented or scraped, grade it repairable.
+- Dirt, water spots, wash marks, light swirl marks, tiny stone chips and faded headlight lenses are not damage: grade them fine.
+- Grade the panel the damage is actually on. Damage on a bumper corner does not make the fender, headlight or grille repairable unless that part itself is dented, scratched, cracked or pushed out of line.`;
+
 const SYSTEM = `You are an experienced auto-damage appraiser grading one vehicle from its photos for a used-car remarketing tool. Reply with JSON only, matching the schema. Work through the steps in order; the JSON fields come in the same order.
 
 Left and right ALWAYS mean the vehicle's own sides as seen from the driver's seat (US: left = driver side), never the left or right of the picture.
@@ -143,13 +167,7 @@ STEP 1 - photo_views: one entry per photo with its view and the cue you used.
 STEP 2 - look at every photo and every close-up crop before grading. Crops are full-resolution cut-outs of areas a first pass flagged, each from the numbered photo shown in its label; a crop with no real damage is a false alarm, and its part label is only a hint. Scan the whole vehicle in each photo: bumpers, grille, lights, hood, every door, quarter panels, wheels and tires, glass, mirrors. Small dents and creases show as bent reflections or uneven panel gaps.
 
 STEP 3 - grade all 25 parts:
-- fine: visible in at least one photo (even at an angle or partly) and undamaged.
-- repairable: damaged but fixable: any dent or crease (even small), scrape or scratch through the paint, repairable crack, scuffed or torn bumper cover.
-- replace: broken, cracked through, shattered, missing, crushed or torn, or too damaged to repair. A deployed airbag makes interior "replace".
-- unknown: ONLY when no photo shows the part at all (typically the underbody, the top of the roof, or a side that was not photographed). Every part you can see in any photo gets fine, repairable or replace.
-- Missing real damage costs more than one extra "repairable", so when a panel looks dented or scraped, grade it repairable.
-- Dirt, water spots, wash marks, light swirl marks, tiny stone chips and faded headlight lenses are not damage: grade them fine.
-- Grade the panel the damage is actually on. Damage on a bumper corner does not make the fender, headlight or grille repairable unless that part itself is dented, scratched, cracked or pushed out of line.
+${GRADE_RULES}
 Parts: ${PARTS.join(', ')}. "interior" covers seats, dash and airbags; "engine_bay" covers the radiator area and leaks; "underbody" covers frame rails, exhaust and catalytic converter.
 evidence_photo is the number of the photo that best shows the part (never a crop number), or null when the grade is unknown. note is a few words on what you saw. confidence is 0 to 1.
 
@@ -173,84 +191,252 @@ export function vinCheckDigitOk(vin: string | null): boolean | null {
   return v[8] === (sum % 11 === 10 ? 'X' : String(sum % 11));
 }
 
+// ---- Extra checks around the grading passes (GRADE_CONFIG) ----
+type Raw = any; // the model's JSON, shaped by SCHEMA
+type PartGrade = { grade: string; confidence: number; evidence_photo: number | null; note: string };
+export type SideFix = { from: string; to: string; photos: number[] };
+const RANK: Record<string, number> = { unknown: 0, fine: 1, repairable: 2, replace: 3 };
+const OVERALL = ['none', 'light', 'moderate', 'heavy', 'total_loss_likely'];
+const isDamaged = (g: string) => g === 'repairable' || g === 'replace';
+const mirrorOf = (p: string) => (p.startsWith('left_') ? `right_${p.slice(5)}` : p.startsWith('right_') ? `left_${p.slice(6)}` : null);
+
+// Two passes over the same photos: keep the worse grade per part (a missed dent costs more than an extra "repairable").
+export function mergePasses(a: Raw, b: Raw): Raw {
+  const parts: Record<string, PartGrade> = {}, damages: Damage[] = [];
+  for (const part of PARTS) {
+    const win = RANK[b.parts[part].grade] > RANK[a.parts[part].grade] ? b : a, other = win === a ? b : a;
+    parts[part] = win.parts[part];
+    if (!isDamaged(parts[part].grade)) continue;
+    const own: Damage[] = win.damages.filter((d: Damage) => d.part === part);
+    const extra: Damage[] = other.parts[part].grade === parts[part].grade ? other.damages.filter((d: Damage) => d.part === part && !own.some((o) => o.type === d.type)) : [];
+    damages.push(...own, ...extra);
+  }
+  const flags: Record<string, Tri> = {};
+  for (const f of FLAGS) { const x = [a.flags[f], b.flags[f]]; flags[f] = x.includes(true) ? true : x.includes('unknown') ? 'unknown' : false; }
+  const seen = new Set<string>();
+  const missing = [...a.missing_parts, ...b.missing_parts].filter((m: { item: string; part: string }) =>
+    isDamaged(parts[m.part]?.grade ?? '') && !seen.has(m.item.toLowerCase()) && !!seen.add(m.item.toLowerCase()));
+  const count = (r: Raw) => PARTS.filter((p) => isDamaged(r.parts[p].grade)).length;
+  const lead = count(b) > count(a) ? b : a;
+  const vehicle = { ...a.vehicle };
+  for (const k of Object.keys(b.vehicle)) if (vehicle[k] == null) vehicle[k] = b.vehicle[k];
+  return {
+    ...a, vehicle, parts, damages, missing_parts: missing, flags,
+    primary_damage_area: lead.primary_damage_area, summary: lead.summary,
+    overall_severity: OVERALL[Math.max(OVERALL.indexOf(a.overall_severity), OVERALL.indexOf(b.overall_severity))],
+    photo_gaps: [...new Set([...a.photo_gaps, ...b.photo_gaps])],
+  };
+}
+
+// Side panels and mirrors only show from their own side. When every photo that shows a part's damage is a view of
+// the OTHER side, the model put it on the mirror-image part: move it there. Three-quarter views count only for doors
+// (the far side's fender, mirror or quarter can peek into them).
+const SIDE_ONLY = /^(left|right)_(front_fender|front_door|rear_door|rear_quarter|mirror)$/;
+function viewSide(view: string | null | undefined, part: string): 'left' | 'right' | null {
+  if (view === 'left_side' || view === 'right_side') return view === 'left_side' ? 'left' : 'right';
+  const m = /_door$/.test(part) ? view?.match(/^(?:front|rear)_(left|right)$/) : null;
+  return m ? (m[1] as 'left' | 'right') : null;
+}
+export function fixSides(raw: Raw, viewOf: (photo: number) => string | null, photoCount: number): SideFix[] {
+  const fixes: SideFix[] = [];
+  for (const part of PARTS) {
+    if (!SIDE_ONLY.test(part) || !isDamaged(raw.parts[part].grade)) continue;
+    const own = part.startsWith('left_') ? 'left' : 'right', to = mirrorOf(part)!;
+    const shots = [...new Set([raw.parts[part].evidence_photo, ...raw.damages.filter((d: Damage) => d.part === part).flatMap((d: Damage) => d.photos)])]
+      .filter((n): n is number => Number.isInteger(n) && n >= 1 && n <= photoCount);
+    const sides = shots.map((n) => viewSide(viewOf(n), part)).filter(Boolean);
+    if (!sides.length || sides.includes(own)) continue;
+    const from: PartGrade = raw.parts[part];
+    if (RANK[from.grade] > RANK[raw.parts[to].grade]) raw.parts[to] = { ...from, note: `${from.note} (moved from ${part})` };
+    raw.damages = raw.damages.map((d: Damage) => (d.part === part ? { ...d, part: to } : d));
+    raw.missing_parts = raw.missing_parts.map((m: { part: string }) => (m.part === part ? { ...m, part: to } : m));
+    const ownPhoto = Array.from({ length: photoCount }, (_, i) => i + 1).find((n) => viewSide(viewOf(n), part) === own) ?? null;
+    raw.parts[part] = { grade: ownPhoto ? 'fine' : 'unknown', confidence: 0.5, evidence_photo: ownPhoto, note: `damage moved to ${to}: it only shows in photos of the other side` };
+    fixes.push({ from: part, to, photos: shots });
+  }
+  return fixes;
+}
+
+// Parts next to each other ("S_" = the same side). A hit often damages the neighbors of the part it hit.
+const ADJACENT: [string, string][] = [
+  ['front_bumper', 'hood'], ['front_bumper', 'grille'], ['front_bumper', 'S_headlight'], ['front_bumper', 'S_front_fender'], ['front_bumper', 'engine_bay'],
+  ['hood', 'grille'], ['hood', 'windshield'], ['hood', 'S_front_fender'], ['hood', 'S_headlight'], ['hood', 'engine_bay'],
+  ['grille', 'S_headlight'], ['grille', 'engine_bay'], ['S_headlight', 'S_front_fender'],
+  ['S_front_fender', 'S_front_door'], ['S_front_fender', 'S_mirror'], ['S_front_fender', 'wheels_and_tires'],
+  ['S_front_door', 'S_rear_door'], ['S_front_door', 'S_mirror'], ['S_front_door', 'S_rear_quarter'],
+  ['S_rear_door', 'S_rear_quarter'], ['S_rear_door', 'wheels_and_tires'],
+  ['S_rear_quarter', 'rear_bumper'], ['S_rear_quarter', 'S_taillight'], ['S_rear_quarter', 'tailgate_or_rear_doors'], ['S_rear_quarter', 'wheels_and_tires'],
+  ['rear_bumper', 'tailgate_or_rear_doors'], ['rear_bumper', 'S_taillight'], ['tailgate_or_rear_doors', 'S_taillight'], ['windshield', 'roof'],
+];
+const NEIGHBORS = new Map<string, Set<string>>();
+for (const [x, y] of ADJACENT) for (const side of ['left_', 'right_']) {
+  const a = x.replace('S_', side), b = y.replace('S_', side);
+  if (!NEIGHBORS.has(a)) NEIGHBORS.set(a, new Set()); if (!NEIGHBORS.has(b)) NEIGHBORS.set(b, new Set());
+  NEIGHBORS.get(a)!.add(b); NEIGHBORS.get(b)!.add(a);
+}
+
+const RECHECK_SYSTEM = `You are an experienced auto-damage appraiser taking a second, closer look at some parts of one damaged vehicle. Reply with JSON only, matching the schema.
+
+Left and right ALWAYS mean the vehicle's own sides as seen from the driver's seat (US: left = driver side), never the left or right of the picture. The photo labels give each photo's view.
+
+You get the photos that show the damage already found, and a list of parts NEXT TO that damage. A hit often also dents, scrapes, cracks or pushes out of line the parts beside the one it hit: a fender edge bent back by the bumper, a headlight pushed out of its opening, a hood gap that is wider on one side, a door scraped where the fender was pushed into it. Look closely at each listed part in every photo and close-up that shows it, and grade it on its own:
+${GRADE_RULES}
+For each part give the grade, the damage type and severity (none when fine or unknown), a short description of what you see on that part, and the numbers of the photos that show it (photo numbers, never crop numbers; empty when unknown). Grade a part repairable or replace only if you can see damage on that part itself in a photo.`;
+
+function recheckSchema(parts: string[]) {
+  return {
+    type: 'object', additionalProperties: false, required: parts,
+    properties: Object.fromEntries(parts.map((p) => [p, {
+      type: 'object', additionalProperties: false, required: ['grade', 'type', 'severity', 'description', 'photos'],
+      properties: {
+        grade: { type: 'string', enum: GRADES }, type: { type: 'string', enum: DAMAGE_TYPES },
+        severity: { type: 'string', enum: ['none', 'minor', 'moderate', 'severe'] }, description: { type: 'string' }, photos: photoList,
+      },
+    }])),
+  };
+}
+
 export async function gradePhotos(vin: string, photos: string[], opts: GradeOptions = {}): Promise<GradeResult> {
   const client = openaiClient();
   if (!client) throw new Error('Set OPENAI_API_KEY and OPENAI_MODEL');
   const { ai, model } = client;
   const views = opts.views ?? [];
   const crops = (opts.crops ?? []).slice(0, GRADE_CONFIG.maxCrops);
-
-  const content = [
-    { type: 'text' as const, text: `VIN ${vin}. ${photos.length} photo(s), numbered in order below. Grade all ${PARTS.length} parts and list every problem as json.` },
-    ...photos.flatMap((url, i) => [
-      { type: 'text' as const, text: views[i] ? `Photo ${i + 1} (${views[i]!.replace(/_/g, '-')} view from the photo classifier):` : `Photo ${i + 1}:` },
-      { type: 'image_url' as const, image_url: { url, detail: GRADE_CONFIG.imageDetail } },
-    ]),
-    ...(crops.length ? [{ type: 'text' as const, text: `${crops.length} close-up crop(s) at full resolution:` }] : []),
-    ...crops.flatMap((c, i) => [
-      { type: 'text' as const, text: `Crop ${i + 1}, from photo ${c.photo} (${c.kind === 'damage' ? `possible damage on ${c.part}` : c.kind.replace('_', ' ')}: ${c.note}):` },
-      { type: 'image_url' as const, image_url: { url: c.image, detail: GRADE_CONFIG.imageDetail } },
-    ]),
-  ];
+  const C = GRADE_CONFIG;
   // Reasoning models (gpt-5.x, o-series) take reasoning_effort and reject temperature; gpt-4o is the other way round.
-  const sampling = /^(gpt-5|o\d)/.test(model) ? { reasoning_effort: GRADE_CONFIG.reasoningEffort } : { temperature: 0 };
-
+  const sampling = /^(gpt-5|o\d)/.test(model) ? { reasoning_effort: C.reasoningEffort } : { temperature: 0 };
   const started = Date.now();
+  const elapsed = () => (Date.now() - started) / 1000;
   const okPhoto = (n: unknown) => Number.isInteger(n) && (n as number) >= 1 && (n as number) <= photos.length;
   const clamp01 = (n: unknown) => Math.max(0, Math.min(1, Number(n) || 0));
-  let lastError = '';
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const res = await ai.chat.completions.create({
-        model,
-        ...sampling,
-        response_format: { type: 'json_schema', json_schema: { name: 'vehicle_grades', strict: true, schema: SCHEMA } },
-        messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content }],
-      });
-      const raw = JSON.parse(res.choices[0].message.content ?? '');
-      // A part's severity (it prices the part) = the worst problem listed on it in damages.
-      const SEV = ['minor', 'moderate', 'severe'];
-      const worst = new Map<string, number>();
-      for (const d of raw.damages as Damage[]) worst.set(d.part, Math.max(worst.get(d.part) ?? -1, SEV.indexOf(d.severity)));
-      // Schema guarantees every part; clamp values the schema can't express.
-      const parts = PARTS.map((part) => {
-        const p = raw.parts[part];
-        const photo = okPhoto(p.evidence_photo) ? p.evidence_photo : null;
-        const w = worst.get(part) ?? -1;
-        const severity = (p.grade === 'repairable' || p.grade === 'replace') && w >= 0 ? (SEV[w] as Damage['severity']) : null;
-        return { part, grade: p.grade, severity, confidence: clamp01(p.confidence), evidence_photo: p.grade === 'unknown' ? null : photo, note: p.note };
-      });
-      const v = raw.vehicle;
-      const photoVin = v.vin_visible ? String(v.vin_visible).toUpperCase().replace(/\s/g, '') : null;
-      const checkOk = vinCheckDigitOk(photoVin);
-      const repair_estimate = repairBand({ grades: parts, flags: raw.flags, vehicle_class: v.price_class }, DECISION_CONFIG.defaults.labor_rate);
-      return {
-        photo_views: raw.photo_views.filter((p: { photo: number }) => okPhoto(p.photo)),
-        vehicle: {
-          year: v.year, make: v.make, model: v.model, trim: v.trim, body_type: v.body_type, color: v.color,
-          price_class: v.price_class, identified_from: v.identified_from,
-          vin_visible: photoVin,
-          vin_check_digit_ok: checkOk,
-          vin_matches_input: photoVin && checkOk ? photoVin === vin : null,
-          odometer_visible: v.odometer_visible, odometer_unit: v.odometer_unit,
-        },
-        parts,
-        damages: raw.damages.map((d: Damage) => ({ ...d, photos: d.photos.filter(okPhoto), confidence: clamp01(d.confidence) })),
-        missing_parts: raw.missing_parts.map((m: { item: string; part: string; photos: number[] }) => ({ ...m, photos: m.photos.filter(okPhoto) })),
-        flags: raw.flags,
-        primary_damage_area: raw.primary_damage_area,
-        overall_severity: raw.overall_severity,
-        photo_gaps: raw.photo_gaps,
-        summary: raw.summary,
-        repair_estimate,
-        meta: { model, seconds: Math.round((Date.now() - started) / 100) / 10, attempts: attempt + 1, photos: photos.length, crops: crops.length },
-      };
-    } catch (e) {
-      lastError = (e as Error).message;
-      console.warn(`OpenAI grading attempt ${attempt + 1} failed: ${lastError.slice(0, 200)}`);
+
+  // Photos and crops keep their numbers whatever order they are shown in, so passes can see them in different orders.
+  const photoBlock = (i: number) => [
+    { type: 'text' as const, text: views[i] ? `Photo ${i + 1} (${views[i]!.replace(/_/g, '-')} view from the photo classifier):` : `Photo ${i + 1}:` },
+    { type: 'image_url' as const, image_url: { url: photos[i], detail: C.imageDetail } },
+  ];
+  const cropBlock = (i: number) => [
+    { type: 'text' as const, text: `Crop ${i + 1}, from photo ${crops[i].photo} (${crops[i].kind === 'damage' ? `possible damage on ${crops[i].part}` : crops[i].kind.replace('_', ' ')}: ${crops[i].note}):` },
+    { type: 'image_url' as const, image_url: { url: crops[i].image, detail: C.imageDetail } },
+  ];
+  const content = (photoOrder: number[], cropOrder: number[], intro: string) => [
+    { type: 'text' as const, text: intro },
+    ...photoOrder.flatMap(photoBlock),
+    ...(cropOrder.length ? [{ type: 'text' as const, text: `${cropOrder.length} close-up crop(s) at full resolution:` }] : []),
+    ...cropOrder.flatMap(cropBlock),
+  ];
+  const ask = async (name: string, system: string, schema: object, user: ReturnType<typeof content>) => {
+    let lastError = '';
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const res = await ai.chat.completions.create({
+          model, ...sampling,
+          response_format: { type: 'json_schema', json_schema: { name, strict: true, schema: schema as Record<string, unknown> } },
+          messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+        });
+        return JSON.parse(res.choices[0].message.content ?? '');
+      } catch (e) {
+        lastError = (e as Error).message;
+        console.warn(`OpenAI ${name} attempt ${attempt + 1} failed: ${lastError.slice(0, 200)}`);
+      }
     }
+    throw new Error(lastError);
+  };
+
+  // 1. Grade in C.passes passes at once; pass 2 sees the photos and crops in reverse order.
+  const n = photos.length, idx = (k: number) => Array.from({ length: k }, (_, i) => i);
+  const intro = `VIN ${vin}. ${n} photo(s), each labeled with its number; refer to photos by these numbers. Grade all ${PARTS.length} parts and list every problem as json.`;
+  const orders = [[idx(n), idx(crops.length)], [idx(n).reverse(), idx(crops.length).reverse()]].slice(0, Math.max(1, C.passes));
+  const settled = await Promise.allSettled(orders.map(([po, co]) => ask('vehicle_grades', SYSTEM, SCHEMA, content(po, co, intro))));
+  const passes = settled.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []));
+  if (!passes.length) throw new Error(`Photo grading failed: ${String((settled[0] as PromiseRejectedResult).reason?.message ?? '').slice(0, 200)}`);
+  const gradesOf = (r: Raw) => Object.fromEntries(PARTS.map((p) => [p, r.parts[p].grade]));
+  const passGrades = passes.map(gradesOf);
+  const raw: Raw = passes.length > 1 ? mergePasses(passes[0], passes[1]) : passes[0];
+
+  // 2. Damage seen only from the other side goes to the mirror-image part.
+  const modelView = new Map<number, string>(raw.photo_views.map((p: { photo: number; view: string }) => [p.photo, p.view]));
+  const viewOf = (photo: number) => views[photo - 1] ?? modelView.get(photo) ?? null;
+  const sideFixes = fixSides(raw, viewOf, n);
+
+  // 3. Second look at fine parts next to damage, with the photos that show the damage (skipped when time is short).
+  const recheck: { parts: string[]; upgraded: string[]; seconds: number; skipped?: string } = { parts: [], upgraded: [], seconds: 0 };
+  const damagedParts: string[] = PARTS.filter((p) => isDamaged(raw.parts[p].grade));
+  const candidates = PARTS.filter((p) => raw.parts[p].grade === 'fine' && damagedParts.some((d) => NEIGHBORS.get(d)?.has(p)))
+    .sort((x, y) => damagedParts.filter((d) => NEIGHBORS.get(d)?.has(y)).length - damagedParts.filter((d) => NEIGHBORS.get(d)?.has(x)).length)
+    .slice(0, C.recheckMaxParts);
+  if (!C.recheck || !candidates.length) recheck.skipped = !C.recheck ? 'off' : 'nothing next to damage';
+  else if (elapsed() > C.recheckAfterS) recheck.skipped = `time (${Math.round(elapsed())} s)`;
+  else {
+    const t0 = Date.now();
+    const votes = new Map<number, number>();
+    const vote = (k: unknown, w: number) => { if (okPhoto(k)) votes.set(k as number, (votes.get(k as number) ?? 0) + w); };
+    for (const d of raw.damages as Damage[]) if (damagedParts.includes(d.part)) d.photos.forEach((k) => vote(k, 2));
+    for (const p of [...damagedParts, ...candidates]) vote(raw.parts[p].evidence_photo, 1);
+    const shown = [...votes.entries()].sort((x, y) => y[1] - x[1]).slice(0, C.recheckMaxPhotos).map(([k]) => k).sort((x, y) => x - y);
+    const shownCrops = idx(crops.length).filter((i) => shown.includes(crops[i].photo)).slice(0, C.recheckMaxCrops);
+    const found = (raw.damages as Damage[]).filter((d) => damagedParts.includes(d.part)).map((d) => `${d.part} (${d.severity} ${d.type.replace(/_/g, ' ')}): ${d.description}`).join('; ');
+    const ask2 = `Damage already found: ${found || damagedParts.join(', ')}. Grade these parts next to it: ${candidates.join(', ')}.`;
+    try {
+      const rr = await ask('neighbor_check', RECHECK_SYSTEM, recheckSchema(candidates), content(shown.map((k) => k - 1), shownCrops, ask2));
+      recheck.parts = candidates;
+      for (const p of candidates) {
+        const x = rr[p], seenIn = (x?.photos ?? []).filter(okPhoto);
+        if (!x || !isDamaged(x.grade) || !seenIn.length) continue;
+        const severity = x.severity === 'none' ? 'minor' : x.severity;
+        raw.parts[p] = { grade: x.grade, confidence: 0.6, evidence_photo: seenIn[0], note: `second look: ${x.description}` };
+        raw.damages.push({ part: p, type: x.type, severity, description: x.description, photos: seenIn, confidence: 0.6 });
+        recheck.upgraded.push(p);
+      }
+      if (recheck.upgraded.length) sideFixes.push(...fixSides(raw, viewOf, n));
+    } catch (e) {
+      recheck.skipped = `failed: ${(e as Error).message.slice(0, 80)}`;
+    }
+    recheck.seconds = Math.round((Date.now() - t0) / 100) / 10;
   }
-  throw new Error(`Photo grading failed: ${lastError.slice(0, 200)}`);
+
+  // A part's severity (it prices the part) = the worst problem listed on it in damages.
+  const SEV = ['minor', 'moderate', 'severe'];
+  const worst = new Map<string, number>();
+  for (const d of raw.damages as Damage[]) worst.set(d.part, Math.max(worst.get(d.part) ?? -1, SEV.indexOf(d.severity)));
+  // Schema guarantees every part; clamp values the schema can't express.
+  const parts = PARTS.map((part) => {
+    const p = raw.parts[part];
+    const photo = okPhoto(p.evidence_photo) ? p.evidence_photo : null;
+    const w = worst.get(part) ?? -1;
+    const severity = isDamaged(p.grade) && w >= 0 ? (SEV[w] as Damage['severity']) : null;
+    return { part, grade: p.grade, severity, confidence: clamp01(p.confidence), evidence_photo: p.grade === 'unknown' ? null : photo, note: p.note };
+  });
+  const v = raw.vehicle;
+  const photoVin = v.vin_visible ? String(v.vin_visible).toUpperCase().replace(/\s/g, '') : null;
+  const checkOk = vinCheckDigitOk(photoVin);
+  // Replaced parts priced from eBay for the vehicle seen in the photos (the page reprices with the VIN's vehicle via /api/decide).
+  const part_prices = await ebayPartPrices({ year: v.year, make: v.make, model: v.model, body_type: v.body_type }, parts.filter((p) => p.grade === 'replace').map((p) => p.part));
+  const repair_estimate = repairBand({ grades: parts, flags: raw.flags, vehicle_class: v.price_class, part_prices }, DECISION_CONFIG.defaults.labor_rate);
+  return {
+    photo_views: raw.photo_views.filter((p: { photo: number }) => okPhoto(p.photo)),
+    vehicle: {
+      year: v.year, make: v.make, model: v.model, trim: v.trim, body_type: v.body_type, color: v.color,
+      price_class: v.price_class, identified_from: v.identified_from,
+      vin_visible: photoVin,
+      vin_check_digit_ok: checkOk,
+      vin_matches_input: photoVin && checkOk ? photoVin === vin : null,
+      odometer_visible: v.odometer_visible, odometer_unit: v.odometer_unit,
+    },
+    parts,
+    damages: raw.damages.map((d: Damage) => ({ ...d, photos: d.photos.filter(okPhoto), confidence: clamp01(d.confidence) })),
+    missing_parts: raw.missing_parts.map((m: { item: string; part: string; photos: number[] }) => ({ ...m, photos: m.photos.filter(okPhoto) })),
+    flags: raw.flags,
+    primary_damage_area: raw.primary_damage_area,
+    overall_severity: raw.overall_severity,
+    photo_gaps: raw.photo_gaps,
+    summary: raw.summary,
+    repair_estimate,
+    meta: {
+      model, seconds: Math.round(elapsed() * 10) / 10, attempts: passes.length, photos: n, crops: crops.length,
+      passes: passGrades, side_fixes: sideFixes, recheck,
+    },
+  };
 }
 
 const VIN_RE = /^[A-HJ-NPR-Z0-9]{17}$/;
@@ -269,7 +455,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         views: ['optional, per photo: view from /api/classify-photos, or null'],
         crops: [{ photo: 1, kind: 'damage | vin_label | odometer', part: 'part name or none', note: '...', image: 'data:image/jpeg;base64,...' }],
       },
-      returns: 'vehicle, parts[25] {part, grade, severity, confidence, evidence_photo, note}, damages[], missing_parts[], flags, primary_damage_area, overall_severity, photo_gaps, summary, repair_estimate {low, high, lines[] per part: parts_cost, labor_hours, labor_cost, paint_cost}, meta',
+      returns: 'vehicle, parts[25] {part, grade, severity, confidence, evidence_photo, note}, damages[], missing_parts[], flags, primary_damage_area, overall_severity, photo_gaps, summary, repair_estimate {low, high, lines[] per part: parts_cost, parts_source (ebay | table), labor_hours, labor_cost, paint_cost}, meta',
     });
   }
   if (req.method !== 'POST') return res.status(405).json({ error: 'Use POST' });

@@ -3,6 +3,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { scoreChannels, type Scorecard, type MarketFit } from './scorecard.js';
+import type { PartPrice } from './parts-prices.js';
 
 // ---- Config: every assumption lives here ----
 export const DECISION_CONFIG = {
@@ -28,10 +29,12 @@ export const DECISION_CONFIG = {
   // Fixed amounts added to the TOP of the repair band, each recorded with its reason.
   widen: { frame_suspected: 3000, airbags_unknown: 1500, fluid_leak_unknown: 500, critical_code: 2000, many_unknown_parts: 1000 },
   manyUnknownParts: 5,
-  // Per-part pricing from the photo grader. Severity picks the slice of the table's low..high range
-  // (parts cost and labor hours) a part lands in; no severity (e.g. a reviewer edit) keeps the whole range.
+  // Per-part pricing from the photo grader. Severity picks the slice of the table's low..high range a part lands in:
+  // labor hours always, parts cost only for a repair (materials). A replaced part is bought whole, so how badly the
+  // old one was damaged doesn't change its price. No severity (e.g. a reviewer edit) keeps the whole range.
   severityShare: { minor: [0, 0.4], moderate: [0.3, 0.7], severe: [0.6, 1] } as Record<string, [number, number]>,
-  // Parts cost multiplier by the vehicle's price class (a luxury headlight costs more). Labor and paint are not scaled.
+  // Table parts cost multiplier by the vehicle's price class (a luxury headlight costs more). Labor, paint and
+  // eBay prices (already for the exact vehicle, api/_lib/parts-prices.ts) are not scaled.
   partsPriceFactor: { economy: 0.85, mainstream: 1, premium: 1.3, luxury: 1.7, unknown: 1 } as Record<string, number>,
 };
 
@@ -50,6 +53,7 @@ export type DecideInput = {
   assumptions?: Partial<typeof DECISION_CONFIG.defaults>;
   drivable?: 'yes' | 'no' | 'unknown';   // seller's answer, for the ACV vs Copart scorecard
   market?: MarketFit | null;             // /api/market-fit response
+  part_prices?: Record<string, PartPrice>; // eBay prices for replaced parts (filled in by /api/decide from `vehicle`)
 };
 
 type Pair = [number, number];
@@ -58,6 +62,7 @@ type Line = {
   label: string; low: number; high: number;
   part?: string; grade?: string; severity?: Severity | null;
   parts_cost?: Pair; labor_hours?: Pair; labor_cost?: Pair; paint_cost?: Pair;
+  parts_source?: 'ebay' | 'table'; parts_listings?: number; // where parts_cost came from; listings = eBay listings that fit
 };
 type Widen = { key: string; reason: string; check: string; amount: number };
 type Band = { low: number; high: number };
@@ -93,7 +98,7 @@ function costTable(): Map<string, CostRow> {
 
 const label = (p: string) => p.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
 
-function partLine(part: string, grade: string, rate: number, opts: { note?: string; severity?: Severity | null; vehicleClass?: string } = {}): Line | null {
+function partLine(part: string, grade: string, rate: number, opts: { note?: string; severity?: Severity | null; vehicleClass?: string; price?: PartPrice } = {}): Line | null {
   const r = costTable().get(`${part}:${grade}`);
   if (!r) return null;
   const C = DECISION_CONFIG;
@@ -101,7 +106,9 @@ function partLine(part: string, grade: string, rate: number, opts: { note?: stri
   const [s0, s1] = sev ? C.severityShare[sev] : [0, 1];
   const k = C.partsPriceFactor[opts.vehicleClass ?? 'unknown'] ?? 1;
   const slice = (lo: number, hi: number): Pair => [lo + (hi - lo) * s0, lo + (hi - lo) * s1];
-  const partsCost = slice(r.parts_low, r.parts_high).map((x) => Math.round(x * k)) as Pair;
+  const ebay = grade === 'replace' && opts.price ? opts.price : null;
+  const partsCost: Pair = ebay ? [ebay.low, ebay.high]
+    : ((grade === 'replace' ? [r.parts_low, r.parts_high] : slice(r.parts_low, r.parts_high)).map((x) => Math.round(x * k)) as Pair);
   const hours = slice(r.labor_low, r.labor_high).map((x) => Math.round(x * 10) / 10) as Pair;
   const labor = hours.map((h) => Math.round(h * rate)) as Pair;
   const paint: Pair = r.paint ? [...C.paintPerPanel] : [0, 0];
@@ -110,6 +117,7 @@ function partLine(part: string, grade: string, rate: number, opts: { note?: stri
     low: partsCost[0] + labor[0] + paint[0],
     high: partsCost[1] + labor[1] + paint[1],
     part, grade, severity: sev, parts_cost: partsCost, labor_hours: hours, labor_cost: labor, paint_cost: paint,
+    parts_source: ebay ? 'ebay' : 'table', ...(ebay ? { parts_listings: ebay.listings } : {}),
   };
 }
 
@@ -119,7 +127,7 @@ export function repairBand(inp: DecideInput, rate: number): Decision['repair'] {
   const vehicleClass = inp.vehicle_class;
   for (const g of new Map(inp.grades.map((g) => [g.part, g])).values()) {
     if (g.grade === 'repairable' || g.grade === 'replace') {
-      const l = partLine(g.part, g.grade, rate, { severity: g.severity, vehicleClass }); if (l) lines.push(l);
+      const l = partLine(g.part, g.grade, rate, { severity: g.severity, vehicleClass, price: inp.part_prices?.[g.part] }); if (l) lines.push(l);
     }
   }
   const f = inp.flags ?? {};

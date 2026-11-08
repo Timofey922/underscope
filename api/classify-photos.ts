@@ -1,7 +1,7 @@
 // POST /api/classify-photos  { photos: [768 px JPEG data URLs with the 4x4 grid drawn on them] }
 //   -> per photo: what it shows, which vehicle side (computed here, not by the model), and grid boxes around damage,
 //      the VIN label and the odometer.
-// Stage 1 of photo grading. A cheap model (OPENAI_CLASSIFY_MODEL, default gpt-4o-mini) answers only simple
+// Stage 1 of photo grading. A fast model (OPENAI_CLASSIFY_MODEL, default gpt-4o) answers only simple
 // questions about the image ("are the headlights on the left or right of the picture?", "which grid cells hold the
 // dent?"). Turning that into the vehicle's left/right is done in code, because small models get it wrong when asked
 // directly. The page draws the grid (see drawGrid in public/app.js), cuts the boxes out of the full-resolution
@@ -12,9 +12,10 @@ import OpenAI from 'openai';
 export const config = { maxDuration: 60 };
 
 export const CLASSIFY_CONFIG = {
-  model: process.env.OPENAI_CLASSIFY_MODEL || 'gpt-4o-mini',
+  // gpt-4o boxed 35% of the hand-labeled damage on 26 test cars (gpt-4o-mini 24%) and was faster (12 s vs 16 s a car).
+  model: process.env.OPENAI_CLASSIFY_MODEL || 'gpt-4o',
   maxPhotos: 30,
-  maxRegionsPerPhoto: 3,
+  maxRegionsPerPhoto: 4,
   imageDetail: 'high' as const,
 };
 
@@ -76,8 +77,8 @@ For every photo:
 4. rear_end: where the vehicle's REAR END (taillights, tailgate or trunk) is in the picture: image_left, image_center or image_right, or not_visible.
    Base front_end and rear_end on what you wrote in step 2. Describe only positions in the picture, exactly as you see them. Do not think about the vehicle's own left or right side.
    Examples: a side view of a car driving toward the left edge -> front_end image_left, rear_end image_right. A picture taken straight at the grille -> front_end image_center, rear_end not_visible. A three-quarter shot of the front corner with the grille on the left half of the picture -> front_end image_left, rear_end not_visible.
-5. regions (at most ${CLASSIFY_CONFIG.maxRegionsPerPhoto}): areas that deserve a full-resolution close-up, as a rectangle of grid cells from from_cell (top-left cell) to to_cell (bottom-right cell). Cover the whole area, a little generously.
-   - damage: a real dent, crease, deep scrape, crack, broken or missing part, deployed airbag, or flat tire. part = which part it is on, without left/right (headlight, front_fender, front_door, rear_door, mirror, rear_quarter, taillight, ...). Do NOT mark dirt, water spots, reflections, shadows, stickers or normal wear. A clean photo gets no regions.
+5. regions (at most ${CLASSIFY_CONFIG.maxRegionsPerPhoto}): areas that deserve a full-resolution close-up, as a rectangle of grid cells from from_cell (top-left cell) to to_cell (bottom-right cell). Cover the area with a little margin; do not box the whole vehicle.
+   - damage: anything that MIGHT be damage: a dent or crease (look for bent reflections and wavy lines), a scrape or scratch through the paint, a crack, a broken, missing, hanging or pushed-in part, a panel gap that is wider or uneven, a cracked or broken light or glass, a deployed airbag, a flat or torn tire, a bent wheel. When unsure, mark it: the next step looks at every close-up and throws out false alarms, but damage you do not mark is easily missed. Mark the damaged spots, worst first; one region per part. part = which part it is on, without left/right (headlight, front_fender, front_door, rear_door, mirror, rear_quarter, taillight, ...). Do not mark plain dirt, water spots, reflections of the surroundings, shadows or stickers. A photo with no damage at all gets no damage regions.
    - vin_label: the door-jamb sticker or a VIN plate (part = none).
    - odometer: the mileage display on the instrument cluster (part = none).
    note: a few words, e.g. "large dent low on door", "VIN sticker".`;
@@ -141,7 +142,7 @@ export async function classifyPhotos(photos: string[]): Promise<PhotoClass[]> {
     try {
       const res = await ai.chat.completions.create({
         model: CLASSIFY_CONFIG.model,
-        temperature: 0,
+        ...(/^(gpt-5|o\d)/.test(CLASSIFY_CONFIG.model) ? { reasoning_effort: 'low' as const } : { temperature: 0 }),
         response_format: { type: 'json_schema', json_schema: { name: 'photo_classes', strict: true, schema: SCHEMA } },
         messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content }],
       });

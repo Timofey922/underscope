@@ -70,12 +70,19 @@ def test_more_damage_never_raises_parts_value():
     assert heavy.low <= heavy.expected <= heavy.high
 
 
-def test_as_is_never_below_salvage():
-    # A buyer can always send the car to salvage, so as-is can't price below it.
+def test_as_is_never_far_below_salvage():
+    # A dealer can always resell to salvage, so as-is can't price below salvage minus what that
+    # flip costs them (Copart fee, transport, margin). It may sit below full salvage: otherwise
+    # ACV's lower fees would beat Copart for every wreck.
+    a = default_assumptions()
+    cf, ct = a["fees"]["copart"], a["transport"]["copart_cents"]
+    margin = a["market"]["as_is_dealer_flip_margin_pct"]
     for findings in ([f(sev=0.6)], [f("frame", "crush", 0.4), f()], [f("frame", "crush", 1.0)]):
         for title in ("clean", "salvage", "rebuilt"):
             v = value_vehicle(veh(clean_value_cents=1_800_000, title_status=title), findings)
-            assert v.as_is_value >= v.salvage_value.expected
+            s = v.salvage_value.expected
+            floor = s - (cf["flat_cents"] + ct[1] + s * (cf["pct_of_price"] + margin) / 100)
+            assert v.as_is_value >= round(floor) - 1
 
 
 def test_dealer_repair_does_not_brand_title():

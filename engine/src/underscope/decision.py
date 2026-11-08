@@ -131,12 +131,18 @@ def simulate(
     }  # fmt: skip
 
     # 2. Sell as-is on ACV. as_is_value carries the expected title factor; rescale per draw.
-    # In draws where the insurer totals the car, the buyer gets a salvage certificate. A buyer
-    # can always salvage the car, so the as-is sale never falls below the salvage sale.
+    # In draws where the insurer totals the car, the buyer gets a salvage certificate. A dealer
+    # can always resell the car to salvage, so the as-is sale never falls far below the salvage
+    # sale: the floor is the salvage sale minus what that dealer pays to flip it (Copart fee,
+    # transport, margin). Flooring at the full salvage sale let ACV's lower fees win every wreck.
     expected_tf = a["title"]["factor"][vehicle.title_status.value][1]
     as_is_tf = np.where(branded, factors[TitleStatus.SALVAGE], factors[vehicle.title_status])
     salvage_sale = _cents(salv * market)
-    sale = np.maximum(_cents(val.as_is_value * market * as_is_tf / expected_tf), salvage_sale)
+    cf = fees["copart"]
+    flip_cost = (cf["flat_cents"] + _pct(salvage_sale, cf["pct_of_price"]) + t_cop
+                 + _pct(salvage_sale, a["market"].get("as_is_dealer_flip_margin_pct", 10)))
+    sale = np.maximum(_cents(val.as_is_value * market * as_is_tf / expected_tf),
+                      _cents(salvage_sale - flip_cost))
     fee = _cents(fees["acv"]["flat_cents"] + _pct(sale, fees["acv"]["pct_of_price"]))
     holding = days[Path.ACV_AS_IS] * hold
     nets[Path.ACV_AS_IS] = sale - fee - t_acv - holding

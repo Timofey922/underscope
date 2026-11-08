@@ -88,7 +88,11 @@ def value_vehicle(
     repair ratio, title brand); used to find where the decision flips."""
     a = a or default_assumptions()
     clean = clean_value(vehicle, a)
-    rep = Range(*(round(x * repair_cost_scale) for x in repair_cost(findings, a)))
+    body = repair_cost(findings, a)
+    if vehicle.mechanical_repair_cents:
+        lo, hi = sorted(vehicle.mechanical_repair_cents)
+        body = Range(body.low + lo, body.expected + (lo + hi) // 2, body.high + hi)
+    rep = Range(*(round(x * repair_cost_scale) for x in body))
     m = a["market"]
     title = {k: r[1] for k, r in a["title"]["factor"].items()}  # expected factor per status
 
@@ -110,8 +114,14 @@ def value_vehicle(
         adj = 1 - m["salvage_damage_adjust_pct_per_unit_severity"] / 100 * damage_score
         salvage = Range(*(round(clean * frac * adj) for frac in m["salvage_fraction_of_clean"]))
 
-    # A buyer can always send the car to salvage, so as-is never prices below it.
-    as_is = max(as_is, salvage.expected)
+    # A dealer buying on ACV can always resell the car to salvage, so as-is never prices far
+    # below salvage. But that dealer then pays Copart's fee and transport and wants a margin,
+    # so the floor is salvage minus those costs, not salvage itself. (Flooring at full salvage
+    # let ACV's lower fees beat Copart for every wreck, so Copart could never win.)
+    cf, ct = a["fees"]["copart"], a["transport"]["copart_cents"]
+    flip_cost = (cf["flat_cents"] + ct[1] + salvage.expected * cf["pct_of_price"] / 100
+                 + salvage.expected * m.get("as_is_dealer_flip_margin_pct", 10) / 100)  # fmt: skip
+    as_is = max(as_is, round(salvage.expected - flip_cost))
 
     p = a["parts"]
     penalty = 1.0 - parts_damage_loss(findings, a)

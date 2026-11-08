@@ -44,6 +44,10 @@ market:
   # See `python -m underscope.sensitivity` for how decisions move with them.
   as_is_discount_multiple_of_repair: 1.3   # buyers deduct this multiple of expected repair cost
   as_is_floor_fraction: 0.10
+  # A dealer buying a wreck on ACV only to resell it at salvage keeps this % of the salvage
+  # price as margin (on top of Copart's fee and transport). Real data: ACV bids on cars later
+  # relisted at Copart.
+  as_is_dealer_flip_margin_pct: 10
   # Accident-history haircut on clean value, scaled by damage score (expected repair cost /
   # clean value, capped at 1): a cosmetic fix carries little stigma, heavy damage the full %.
   # Anchored just under the rebuilt-title discount (title.factor.rebuilt); not tuned to any case.

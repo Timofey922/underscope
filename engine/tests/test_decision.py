@@ -221,14 +221,30 @@ def test_totaled_claim_sells_as_is_on_a_salvage_title():
     assert claim_sale < dealer_sale
 
 
-def test_as_is_sale_never_below_salvage_sale_in_any_draw():
+def test_as_is_sale_never_far_below_salvage_sale_in_any_draw():
+    # Floor: salvage sale minus a dealer's cost to flip it to salvage (Copart fee, transport,
+    # margin). The transport draw isn't exposed per path here, so allow the top transport value.
     a = default_assumptions()
+    cf, top_transport = a["fees"]["copart"], a["transport"]["copart_cents"][2]
+    margin = a["market"]["as_is_dealer_flip_margin_pct"]
     for v in (veh(insurance_claim=True, clean_value_cents=1_000_000), veh(title_status="salvage")):
         fi = [f("frame", "crush", 0.9), f("door", "dent", 0.5)]
         s = simulate(v, value_vehicle(v, fi, a), a)
         as_is = s.components[Path.ACV_AS_IS]["sale_price"]
         salvage = s.components[Path.COPART_SALVAGE]["sale_price"]
-        assert (as_is >= salvage).all()
+        floor = salvage - (cf["flat_cents"] + top_transport
+                           + salvage * (cf["pct_of_price"] + margin) / 100)
+        assert (as_is >= floor - 1).all()
+
+
+def test_copart_can_win_for_a_wreck():
+    # Regression: with the old full-salvage floor, ACV as-is beat Copart for every wreck.
+    a = default_assumptions()
+    v = veh(clean_value_cents=900_000)
+    fi = [f("frame", "crush", 1.0), f("hood", "crush", 1.0), f("front_bumper", "broken", 1.0),
+          f("fender", "crush", 1.0), f("door", "crush", 0.9), f("roof", "crush", 0.8)]
+    r = evaluate(v, fi, a)
+    assert r.winner in (Path.COPART_SALVAGE, Path.PART_OUT), r.winner
 
 
 def test_dealer_answer_says_whether_repair_pays_back():

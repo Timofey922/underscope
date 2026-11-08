@@ -61,6 +61,9 @@ class VehicleRecord(BaseModel):
     # Optional sold prices of comparable damaged vehicles (cents); when given they set the
     # salvage band instead of the placeholder fraction of clean value.
     salvage_comps_cents: list[int] | None = None
+    # Optional mechanical repair range (low, high) in cents, e.g. from decoded OBD-II fault
+    # codes; added to the body repair estimate from the damage findings.
+    mechanical_repair_cents: tuple[int, int] | None = None
     # Optional findings supplied inline (used when no detector labels exist).
     findings: list[DamageFinding] = Field(default_factory=list)
 

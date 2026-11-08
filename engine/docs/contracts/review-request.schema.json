@@ -178,6 +178,28 @@
           "title": "Make",
           "type": "string"
         },
+        "mechanical_repair_cents": {
+          "anyOf": [
+            {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                }
+              ],
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mechanical Repair Cents"
+        },
         "mileage": {
           "minimum": 0,
           "title": "Mileage",

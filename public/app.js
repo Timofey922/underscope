@@ -78,6 +78,9 @@ const readValues = () => ({ clean_wholesale: Number(String($('clean').value).rep
 const TITLE_HINT = 'Non-repairable can\'t be fixed and resold. Flood and salvage lower the value after repair.';
 const getTitle = () => (document.querySelector('input[name=title]:checked') || {}).value || 'unknown';
 const setTitle = (v) => { const r = document.querySelector(`input[name=title][value="${v}"]`); if (r) r.checked = true; };
+const getDrivable = () => (document.querySelector('input[name=drivable]:checked') || {}).value || 'unknown';
+const setDrivable = (v) => { const r = document.querySelector(`input[name=drivable][value="${v}"]`); if (r) r.checked = true; };
+const getState = () => $('state').value || null;
 $('title-hint').textContent = TITLE_HINT;
 
 // ---------- Photos ----------
@@ -235,7 +238,7 @@ const samplesReady = fetch('/demo_vehicles.json').then((r) => r.json()).then(({ 
 
 $('clear').onclick = () => {
   $('vin').value = ''; $('vin').dispatchEvent(new Event('input'));
-  codes.set([]); comps.set([]); $('clean').value = ''; photos = []; renderPhotos(); setTitle('unknown');
+  codes.set([]); comps.set([]); $('clean').value = ''; photos = []; renderPhotos(); setTitle('unknown'); setDrivable('unknown'); $('state').value = '';
   preset = null; state = null; $('result').hidden = true; $('empty').hidden = false;
   history.replaceState(null, '', '/'); $('vin').focus();
 };
@@ -263,9 +266,11 @@ $('form').addEventListener('submit', async (e) => {
   if (photoBytes() > MAX_BYTES) { $('drop').scrollIntoView({ block: 'center' }); return; }
   $('go').disabled = true; $('go').textContent = photos.length ? 'Sorting photos…' : 'Running…';
   try {
-    const [cRes, flow] = await Promise.all([
+    const [cRes, flow, market] = await Promise.all([
       post('/api/decode-codes', { vin, codes: codes.get(), title_status: getTitle() }),
       photos.length ? gradePhotoFlow(vin, (t) => { $('go').textContent = t; }).catch((x) => x) : null,
+      // Market fit for the ACV vs Copart scorecard: public listings of this model in the seller's state.
+      post('/api/market-fit', { vin, state: getState() }).then((r) => r.json()).catch((e) => ({ ran: false, error: e.message })),
     ]);
     const c = await cRes.json().catch(() => ({}));
     if (!cRes.ok) throw new Error(c.error || `The server answered ${cRes.status}.`);
@@ -279,7 +284,10 @@ $('form').addEventListener('submit', async (e) => {
       : photo && photo.error ? `${photo.error} Set grades by hand below.`
       : preset ? 'Sample grades, standing in for graded photos.'
       : 'No photos, so every part starts as not visible. Click a grade to set it.';
-    state = { vin, codes: c, photo, grades, flags, gradeNote, photoGaps: photo && photo.data ? photo.data.photo_gaps : [], sampleId: preset && preset.id };
+    const odo = photo && photo.data && photo.data.vehicle && photo.data.vehicle.odometer_unit === 'mi' ? photo.data.vehicle.odometer_visible : null;
+    if (market && market.mileage == null && odo) market.mileage = odo;
+    state = { vin, codes: c, photo, grades, flags, gradeNote, photoGaps: photo && photo.data ? photo.data.photo_gaps : [], sampleId: preset && preset.id,
+      drivable: getDrivable(), region: getState(), market };
 
     await recompute(true);
   } catch (err) {
@@ -303,10 +311,13 @@ async function recompute(first = false) {
     codes: state.codes.codes.filter((c) => c.source !== 'invalid'),
     values: readValues(),
     assumptions: readAssumptions(),
+    drivable: state.drivable,
+    market: state.market,
   };
   // The engine (engine/, via /api/route) decides where to send the car: ACV or Copart.
   const routeBody = { vin: state.vin, vehicle: state.codes.vehicle, title_status: body.title_status,
-    grades: body.grades, flags: body.flags, codes: body.codes, values: body.values };
+    grades: body.grades, flags: body.flags, codes: body.codes, values: body.values,
+    ...(state.region ? { region: state.region } : {}), ...(state.market && state.market.mileage ? { mileage: state.market.mileage } : {}) };
   const [d, rt] = await Promise.all([
     post('/api/decide', body).then((r) => r.json()),
     post('/api/route', routeBody).then(async (r) => (r.ok ? r.json() : { error: (await r.json().catch(() => ({}))).error || `engine answered ${r.status}` }))
@@ -331,6 +342,25 @@ function routeBlock() {
     <details style="margin-top:8px"><summary style="cursor:pointer;color:var(--steel);font-size:13px">How the engine read your inputs</summary><ul class="tab-note" style="margin:8px 0 0">${r.notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul></details>
   </div>`;
 }
+// ACV vs Copart points scorecard (api/_lib/scorecard.ts, returned by /api/decide as `channel`).
+const CH_LABEL = { acv: 'ACV', copart: 'Copart', too_close: 'Too close to call' };
+function scorecardBlock(d) {
+  const s = d.channel;
+  if (!s) return '';
+  const pts = (n) => (n ? `+${n}` : '');
+  const rows = s.categories.map((c) => `<tr class="cat"><td>${esc(c.label)}</td><td class="pts">${pts(c.acv)}</td><td class="pts">${pts(c.copart)}</td></tr>`
+    + c.rows.map((r) => `<tr><td>${esc(r.finding[0].toUpperCase() + r.finding.slice(1))}<small style="display:block;color:var(--steel);font-size:12px">${esc(r.reason)}</small></td><td class="pts">${pts(r.acv)}</td><td class="pts">${pts(r.copart)}</td></tr>`).join('')).join('');
+  const m = state.market;
+  const listings = m && m.ran && m.sample && m.sample.length
+    ? `<details style="margin-top:8px"><summary style="cursor:pointer;color:var(--steel);font-size:13px">Listings found${m.price_low ? ` (${money(m.price_low)} to ${money(m.price_high)})` : ''}</summary><ul class="tab-note" style="margin:8px 0 0">${m.sample.map((x) => `<li><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.title || x.url)}</a></li>`).join('')}</ul></details>` : '';
+  return `<div class="sec scorecard">
+    <h3>ACV vs Copart scorecard: <span class="dest">${esc(CH_LABEL[s.winner])}</span></h3>
+    <div class="totals"><div class="tot${s.winner === 'acv' ? ' win' : ''}">ACV<b>${s.acv}</b></div><div class="tot${s.winner === 'copart' ? ' win' : ''}">Copart<b>${s.copart}</b></div></div>
+    <p class="tab-note">${s.forced ? esc(s.forced) + ' ' : ''}Each finding adds points to the channel it favors; ${s.margin < 5 && !s.forced ? 'the totals are within 5 points, so it\'s too close to call' : 'the higher total wins'}.${s.missing.length ? ` Not scored yet: ${esc(s.missing.join(', '))}.` : ''}</p>
+    <table class="lines"><tbody><tr><td><b>Finding</b></td><td class="pts"><b>ACV</b></td><td class="pts"><b>Copart</b></td></tr>${rows}
+      <tr class="total"><td>Total</td><td class="pts">${s.acv}</td><td class="pts">${s.copart}</td></tr></tbody></table>${listings}
+  </div>`;
+}
 let debounce;
 const recomputeSoon = () => { clearTimeout(debounce); debounce = setTimeout(() => recompute(false), 250); };
 $('clean').addEventListener('input', recomputeSoon);
@@ -353,6 +383,8 @@ function shareUrl() {
   const reg = state.codes.title_source && state.codes.title_source.from === 'registry';
   if (!reg && state.codes.title_status !== 'unknown') u.searchParams.set('title', state.codes.title_status);
   const cs = codes.get(); if (cs.length) u.searchParams.set('codes', cs.join(','));
+  if (state.drivable && state.drivable !== 'unknown') u.searchParams.set('drivable', state.drivable);
+  if (state.region) u.searchParams.set('state', state.region);
   const v = readValues();
   if (!reg && v.clean_wholesale) u.searchParams.set('clean', v.clean_wholesale);
   if (!reg && v.salvage_comps.length) u.searchParams.set('comps', v.salvage_comps.join(','));
@@ -496,6 +528,9 @@ function buildReport(d) {
       lines: d.repair.lines, could_cost_more: d.repair.widen,
     },
     flags: state.flags,
+    drivable: state.drivable || 'unknown',
+    channel_scorecard: d.channel || null,
+    market_fit: state.market || null,
     photos: !p ? null : p.error ? { error: p.error } : { classification: p.stage1 || null, crops: p.crops || [], grading: p.data },
   };
 }
@@ -517,7 +552,7 @@ function render(d, first) {
     <div class="vehbar"><h2>${esc(vehicleName())}</h2><span class="vin-code">${esc(state.vin)}</span>${engine}${titleBadge()}<span class="spacer"></span>
       <button class="btn btn-ghost btn-sm" type="button" data-copy>Copy link</button>
       <button class="btn btn-ghost btn-sm" type="button" data-download>Download JSON</button></div>
-    ${recBlock(d, first)}${rangesBlock(d)}${routeBlock()}
+    ${recBlock(d, first)}${rangesBlock(d)}${routeBlock()}${scorecardBlock(d)}
     <div class="sec"><h3>Where the numbers come from</h3>${repairTab(d)}</div>
     <div class="sec"><h3>Condition</h3>${conditionTab()}</div>
     <div class="sec"><h3>Fault codes</h3>${codesTab()}</div>
@@ -540,6 +575,8 @@ function render(d, first) {
   $('vin').value = vin; $('vin').dispatchEvent(new Event('input'));
   if (VIN_RE.test(vin)) await checkRegistry(vin);
   if (q.get('title')) setTitle(q.get('title'));
+  if (q.get('drivable')) setDrivable(q.get('drivable'));
+  if (q.get('state')) $('state').value = q.get('state').toUpperCase();
   if (q.get('codes')) codes.set(q.get('codes').split(','));
   if (q.get('clean')) $('clean').value = q.get('clean');
   if (q.get('comps')) comps.set(q.get('comps').split(','));

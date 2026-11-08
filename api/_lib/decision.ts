@@ -2,6 +2,7 @@
 // Pure logic, no AI: cheap enough to rerun on every reviewer edit.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { scoreChannels, type Scorecard, type MarketFit } from './scorecard.js';
 
 // ---- Config: every assumption lives here ----
 export const DECISION_CONFIG = {
@@ -37,7 +38,7 @@ export const DECISION_CONFIG = {
 export type Severity = 'minor' | 'moderate' | 'severe';
 export type Grade = { part: string; grade: 'fine' | 'repairable' | 'replace' | 'unknown'; severity?: Severity | null };
 type Tri = boolean | 'unknown';
-export type Flags = { airbags_deployed?: Tri; frame_suspected?: Tri; fluid_leak?: Tri };
+export type Flags = { airbags_deployed?: Tri; frame_suspected?: Tri; fluid_leak?: Tri; flood_suspected?: Tri; fire_damage?: Tri };
 export type CodeIn = { code: string; description?: string; severity?: string; cost_low: number; cost_high: number };
 export type DecideInput = {
   title_status?: string;
@@ -47,6 +48,8 @@ export type DecideInput = {
   codes?: CodeIn[];
   values?: { clean_wholesale?: number; salvage_comps?: number[] };
   assumptions?: Partial<typeof DECISION_CONFIG.defaults>;
+  drivable?: 'yes' | 'no' | 'unknown';   // seller's answer, for the ACV vs Copart scorecard
+  market?: MarketFit | null;             // /api/market-fit response
 };
 
 type Pair = [number, number];
@@ -72,6 +75,7 @@ export type Decision = {
   check: { label: string; p_fix_if_resolved: number } | null;
   missing: string[];
   assumptions: typeof DECISION_CONFIG.defaults;
+  channel: Scorecard;                    // ACV vs Copart points (api/_lib/scorecard.ts)
 };
 
 // ---- Repair cost table (data/repair_costs.csv) ----
@@ -184,7 +188,11 @@ export function decide(inp: DecideInput): Decision {
   const arv = clean && title !== 'non_repairable'
     ? { low: Math.round(clean * (1 - h[1]) * (1 - disc[1])), high: Math.round(clean * (1 - h[0]) * (1 - disc[0])), title_discount: disc }
     : null;
-  const base = { repair, arv, as_is: asIs, days: { fix: a.fix_days, as_is: a.as_is_days }, missing, assumptions: a };
+  const channel = scoreChannels({
+    title_status: title, drivable: inp.drivable, grades: inp.grades, flags: inp.flags, codes: inp.codes,
+    repair, clean_wholesale: clean, arv_high: arv?.high ?? null, market: inp.market,
+  });
+  const base = { repair, arv, as_is: asIs, days: { fix: a.fix_days, as_is: a.as_is_days }, missing, assumptions: a, channel };
 
   if (missing.length || !asIs) return { ...base, fix_net: null, as_is_net: null, p_fix: null, verdict: null, check: null };
 

@@ -10,7 +10,8 @@
     "test:codes": "tsx scripts/test-decode-codes.ts",
     "typecheck": "tsc --noEmit",
     "seed:vehicles": "tsx scripts/seed-vehicles.ts",
-    "test:decision": "tsx scripts/test-decision.ts"
+    "test:decision": "tsx scripts/test-decision.ts",
+    "test:scorecard": "tsx scripts/test-scorecard.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.119.0",

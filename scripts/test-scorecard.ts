@@ -21,7 +21,8 @@ const cases: { name: string; want: string; inp: ScoreInput }[] = [
     title_status: 'salvage', drivable: 'no', flags: { ...clearFlags, frame_suspected: 'unknown' },
     grades: grades({ front_bumper: 'replace', hood: 'replace', grille: 'replace', left_headlight: 'replace', right_headlight: 'replace', windshield: 'replace' }),
     repair: { low: 4000, high: 11000 }, clean_wholesale: 14000, arv_high: 10600, market: market(1) } },
-  { name: 'repair costs more than the car', want: 'copart', inp: {
+  // With drivability unknown (no photos, seller not sure), repair over value (all 25 cost points) only ties a clean title.
+  { name: 'repair costs more than the car, no photos', want: 'too_close', inp: {
     title_status: 'clean', drivable: 'unknown', flags: clearFlags,
     grades: grades({ front_bumper: 'replace', hood: 'replace', left_front_fender: 'replace' }),
     repair: { low: 6000, high: 9500 }, clean_wholesale: 9000, arv_high: 8550, market: market(1) } },
@@ -47,11 +48,10 @@ const cases: { name: string; want: string; inp: ScoreInput }[] = [
     codes: ['P0300', 'P0301', 'P0302', 'P0304'].map((code) => ({ code, system: 'engine', severity: 'major', cost_low: 150, cost_high: 2500 })),
     code_assessment: assess(250, 900, { confidence: 'high', root_causes: [{ codes: ['P0300', 'P0301', 'P0302', 'P0304'], cause: 'worn plugs/coils', repair: 'plugs and coils', cost_low: 250, cost_high: 900 }] }),
     repair: { low: 600, high: 1800 }, clean_wholesale: 14000, arv_high: 13300, market: market(3) } },
-  { name: 'close call', want: 'too_close', inp: {
+  { name: "close call: clean, cheap repair, strong market, but it can't be driven", want: 'too_close', inp: {
     title_status: 'clean', flags: { ...clearFlags, frame_suspected: 'unknown' },
-    drivability: drive({ damage_location: 'affects_driving', tires: 'flat_or_damaged', fluids: 'seepage', rust: 'surface' }),
-    grades: grades({ front_bumper: 'replace', left_front_fender: 'replace', left_headlight: 'replace', wheels_and_tires: 'replace' }),
-    repair: { low: 4000, high: 8500 }, clean_wholesale: 12000, arv_high: 10500, market: market(1) } },
+    drivability: drive({ damage_location: 'affects_driving' }), grades: grades({ front_bumper: 'replace', left_front_fender: 'repairable' }),
+    repair: { low: 1500, high: 3500 }, clean_wholesale: 14000, arv_high: 13300, market: market(3) } },
   { name: 'no market search (state missing)', want: 'acv', inp: {
     title_status: 'clean', drivable: 'yes', grades: grades(), flags: clearFlags,
     repair: { low: 0, high: 0 }, clean_wholesale: 20000, arv_high: 19000, market: { ran: false, error: 'no state given' } } },

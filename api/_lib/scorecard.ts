@@ -8,7 +8,7 @@
 
 export const SCORECARD_CONFIG = {
   // Points out of 100 per category.
-  weights: { title: 25, drivability: 20, cost_uncertainty: 35, unknown_flags: 10, market_fit: 10 },
+  weights: { title: 20, drivability: 35, cost_uncertainty: 25, unknown_flags: 10, market_fit: 10 },
   closeMargin: 5,                      // totals closer than this -> "too_close"
   title: { clean: 1, rebuilt: -0.2, salvage: -1, flood: -1, lemon: 0, unknown: 0 } as Record<string, number>,
   drivability: {
@@ -134,8 +134,9 @@ export function scoreChannels(inp: ScoreInput): Scorecard {
   const missing: string[] = [];
   const f = inp.flags ?? {};
   const cats: Category[] = [];
+  // Rows are rounded to one decimal for display; the category total is capped at its weight so rounding can't push it over.
   const add = (key: string, label: string, weight: number, rows: Row[]) =>
-    cats.push({ key, label, weight, rows, acv: r1(rows.reduce((s, r) => s + r.acv, 0)), copart: r1(rows.reduce((s, r) => s + r.copart, 0)) });
+    cats.push({ key, label, weight, rows, acv: Math.min(weight, r1(rows.reduce((s, r) => s + r.acv, 0))), copart: Math.min(weight, r1(rows.reduce((s, r) => s + r.copart, 0))) });
 
   // 1. Title (25)
   const title = inp.title_status ?? 'unknown';

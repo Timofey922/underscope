@@ -22,24 +22,24 @@ It sits next to the other two answers on the page; it doesn't replace them:
 
 | Category | Points | What goes in |
 |---|---|---|
-| Title | 25 | the title brand |
-| Drivability | 20 | damage location, fluids, rust, tires, brakes, glass, aftermarket modifications |
-| Repair cost and uncertainty | 35 | repair estimate vs value, fault codes priced together, non-engine modules (airbag/SRS, ABS, …) |
+| Title | 20 | the title brand |
+| Drivability | 35 | damage location, fluids, rust, tires, brakes, glass, aftermarket modifications |
+| Repair cost and uncertainty | 25 | repair estimate vs value, fault codes priced together, non-engine modules (airbag/SRS, ABS, …) |
 | Unknown flags | 10 | what nobody could check |
 | Market fit | 10 | public listings in the state, age and mileage (unchanged) |
 
-## 1. Title (25)
+## 1. Title (20)
 
 | Title | Lean | Points |
 |---|---|---|
-| clean | +1 | ACV 25 |
-| rebuilt | −0.2 | Copart 5 |
-| salvage, flood | −1 | Copart 25 |
+| clean | +1 | ACV 20 |
+| rebuilt | −0.2 | Copart 4 |
+| salvage, flood | −1 | Copart 20 |
 | lemon | 0 | 0 |
 | not sure | 0 | 0 (listed as not scored) |
 | non-repairable | | forces Copart |
 
-## 2. Drivability (20)
+## 2. Drivability (35)
 
 The photo grader (OpenAI, `drivability` in its JSON) reports one status per item:
 
@@ -55,7 +55,7 @@ The photo grader (OpenAI, `drivability` in its JSON) reports one status per item
 
 "Unknown" leans 0.
 
-**Weakest link.** The statuses in bold stop the car from being driven. If any of them shows, the whole 20 points go to Copart, split between the blocking items. Intact glass and good tires don't make a car with a crushed radiator support drivable. Otherwise each item adds its share.
+**Weakest link.** The statuses in bold stop the car from being driven. If any of them shows, the whole 35 points go to Copart, split between the blocking items. Intact glass and good tires don't make a car with a crushed radiator support drivable. Otherwise each item adds its share.
 
 **The grades, flags and fault codes can only make an item worse**, so reviewer edits count:
 
@@ -68,9 +68,9 @@ The photo grader (OpenAI, `drivability` in its JSON) reports one status per item
 | windshield: replace / repairable | glass: cracked or broken / chipped |
 | brake/ABS fault code: major or critical / any | brakes: damaged / warning |
 
-**Without photos** the seller's **Does it drive?** answer counts for the whole category (yes +20 ACV, no +20 Copart). If the seller isn't sure either, only problems shown by the grades, flags or codes are scored, and drivability is listed as not scored.
+**Without photos** the seller's **Does it drive?** answer counts for the whole category (yes +35 ACV, no +35 Copart). If the seller isn't sure either, only problems shown by the grades, flags or codes are scored, and drivability is listed as not scored.
 
-## 3. Repair cost and uncertainty (35)
+## 3. Repair cost and uncertainty (25)
 
 | Finding | Share | Lean |
 |---|---|---|
@@ -79,7 +79,7 @@ The photo grader (OpenAI, `drivability` in its JSON) reports one status per item
 | Non-engine modules | 0.30 | replacement likely: −1; fault codes only: −0.5; airbags intact and no module faults: +0.5; not known: 0 |
 
 - **Module replacement is likely** when airbags deployed, flood or fire is suspected (electrical modules), or OpenAI says a module usually needs replacing for those codes.
-- **Repair could cost more than the car is worth.** If the top of the repair range is above the value after repair, the whole 35 points go to Copart.
+- **Repair could cost more than the car is worth.** If the top of the repair range is above the value after repair, the whole 25 points go to Copart.
 
 ## 4. Unknown flags (10)
 
@@ -209,13 +209,13 @@ npm run test:scorecard
 Ten hand-made cases, one per kind of answer:
 1. a clean car that drives
 2. salvage that doesn't drive
-3. repair costing more than the car
+3. repair costing more than the car, without photos (too close to call: the 25 cost points only tie a clean title)
 4. flood
 5. non-repairable
 6. a seller who says it drives while the photos say no
 7. airbags out with costly codes
 8. codes that look costly one by one but are cheap together
-9. a close call
+9. a close call: clean title, cheap repair and a strong market, but the car can't be driven
 10. no market search
 
 It also checks that no category gives more than its weight and that the weights add up to 100.

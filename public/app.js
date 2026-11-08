@@ -242,6 +242,7 @@ function showStep(n, focus = false) {
     b.classList.toggle('done', i < reached && i !== step);
     if (i === step) b.setAttribute('aria-current', 'step'); else b.removeAttribute('aria-current');
   });
+  document.querySelector('.stepper').style.setProperty('--progress', (step + 1) / panels.length);
   const last = step === panels.length - 1;
   $('back').hidden = step === 0; $('next').hidden = last; $('go').hidden = !last;
   if (focus) (step === 0 ? $('vin') : panels[step].querySelector('h2')).focus({ preventScroll: true });
@@ -249,6 +250,8 @@ function showStep(n, focus = false) {
 function goTo(n) {
   const vin = $('vin').value.trim();
   if (n > 0 && !VIN_RE.test(vin)) { flagBadVin(vin); showStep(0); $('vin').focus(); return; } // a VIN first
+  const box = document.querySelector('.intake');
+  box.classList.add('animate'); box.classList.toggle('back', n < step); // direction of the slide
   showStep(n, true);
 }
 $('next').addEventListener('click', () => goTo(step + 1));
@@ -622,6 +625,7 @@ function render(d, first) {
   const out = $('result');
   const report = buildReport(d);
   out.hidden = false;
+  out.classList.toggle('reveal', !!first); // cards rise in on a new result, not on reviewer edits
   const y = window.scrollY;
   const engine = state.codes.vehicle.engine ? `<span class="vin-code">${esc(state.codes.vehicle.engine)}</span>` : '';
   out.innerHTML = `

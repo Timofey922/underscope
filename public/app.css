@@ -73,20 +73,31 @@ input, button, select { font-family: inherit; }
 .card-body { padding: 20px 20px 4px; }
 /* Step-by-step intake: one card, one step visible at a time */
 .intake { overflow: hidden; }
-.stepper { list-style: none; margin: 0; padding: 0 12px; display: flex; border-bottom: 1px solid var(--line); background: var(--subtle); counter-reset: none; }
+.stepper { position: relative; list-style: none; margin: 0; padding: 0 12px; display: flex; border-bottom: 1px solid var(--line); background: var(--subtle); }
+/* Progress bar under the steps: fills to the current step (JS sets --progress = step / steps) */
+.stepper::after { content: ""; position: absolute; left: 0; bottom: -1px; height: 3px; width: calc(var(--progress, .25) * 100%); background: var(--orange);
+  border-radius: 0 2px 2px 0; transition: width .4s cubic-bezier(.4, 0, .2, 1); }
 .stepper li { flex: 1; min-width: 0; position: relative; }
-.stepper li + li::before { content: ""; position: absolute; left: -12px; top: 50%; width: 24px; height: 1px; background: var(--line-strong); }
+.stepper li + li::before { content: ""; position: absolute; left: -12px; top: 50%; width: 24px; height: 2px; margin-top: -1px; border-radius: 1px; background: var(--line-strong); transition: background-color .3s; }
+.stepper li:has(.step.done) + li::before { background: var(--green); }
 .step { display: flex; align-items: center; gap: 10px; width: 100%; height: 56px; padding: 0 12px; background: none; border: 0; border-bottom: 3px solid transparent; margin-bottom: -1px;
   font: 500 14px/1.2 var(--sans); color: var(--muted); cursor: pointer; text-align: left; transition: color var(--ease), border-color var(--ease); }
 .step:hover { color: var(--ink); }
 .step-n { flex: none; display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; border: 1.5px solid var(--line-strong); background: var(--surface);
   font: 600 12.5px/1 var(--sans); color: var(--muted); transition: background-color var(--ease), border-color var(--ease), color var(--ease); }
 .step-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.step[aria-current="step"] { color: var(--black); font-weight: 600; border-bottom-color: var(--orange); }
-.step[aria-current="step"] .step-n { background: var(--orange); border-color: var(--orange); color: #fff; }
+.step[aria-current="step"] { color: var(--black); font-weight: 600; }
+.step[aria-current="step"] .step-n { background: var(--orange); border-color: var(--orange); color: #fff; box-shadow: 0 0 0 4px rgba(211, 67, 25, .15); animation: step-pop .35s ease; }
 .step.done { color: var(--ink); }
 .step.done .step-n { border-color: var(--green); background: var(--green-bg); color: transparent; position: relative; }
-.step.done .step-n::after { content: ""; position: absolute; inset: 6px; background: var(--green-ink); -webkit-mask: var(--i-check) center / contain no-repeat; mask: var(--i-check) center / contain no-repeat; }
+.step.done .step-n::after { content: ""; position: absolute; inset: 6px; background: var(--green-ink); -webkit-mask: var(--i-check) center / contain no-repeat; mask: var(--i-check) center / contain no-repeat; animation: check-in .3s ease; }
+/* Step changes: the new step slides in from the right going forward, from the left going back */
+.intake.animate .step-panel:not([hidden]) { animation: step-in .32s cubic-bezier(.2, .7, .2, 1) both; }
+.intake.animate.back .step-panel:not([hidden]) { animation-name: step-in-back; }
+@keyframes step-in { from { opacity: 0; transform: translateX(32px); } to { opacity: 1; transform: none; } }
+@keyframes step-in-back { from { opacity: 0; transform: translateX(-32px); } to { opacity: 1; transform: none; } }
+@keyframes step-pop { 0% { transform: scale(.7); } 60% { transform: scale(1.12); } 100% { transform: scale(1); } }
+@keyframes check-in { from { opacity: 0; transform: scale(.5); } to { opacity: 1; transform: none; } }
 .step-panel .card-head { border-bottom: 0; padding-bottom: 0; }
 .step-panel .card-head h2:focus { outline: none; }
 .step-of { font-size: 12.5px; font-weight: 500; color: var(--muted); white-space: nowrap; }
@@ -214,6 +225,11 @@ details.assume summary:hover { color: var(--orange); }
 .result > .vehbar, .result > .rec, .result > .ranges, .result > .error-box, .result > .sec-full,
 .result > .sec-condition, .result > .sec-codes, .result > .sec-api { grid-column: 1 / -1; }
 .result > .sec { container-type: inline-size; }
+.result.reveal > * { animation: rise .45s cubic-bezier(.2, .7, .2, 1) both; }
+.result.reveal > :nth-child(2) { animation-delay: .06s; } .result.reveal > :nth-child(3) { animation-delay: .12s; }
+.result.reveal > :nth-child(4) { animation-delay: .18s; } .result.reveal > :nth-child(5) { animation-delay: .24s; }
+.result.reveal > :nth-child(6) { animation-delay: .3s; } .result.reveal > :nth-child(n+7) { animation-delay: .36s; }
+@keyframes rise { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
 .result > * { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow-card); min-width: 0; }
 .result > .sec { padding: 20px 24px 24px; }
 .result > .rec:has(+ .ranges) { border-bottom: 0; border-bottom-left-radius: 0; border-bottom-right-radius: 0; padding-bottom: 8px; }

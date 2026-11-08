@@ -511,7 +511,7 @@ function recBlock(d, first, compact = false) {
     sell_as_is: ['on-red', '!', 'Sell it as-is', pct === 0 ? 'Selling as-is came out ahead in all 1,000 simulated outcomes.' : `Fixing came out ahead in only ${pct}% of 1,000 simulated outcomes.`],
     too_close: ['on-amber', '?', 'Too close to call', `Fixing came out ahead in ${pct}% of 1,000 simulated outcomes; the ranges overlap too much to choose.`],
     not_fixable: ['on-red', '!', 'Sell it as-is', 'A non-repairable title means it can\'t be registered again after repair.'],
-  }[d.verdict] || ['', '–', 'Needs market values', `Add ${d.missing.join(' and ')} above.`];
+  }[d.verdict] || ['', '–', 'Needs market values', d.missing.some((m) => /clean/.test(m)) ? 'Add the clean wholesale value above.' : 'No sold salvage prices on record for this vehicle, so its as-is value is unknown.'];
   const check = d.check ? `<p class="check"><b>Check before deciding:</b> ${esc(d.check.label)}. If it comes back clean, fixing wins ${Math.round(d.check.p_fix_if_resolved * 100)}% of the time.</p>` : '';
   return `<div class="rec${compact ? ' compact' : ''}"><div class="lamp ${V[0]}${first ? ' ignite' : ''}" aria-hidden="true">${V[1]}</div><div><h3>${esc(V[2])}</h3><p class="why">${esc(V[3])}</p>${check}</div></div>`;
 }
@@ -551,7 +551,7 @@ function repairTab(d) {
     <table class="lines"><tbody>${rows}${widen}<tr class="total"><td>Repair estimate</td><td class="amt">${money(r.low)} to ${money(r.high)}</td></tr></tbody></table>
     <dl class="facts">
       ${d.arv ? `<div class="fact"><dt>Value after repair</dt><dd>${money(d.arv.low)} to ${money(d.arv.high)}<small>Clean wholesale less 5–12% for condition, ${esc(titleNote)}</small></dd></div>` : ''}
-      ${d.as_is ? `<div class="fact"><dt>Value as-is</dt><dd>${money(d.as_is.low)} to ${money(d.as_is.high)}<small>Range of ${d.as_is.comps} salvage comps</small></dd></div>` : ''}
+      ${d.as_is ? `<div class="fact"><dt>Value as-is</dt><dd>${money(d.as_is.low)} to ${money(d.as_is.high)}<small>From ${d.as_is.comps} sold salvage lots on record</small></dd></div>` : ''}
       <div class="fact"><dt>Costs to sell</dt><dd>${money(a.fix_selling_fee)} + ${money(a.daily_cost)}/day<small>After repair. As-is: ${money(a.as_is_fee)} fee + ${money(a.transport)} transport</small></dd></div>
     </dl>`;
 }
@@ -650,12 +650,11 @@ function render(d, first) {
       <div class="veh-actions"><button class="btn btn-ghost btn-sm" type="button" data-copy>${ic('link')}Copy link</button>
       <button class="btn btn-ghost btn-sm" type="button" data-download>${ic('download')}Download JSON</button></div></div>
     ${state.route && !state.route.error
-      ? `${routeHero(first)}${routeExits()}<div class="sec sec-decide"><h3>${ic('wrench')}Repair or sell as-is?</h3>${recBlock(d, false, true)}${rangesBlock(d)}</div>${scorecardBlock(d)}`
+      ? `${routeHero(first)}${routeExits()}${d.verdict ? `<div class="sec sec-decide"><h3>${ic('wrench')}Repair or sell as-is?</h3>${recBlock(d, false, true)}${rangesBlock(d)}</div>` : ''}${scorecardBlock(d)}`
       : `${recBlock(d, first)}${rangesBlock(d)}${routeExits()}${scorecardBlock(d)}`}
     <div class="sec sec-repair"><h3>${ic('receipt')}Where the numbers come from</h3>${repairTab(d)}</div>
     <div class="sec sec-condition"><h3>${ic('clipboard')}Condition</h3>${conditionTab()}</div>
-    <div class="sec sec-codes"><h3>${ic('gauge')}Fault codes</h3>${codesTab()}</div>
-    <div class="sec sec-api"><details><summary style="cursor:pointer;color:var(--orange);font-weight:500;font-size:14px">${ic('code')}API response (same as Download JSON)</summary><pre style="margin-top:10px">${esc(JSON.stringify(report, null, 2))}</pre></details></div>`;
+    <div class="sec sec-codes"><h3>${ic('gauge')}Fault codes</h3>${codesTab()}</div>`;
   out.querySelector('[data-download]').onclick = () => downloadJson(report);
   if (first) {
     history.replaceState(null, '', shareUrl().replace(location.origin, ''));

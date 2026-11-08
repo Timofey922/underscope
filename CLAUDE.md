@@ -104,7 +104,7 @@ Repair band = sum of rows for flagged parts. If any flag is "unknown" or frame_s
 
 ## As-is band
 Hand-entered per vehicle: 5-10 comparable sold salvage lots + one clean wholesale value with a condition haircut. Band = low/high of comps.
-- Entered on the page, or stored per VIN in the registry (`clean_wholesale`, `salvage_comps`, `values_note`) and filled in automatically. At least 3 comps are required.
+- Clean wholesale is entered on the page; salvage comps are not (team decision: no comps field on the page). Both are stored per VIN in the registry (`clean_wholesale`, `salvage_comps`, `values_note`) and filled in automatically. At least 3 comps are required for fix vs sell as-is; without them that section is hidden and the engine headline uses its own salvage estimate.
 - After-repair value = clean wholesale × (1 − condition haircut 5–12%) × (1 − title discount). Title discounts: rebuilt/salvage 20–40% (salvage becomes rebuilt after repair), flood 30–50%, lemon 15–30%, unknown 0–20%. `non_repairable` means fixing isn't allowed: verdict `not_fixable`.
 
 ## Decision
@@ -117,9 +117,9 @@ Hand-entered per vehicle: 5-10 comparable sold salvage lots + one clean wholesal
 
 ## UI (Lovable)
 Upload photos + VIN -> part grid with grade and source photo -> both nets with bands and days -> recommendation -> reviewer toggle to change any grade and recompute live.
-- Working version: `public/index.html` + `public/app.js` + `public/app.css` (the Vercel demo). One column (the team prefers it): app bar, heading, vehicle form, then the result (vehicle header with title badge, recommendation, both net ranges, then stacked sections for where the numbers come from, condition, fault codes, API response), then a note on verified vehicles. Clicking a part grade or a flag cycles it and calls `/api/decide` again. The Lovable app can call the same four endpoints.
+- Working version: `public/index.html` + `public/app.js` + `public/app.css` (the Vercel demo). One column (the team prefers it): app bar, heading, vehicle form, then the result (vehicle header with title badge, recommendation, both net ranges, then stacked sections for where the numbers come from, condition, fault codes), then a note on verified vehicles. Clicking a part grade or a flag cycles it and calls `/api/decide` again. The Lovable app can call the same four endpoints.
 - Look: tool-like, in ACV's palette and type (orange #D34319 actions, #121212 ink, gray scale, Roboto, 4px radii). No marketing hero, no decorative copy. Underscope branding only: never use ACV's logo or present it as an ACV product; keep the footer line saying it's an independent project.
-- Integration points (`public/integrate.html`): deep links (`/?vin=&codes=&title=&clean=&comps=&run=1`, `/?sample=<id>`; every result has Copy link), a bookmarklet that finds a VIN on any listing page (validated by check digit) and opens a check, and the four CORS-open APIs. No access to ACV systems is used; CLAUDE.md's "no ACV integration" still holds.
+- No Integrate page or API-response box (team decision: keep the page plain). Deep links still work (`/?vin=&codes=&title=&clean=&comps=&mileage=&run=1`; every result has Copy link) and the endpoints stay CORS-open.
 - Sample vehicles: `public/demo_vehicles.json` (made-up VINs, one per verdict) is a test fixture for `test:decision`, not listed on the page (`/?sample=<id>` still opens one). The page uses real vehicles from the registry.
 
 ## Test

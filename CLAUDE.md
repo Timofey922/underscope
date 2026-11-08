@@ -30,6 +30,7 @@ Read them only when a task needs the bigger picture; this file is the source of 
 - `supabase/migrations/` — SQL migrations
 - `data/` — `dtc_codes.csv` (seeds the `dtc_codes` table), `test_scans.json` (10 demo scans)
 - `test_vehicles/` — test photos, gitignored
+- `engine/` — Artem's Python engine (merged from denisenkoartem/underscop with its history): damage detector, evaluation harness, calibration, review sheets, JSON Schema contracts (`engine/docs/contracts`). It has its own `CLAUDE.md` and `README.md`; read those when working inside `engine/`. Setup: `cd engine && python -m venv .venv && .venv/Scripts/pip install -e ".[dev]"` (Windows) then `.venv/Scripts/python -m pytest -q`. Its vision detector currently calls Anthropic (`ANTHROPIC_API_KEY`, `claude-opus-5-5`); the Vercel app's photo grading uses OpenAI.
 
 ## Part list (25) — every part must appear in model output
 front_bumper, hood, grille, left_headlight, right_headlight, windshield, left_front_fender, right_front_fender, left_front_door, right_front_door, left_rear_door, right_rear_door, left_mirror, right_mirror, left_rear_quarter, right_rear_quarter, tailgate_or_rear_doors, rear_bumper, left_taillight, right_taillight, wheels_and_tires, roof, interior (seats, dash, airbags), engine_bay (radiator area, leaks), underbody (frame rail, exhaust, catalytic converter)

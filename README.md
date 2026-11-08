@@ -52,6 +52,7 @@ The front end is a Lovable app. The seller uploads photos and a VIN, then sees a
 | `supabase/migrations/` | Database schema (`dtc_codes`, `scans`) with row level security |
 | `data/` | `dtc_codes.csv` (60 generic OBD-II codes), `test_scans.json` (10 demo scans) |
 | `test_vehicles/` | 20 test vehicles (photos only, gitignored) |
+| `engine/` | Artem's Python engine: damage detector, evaluation harness, calibration, review sheets, contracts. See `engine/README.md`. Tests: `cd engine && make test` (217 passing) |
 
 **Stack:** Lovable (React + TypeScript) front end on Vercel, Vercel functions in `api/`, OpenAI for photo grading (`openai`), Google Gemini via Vertex AI for fault codes (`@google/genai`), Supabase (Postgres).
 

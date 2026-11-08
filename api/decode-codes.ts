@@ -42,6 +42,7 @@ export type DecodedCode = {
   code: string; description: string; system: string; severity: string;
   cost_low: number; cost_high: number; source: Source;
   cost_source: CostSource;
+  cost_alone?: { low: number; high: number }; // this code's price on its own, before shared repairs were counted once
   repair?: string | null;     // the likely fix the price covers
   quote_note?: string | null; // where a 'quote' cost came from
 };
@@ -52,7 +53,7 @@ export type DecodeResult = {
   // 'registry' = verified record in the demo registry (wins over the seller's choice); 'seller' = picked on the page.
   title_source: { from: 'registry'; source: RegistryTitle['source']; title_state: string | null } | { from: 'seller' };
   codes: DecodedCode[];
-  summary: { count: number; worst_severity: string; cost_low: number; cost_high: number };
+  summary: { count: number; worst_severity: string; cost_low: number; cost_high: number; shared_repair?: string | null };
   triage: 'full_inspection' | 'skip_inspection_sell_as_is';
   reason: string;
 };
@@ -92,8 +93,12 @@ function unknownCode(code: string): DecodedCode {
 
 // Strict schema: one entry per code, enums for system/severity, "unknown" / null always allowed.
 const CODES_SCHEMA = {
-  type: 'object', additionalProperties: false, required: ['codes'],
+  type: 'object', additionalProperties: false, required: ['codes', 'together'],
   properties: {
+    together: {
+      type: 'object', additionalProperties: false, required: ['cost_low', 'cost_high', 'shared_repair'],
+      properties: { cost_low: { type: ['integer', 'null'] }, cost_high: { type: ['integer', 'null'] }, shared_repair: { type: 'string' } },
+    },
     codes: {
       type: 'array',
       items: {
@@ -114,9 +119,11 @@ const CODES_SCHEMA = {
 };
 
 type AIItem = { description: string; system: string; severity: string; repair: string; cost_low: number | null; cost_high: number | null };
+type AITogether = { cost_low: number | null; cost_high: number | null; shared_repair: string };
+type AIReply = { items: Map<string, AIItem>; together: AITogether | null };
 
 /** Explains codes the table doesn't know and prices every code for this vehicle. null on failure. */
-async function askOpenAI(codes: string[], vehicle: Vehicle, known: Map<string, DecodedCode>): Promise<Map<string, AIItem> | null> {
+async function askOpenAI(codes: string[], vehicle: Vehicle, known: Map<string, DecodedCode>): Promise<AIReply | null> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey || codes.length === 0) return null;
   const ai = new OpenAI({ apiKey });
@@ -130,6 +137,7 @@ async function askOpenAI(codes: string[], vehicle: Vehicle, known: Map<string, D
     'cost_low = the most common cheap fix (e.g. a sensor or filter); cost_high = the expensive fix the code often turns out to be (e.g. high-pressure fuel pump, injectors, turbo, transmission valve body).',
     'Price for this exact engine and brand: direct injection, turbo, diesel, hybrid and luxury or exotic makes (BMW, Mercedes, Audi, Porsche, Land Rover, Maserati...) cost far more in parts and labor than an economy car. Do not reuse generic price ranges.',
     'repair: one short line naming the likely fixes the range covers. If you cannot price it for this vehicle, set cost_low and cost_high to null.',
+    'together: the one bill to clear ALL the codes on this car at the same visit. Codes that point to the same failure share one repair, counted once (e.g. P0700 + P0730 + P0868 = one transmission repair; P0300 + P0301 = one misfire cause; P0171 + P0174 = one lean condition). Codes with unrelated causes add up. shared_repair: one short line on what is shared, or "none". With a single code, repeat its price.',
   ].join('\n');
   const lines = codes.map((c) => {
     const k = known.get(c);
@@ -145,10 +153,11 @@ async function askOpenAI(codes: string[], vehicle: Vehicle, known: Map<string, D
         response_format: { type: 'json_schema', json_schema: { name: 'dtc_codes', strict: true, schema: CODES_SCHEMA } },
         messages: [{ role: 'system', content: system }, { role: 'user', content: `Vehicle: ${car}\nCodes:\n${lines.join('\n')}` }],
       });
-      const items: any[] = JSON.parse(res.choices[0].message.content ?? '').codes;
+      const reply = JSON.parse(res.choices[0].message.content ?? '');
+      const items: any[] = reply.codes;
       const byCode = new Map(items.map((i) => [String(i.code).toUpperCase(), i]));
       if (!codes.every((c) => byCode.has(c))) throw new Error('missing codes in OpenAI reply');
-      return new Map(codes.map((c) => [c, byCode.get(c) as AIItem]));
+      return { items: new Map(codes.map((c) => [c, byCode.get(c) as AIItem])), together: reply.together ?? null };
     } catch (e) {
       // API error, invalid JSON or missing codes: retry once, then fall back
       console.warn(`OpenAI attempt ${attempt + 1} failed: ${(e as Error).message.slice(0, 200)}`);
@@ -173,6 +182,28 @@ function merge(code: string, table: DecodedCode | undefined, a: AIItem | undefin
     Object.assign(d, { cost_low: Math.round(lo), cost_high: Math.round(hi), cost_source: 'openai_estimate', repair: a.repair?.trim() || null });
   }
   return d;
+}
+
+/**
+ * Codes that share one failure (three transmission codes = one rebuild) would be counted three times if each
+ * code's price were added up. The model also prices the whole scan as one bill; when that bill is lower than the
+ * sum of its own per-code prices, scale the AI-estimated codes down by the same ratio (quotes stay as they are).
+ * Returns the shared-repair note, or null when nothing was shared.
+ */
+function countSharedOnce(decoded: DecodedCode[], ai: AIReply | null): string | null {
+  const t = ai?.together;
+  if (!ai || !t || t.cost_low == null || t.cost_high == null || decoded.length < 2) return null;
+  const priced = [...ai.items.values()].filter((i) => i.cost_low != null && i.cost_high != null && i.cost_high >= i.cost_low && i.cost_low > 0);
+  const sumLo = priced.reduce((s, i) => s + Number(i.cost_low), 0), sumHi = priced.reduce((s, i) => s + Number(i.cost_high), 0);
+  if (priced.length < 2 || !(sumLo > 0) || !(sumHi > 0) || t.cost_high < t.cost_low || t.cost_low <= 0) return null;
+  const fLo = Math.min(1, t.cost_low / sumLo), fHi = Math.min(1, t.cost_high / sumHi);
+  if (fLo > 0.98 && fHi > 0.98) return null; // nothing shared
+  for (const d of decoded) {
+    if (d.cost_source !== 'openai_estimate') continue;
+    d.cost_alone = { low: d.cost_low, high: d.cost_high };
+    d.cost_low = Math.round(d.cost_low * fLo); d.cost_high = Math.max(d.cost_low, Math.round(d.cost_high * fHi));
+  }
+  return t.shared_repair && t.shared_repair.toLowerCase() !== 'none' ? t.shared_repair.trim() : 'Some codes share one repair; it is counted once.';
 }
 
 function triage(valid: DecodedCode[], title: TitleStatus): { triage: DecodeResult['triage']; reason: string } {
@@ -206,9 +237,10 @@ export async function decodeScan(vin: string, rawCodes: string[], title: TitleSt
   // A real quote for this car (registry) replaces the estimate; meaning and severity stay.
   const quotes = registered?.code_quotes ?? {};
   const decoded = valid.map((c) => {
-    const d = merge(c, table.get(c), fromAI?.get(c)), q = quotes[c];
+    const d = merge(c, table.get(c), fromAI?.items.get(c)), q = quotes[c];
     return q ? { ...d, cost_low: q.low, cost_high: q.high, cost_source: 'quote' as const, quote_note: q.note ?? null } : d;
   });
+  const shared = countSharedOnce(decoded, fromAI);
   const rank = (s: string) => SEVERITIES.indexOf(s);
   const worst = decoded.reduce((w, c) => (rank(c.severity) > rank(w) ? c.severity : w), decoded.length ? 'unknown' : 'none');
 
@@ -225,6 +257,7 @@ export async function decodeScan(vin: string, rawCodes: string[], title: TitleSt
       worst_severity: worst,
       cost_low: decoded.reduce((s, c) => s + c.cost_low, 0),
       cost_high: decoded.reduce((s, c) => s + c.cost_high, 0),
+      shared_repair: shared,
     },
     ...triage(decoded, title),
   };

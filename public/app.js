@@ -598,10 +598,10 @@ function codesTab() {
   if (!r.codes.length) return '<p class="tab-note">No codes from the scan tool.</p>';
   const sev = (s) => s[0].toUpperCase() + s.slice(1);
   const inspect = r.triage === 'full_inspection' ? 'A full inspection is worth paying for.' : `A full inspection isn't worth paying for: ${r.reason.replace(/^Skip inspection:\s*/, '')}`;
-  return `<p class="tab-note">${r.summary.count} code${r.summary.count === 1 ? '' : 's'}, ${money(r.summary.cost_low)} to ${money(r.summary.cost_high)} in the repair estimate. ${esc(inspect)}</p>
+  return `<p class="tab-note">${r.summary.count} code${r.summary.count === 1 ? '' : 's'}, ${money(r.summary.cost_low)} to ${money(r.summary.cost_high)} in the repair estimate.${r.summary.shared_repair ? ` Shared repair counted once: ${esc(r.summary.shared_repair)}` : ''} ${esc(inspect)}</p>
     <ul class="codelist">${r.codes.map((c) => `
       <li class="sev-${esc(c.severity)}"><span class="code">${esc(c.code)}</span><span class="desc">${c.description === 'unknown' ? 'Meaning unknown' : esc(c.description)}</span>
-        <span class="cost">${c.source === 'invalid' ? '' : `${money(c.cost_low)} to ${money(c.cost_high)}`}</span>
+        <span class="cost">${c.source === 'invalid' ? '' : `${money(c.cost_low)} to ${money(c.cost_high)}`}${c.cost_alone ? `<small> (${money(c.cost_alone.low)} to ${money(c.cost_alone.high)} alone)</small>` : ''}</span>
         <span class="meta">${esc(sev(c.severity))}, ${esc(c.system)}, ${esc(CODE_SOURCE[c.source] || c.source)}${COST_SOURCE[c.cost_source] ? `; ${esc(COST_SOURCE[c.cost_source])}` : ''}${c.quote_note ? ` (${esc(c.quote_note)})` : ''}${c.repair && c.cost_source === 'openai_estimate' ? `. Likely fix: ${esc(c.repair)}` : ''}</span></li>`).join('')}</ul>`;
 }
 

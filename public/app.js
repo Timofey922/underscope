@@ -226,14 +226,9 @@ function loadSample(v) {
   preset = { id: v.id, grades: v.grades, flags: v.flags };
   $('form').requestSubmit();
 }
+// Sample vehicles (made-up data) aren't listed on the page; /?sample=<id> still opens one for testing.
 const samplesReady = fetch('/demo_vehicles.json').then((r) => r.json()).then(({ vehicles }) => {
-  for (const v of vehicles) {
-    samples[v.id] = v;
-    const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${esc(v.label)}</td><td class="vin-cell">${esc(v.vin)}</td><td>${esc(TITLE_LABEL[v.title_status])}</td><td><button class="btn btn-ghost btn-sm" type="button">Open</button></td>`;
-    tr.querySelector('button').onclick = () => loadSample(v);
-    $('samples').appendChild(tr);
-  }
+  for (const v of vehicles) samples[v.id] = v;
 }).catch(() => {});
 
 $('clear').onclick = () => {
@@ -292,7 +287,7 @@ $('form').addEventListener('submit', async (e) => {
     await recompute(true);
   } catch (err) {
     $('result').hidden = false;
-    $('result').innerHTML = `<div class="error-box"><h3>Couldn't check this vehicle</h3><p>${esc(err.message)} Try again or open a sample below.</p></div>`;
+    $('result').innerHTML = `<div class="error-box"><h3>Couldn't check this vehicle</h3><p>${esc(err.message)} Check the inputs and try again.</p></div>`;
     $('result').scrollIntoView({ behavior: reduceMotion() ? 'auto' : 'smooth', block: 'center' });
   } finally {
     $('go').disabled = false; $('go').textContent = 'Run check';

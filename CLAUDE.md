@@ -113,10 +113,10 @@ Hand-entered per vehicle: 5-10 comparable sold salvage lots + one clean wholesal
 
 ## UI (Lovable)
 Upload photos + VIN -> part grid with grade and source photo -> both nets with bands and days -> recommendation -> reviewer toggle to change any grade and recompute live.
-- Working version: `public/index.html` + `public/app.js` + `public/app.css` (the Vercel demo). One column (the team prefers it): app bar, heading, vehicle form, then the result (vehicle header with title badge, recommendation, both net ranges, then stacked sections for where the numbers come from, condition, fault codes, API response), then sample vehicles. Clicking a part grade or a flag cycles it and calls `/api/decide` again. The Lovable app can call the same four endpoints.
+- Working version: `public/index.html` + `public/app.js` + `public/app.css` (the Vercel demo). One column (the team prefers it): app bar, heading, vehicle form, then the result (vehicle header with title badge, recommendation, both net ranges, then stacked sections for where the numbers come from, condition, fault codes, API response), then a note on verified vehicles. Clicking a part grade or a flag cycles it and calls `/api/decide` again. The Lovable app can call the same four endpoints.
 - Look: tool-like, in ACV's palette and type (orange #D34319 actions, #121212 ink, gray scale, Roboto, 4px radii). No marketing hero, no decorative copy. Underscope branding only: never use ACV's logo or present it as an ACV product; keep the footer line saying it's an independent project.
 - Integration points (`public/integrate.html`): deep links (`/?vin=&codes=&title=&clean=&comps=&run=1`, `/?sample=<id>`; every result has Copy link), a bookmarklet that finds a VIN on any listing page (validated by check digit) and opens a check, and the four CORS-open APIs. No access to ACV systems is used; CLAUDE.md's "no ACV integration" still holds.
-- Sample vehicles: `public/demo_vehicles.json` (made-up VINs, sample grades and values, one per verdict). Real vehicles come from the registry.
+- Sample vehicles: `public/demo_vehicles.json` (made-up VINs, one per verdict) is a test fixture for `test:decision`, not listed on the page (`/?sample=<id>` still opens one). The page uses real vehicles from the registry.
 
 ## Test
 Run all 20 vehicles; compare model grade vs our grade per part in a sheet. Report agreement % and expensive misses (model "fine" where truth is "replace").

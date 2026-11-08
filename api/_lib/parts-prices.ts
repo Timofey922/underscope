@@ -122,7 +122,10 @@ async function ebayVehicle(v: VehicleId) {
   if (!(year > 1980) || !v.make || !v.model) return null;
   const make = pickName(await propValues('Make', `Year:${year}`), v.make);
   if (!make) return null;
-  const model = pickName(await propValues('Model', `Year:${year},Make:${make}`), v.model);
+  const models = await propValues('Model', `Year:${year},Make:${make}`);
+  // The VIN decoder says "Mazda3" / "Mazda6" where eBay says "3" / "6": also try the model without the make in front.
+  const bare = norm(v.model).startsWith(norm(make)) ? norm(v.model).slice(norm(make).length) : '';
+  const model = pickName(models, v.model) ?? (bare ? models.find((o) => norm(o) === bare) ?? null : null);
   return model ? { year, make, model } : null;
 }
 

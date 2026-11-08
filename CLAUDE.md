@@ -22,7 +22,7 @@ Read them only when a task needs the bigger picture; this file is the source of 
 - AI: OpenAI only, called at request time (team decision: no model training; not feasible in the hackathon window). Package `openai`, key `OPENAI_API_KEY` (Karthik's credit).
   - Photo grading `api/grade-photos.ts`: `OPENAI_MODEL` (currently `gpt-5.5`), client from `openaiClient()` in `api/_lib/openai.ts`.
   - Photo classification `api/classify-photos.ts`: `OPENAI_CLASSIFY_MODEL` (default `gpt-4o-mini`).
-  - Fault-code explanations `api/decode-codes.ts`: `OPENAI_CODES_MODEL` (defaults to `OPENAI_MODEL`); strict JSON schema, "unknown" allowed. About 9 s with gpt-5.5; set `OPENAI_CODES_MODEL=gpt-4o-mini` if speed matters more.
+  - Fault-code explanations `api/decode-codes.ts`: `OPENAI_CODES_MODEL` (defaults to `OPENAI_MODEL`); gpt-5.5 explains codes and prices every code for the exact vehicle (`CONFIG.codesReasoning` medium); strict JSON schema, "unknown"/null allowed. About 11-13 s per scan.
   - Gemini/Vertex was removed. The Google Cloud project (`project-45b188c0-b276-4e00-a94`, service account `underscope-vertex`) is no longer used by the app.
 - Database: Supabase (Postgres), project `zkewmumlgbofqonxpwin`. Tables are small and demo-only; row level security on. Migrations in `supabase/migrations/`.
 - Secrets only in environment variables (`.env` locally, Vercel project settings in production): `OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_CLASSIFY_MODEL`, `OPENAI_CODES_MODEL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (server only), `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` (front end). Never hardcode or commit keys.
@@ -74,7 +74,7 @@ Steps:
 1. Validate format: letter + 4 characters. Letter = system: P powertrain, C chassis, B body, U network. Second character 0 = generic (same meaning for all makes), 1 = manufacturer-specific (meaning depends on make from VIN).
 2. Generic codes: look up the description in the Supabase table `dtc_codes` (code, description, system, severity, cost_low, cost_high), seeded from `data/dtc_codes.csv`.
 3. Manufacturer-specific or not found: ask OpenAI to explain it given the make/model from the NHTSA vPIC VIN decode; it must answer "unknown" if unsure, never guess.
-4. Map each code to: system (engine, transmission, brakes/ABS, airbag/SRS, electrical, emissions, body), severity (minor, moderate, major, critical) and a repair cost band low/high. Table codes use the costs in `dtc_codes`; OpenAI-explained codes use a cost band per severity from the config object.
+4. Map each code to: system (engine, transmission, brakes/ABS, airbag/SRS, electrical, emissions, body), severity (minor, moderate, major, critical) and a repair cost band low/high. Price (team decision: no hardcoded prices): OpenAI prices every code for this vehicle (year/make/model/engine from vPIC): low = common cheap fix, high = expensive fix it often turns out to be, plus the likely fix (`repair`). `cost_source` says where the price came from: `quote` (registry), `openai_estimate`, or a fallback (`table_fallback` = `dtc_codes` costs, `severity_fallback` = `CONFIG.costBySeverity`) only when the model can't price it.
 5. Output per vehicle (plus `vehicle` from vPIC and a `reason` for the triage):
 ```json
 {
@@ -86,6 +86,7 @@ Steps:
 }
 ```
 6. Triage rule: if many codes or any critical ones (airbag deployed, transmission, major engine), set "triage": "skip_inspection_sell_as_is", because a full inspection isn't worth the time and money. Thresholds live in one config object (`CONFIG` at the top of `api/decode-codes.ts`).
+   Real quotes: a registry vehicle can carry `code_quotes` (`{"P0087": {"low": 4000, "high": 7500, "note": "..."}}`, migration `vehicles_code_quotes`); for that car they replace the OpenAI estimate (`cost_source: quote`). A quote always beats the estimate: on the 2021 Levante gpt-5.5 says ~$700-4,500 for P0087, the real cost was $4,000-7,500.
 7. Code costs are added to the repair band; critical codes also widen the band like an unknown flag.
 9. Demo registry (the VIN → title bridge): Supabase table `vehicles` holds real VINs whose title a teammate verified by hand (`source`: `title_document`, `dealer_listing`, `online_listing`, `nmvtis_report`). RLS on, no policies, so only the server reads it. `GET /api/vehicle?vin=` returns `registered`, `title_status`, `title_state`, `source` (never odometer or notes); the page calls it to fill in the title. In `decode-codes`, a registry record wins over the seller's choice and the response says so in `title_source`. Load records from `data/vehicles.local.json` (gitignored; format in `data/vehicles.example.json`) with `npm run seed:vehicles`. Never commit real VINs. Label demo vehicles as verified or sample; never present a made-up VIN as a real car's history.
 8. Title status: entered by the seller on the page (no free API returns title brands by VIN; paid NMVTIS lookups are out of scope). Optional `title_status` in the request: `clean`, `salvage`, `rebuilt`, `flood`, `non_repairable`, `lemon`, `unknown` (default). It is echoed in the response; `flood` and `non_repairable` set triage to `skip_inspection_sell_as_is` (`CONFIG.triage.skipTitles`).
@@ -113,13 +114,14 @@ Hand-entered per vehicle: 5-10 comparable sold salvage lots + one clean wholesal
 
 ## UI (Lovable)
 Upload photos + VIN -> part grid with grade and source photo -> both nets with bands and days -> recommendation -> reviewer toggle to change any grade and recompute live.
-- Working version: `public/index.html` + `public/app.js` + `public/app.css` (the Vercel demo). One column (the team prefers it): app bar, heading, vehicle form, then the result (vehicle header with title badge, recommendation, both net ranges, then stacked sections for where the numbers come from, condition, fault codes, API response), then sample vehicles. Clicking a part grade or a flag cycles it and calls `/api/decide` again. The Lovable app can call the same four endpoints.
+- Working version: `public/index.html` + `public/app.js` + `public/app.css` (the Vercel demo). One column (the team prefers it): app bar, heading, vehicle form, then the result (vehicle header with title badge, recommendation, both net ranges, then stacked sections for where the numbers come from, condition, fault codes, API response), then a note on verified vehicles. Clicking a part grade or a flag cycles it and calls `/api/decide` again. The Lovable app can call the same four endpoints.
 - Look: tool-like, in ACV's palette and type (orange #D34319 actions, #121212 ink, gray scale, Roboto, 4px radii). No marketing hero, no decorative copy. Underscope branding only: never use ACV's logo or present it as an ACV product; keep the footer line saying it's an independent project.
 - Integration points (`public/integrate.html`): deep links (`/?vin=&codes=&title=&clean=&comps=&run=1`, `/?sample=<id>`; every result has Copy link), a bookmarklet that finds a VIN on any listing page (validated by check digit) and opens a check, and the four CORS-open APIs. No access to ACV systems is used; CLAUDE.md's "no ACV integration" still holds.
-- Sample vehicles: `public/demo_vehicles.json` (made-up VINs, sample grades and values, one per verdict). Real vehicles come from the registry.
+- Sample vehicles: `public/demo_vehicles.json` (made-up VINs, one per verdict) is a test fixture for `test:decision`, not listed on the page (`/?sample=<id>` still opens one). The page uses real vehicles from the registry.
 
 ## Test
 Run all 20 vehicles; compare model grade vs our grade per part in a sheet. Report agreement % and expensive misses (model "fine" where truth is "replace").
+Photos: `npm run score:photos -- --template` writes a blank `truth.json` per `test_vehicles/<id>/` (label blind, without looking at the model's answer); `npm run test:photos` (with `npm run dev`) writes `grade.json`; `npm run score:photos` writes `test_vehicles/ACCURACY.md` with parts right, recall, precision, expensive misses, wrong side and a confusion table. Quote recall and expensive misses, not only "parts right" (most parts are fine, so it runs high). Karthik's last hand-checked run on 24 Copart lots: gpt-5.5 ~92% parts right, ~82% recall, ~89% precision, 0 wrong side.
 Fault codes: `npm run test:codes` runs the 10 demo scans and checks each triage.
 Decision: `npm run test:decision` runs every vehicle in `public/demo_vehicles.json` and checks it gets its `expect` verdict.
 

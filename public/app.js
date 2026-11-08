@@ -5,7 +5,8 @@ const GRADE_ORDER = ['fine', 'repairable', 'replace', 'unknown'];
 const GRADE_LABEL = { fine: 'Fine', repairable: 'Repairable', replace: 'Replace', unknown: 'Not visible' };
 const TITLE_LABEL = { clean: 'Clean', salvage: 'Salvage', rebuilt: 'Rebuilt', flood: 'Flood', non_repairable: 'Non-repairable', lemon: 'Lemon buyback', unknown: 'Title not confirmed' };
 const SOURCE_LABEL = { title_document: 'title document', dealer_listing: 'dealer listing', online_listing: 'online listing', nmvtis_report: 'NMVTIS report' };
-const CODE_SOURCE = { generic_table: 'code table', openai: 'explained by OpenAI for this make', unknown: 'meaning unknown for this make', invalid: 'not a valid code' };
+const CODE_SOURCE = { generic_table: 'meaning from code table', openai: 'meaning from OpenAI for this make', unknown: 'meaning unknown for this make', invalid: 'not a valid code' };
+const COST_SOURCE = { quote: 'price: real quote for this car', openai_estimate: 'price: AI estimate for this car', table_fallback: 'price: rough table estimate (AI unavailable)', severity_fallback: 'price: rough estimate by severity (AI unavailable)' };
 const FLAG_LABEL = { airbags_deployed: 'Airbags deployed', frame_suspected: 'Frame damage', fluid_leak: 'Fluid leak' };
 const ASSUME = [
   ['labor_rate', 'Labor ($/hr)', 95], ['daily_cost', 'Holding ($/day)', 20], ['fix_days', 'Days to fix + resell', 30], ['as_is_days', 'Days to sell as-is', 7],
@@ -20,6 +21,7 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&l
 const money = (n) => (n < 0 ? '−$' : '$') + Math.abs(Math.round(n)).toLocaleString('en-US');
 const label = (s) => s.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
 const reduceMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+const ic = (n) => `<svg class="ic" aria-hidden="true"><use href="#i-${n}"></use></svg>`; // icon from the sprite in index.html
 const post = (url, body) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('show'), 1800); }
 
@@ -81,6 +83,13 @@ const setTitle = (v) => { const r = document.querySelector(`input[name=title][va
 const getDrivable = () => (document.querySelector('input[name=drivable]:checked') || {}).value || 'unknown';
 const setDrivable = (v) => { const r = document.querySelector(`input[name=drivable][value="${v}"]`); if (r) r.checked = true; };
 const getState = () => $('state').value || null;
+const getMileage = () => { const n = Number($('mileage').value.replace(/[^0-9]/g, '')); return n > 0 ? n : null; };
+const MILEAGE_HINT = "From the dash. Left blank, it's read from an odometer photo if there is one.";
+$('mileage').addEventListener('input', () => { $('mileage-hint').textContent = MILEAGE_HINT; });
+$('mileage').addEventListener('change', () => {
+  if (!state || !state.market) return;
+  state.market.mileage = getMileage(); recompute(); // a corrected reading re-runs the check
+});
 $('title-hint').textContent = TITLE_HINT;
 
 // ---------- Photos ----------
@@ -234,6 +243,51 @@ async function checkRegistry(vin) {
   } catch { showRegistry(null); return null; }
 }
 
+// ---------- Step-by-step intake ----------
+// One box: Vehicle -> Photos -> Trouble codes -> Market values -> Run check. Navigation only; every field
+// stays in the one form, so a run (button, Enter on the last step, deep link, sample) submits all of it.
+const panels = [...document.querySelectorAll('.step-panel')];
+const stepBtns = [...document.querySelectorAll('.stepper [data-step]')];
+let step = 0, reached = 0;
+function flagBadVin(vin) {
+  const hint = $('vin-hint'); hint.classList.add('bad');
+  hint.textContent = /[IOQ]/.test(vin) ? 'VINs never use I, O or Q. Check for a 1 or a 0.' : `${vin.length} characters; a VIN has 17.`;
+}
+function showStep(n, focus = false) {
+  step = Math.max(0, Math.min(panels.length - 1, n)); reached = Math.max(reached, step);
+  panels.forEach((p, i) => { p.hidden = i !== step; });
+  stepBtns.forEach((b, i) => {
+    b.classList.toggle('done', i < reached && i !== step);
+    if (i === step) b.setAttribute('aria-current', 'step'); else b.removeAttribute('aria-current');
+  });
+  document.querySelector('.stepper').style.setProperty('--progress', (step + 1) / panels.length);
+  const last = step === panels.length - 1;
+  $('back').hidden = step === 0; $('next').hidden = last; $('go').hidden = !last;
+  if (focus) (step === 0 ? $('vin') : panels[step].querySelector('h2')).focus({ preventScroll: true });
+}
+function goTo(n) {
+  const vin = $('vin').value.trim();
+  if (n > 0 && !VIN_RE.test(vin)) { flagBadVin(vin); showStep(0); $('vin').focus(); return; } // a VIN first
+  const box = document.querySelector('.intake');
+  box.classList.add('animate'); box.classList.toggle('back', n < step); // direction of the slide
+  showStep(n, true);
+}
+$('next').addEventListener('click', () => goTo(step + 1));
+$('back').addEventListener('click', () => goTo(step - 1));
+stepBtns.forEach((b) => b.addEventListener('click', () => goTo(Number(b.dataset.step))));
+// Enter moves to the next step until the last one (a tag field with text still adds its tag).
+$('form').addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' || step === panels.length - 1 || e.target.tagName !== 'INPUT') return;
+  if (e.target.closest('.tags') && e.target.value.trim()) return;
+  e.preventDefault(); e.stopPropagation(); goTo(step + 1);
+}, true);
+// Any run shows the step that needs attention, or the last step (where the button shows progress).
+$('form').addEventListener('submit', () => {
+  showStep(!VIN_RE.test($('vin').value.trim()) ? 0 : photoBytes() > MAX_BYTES ? 1 : panels.length - 1);
+}, true);
+$('clear').addEventListener('click', () => { reached = 0; showStep(0); }); // before the reset below, so the VIN can take focus
+showStep(0);
+
 // ---------- Samples ----------
 function loadSample(v) {
   $('vin').value = v.vin; $('vin').dispatchEvent(new Event('input'));
@@ -243,19 +297,14 @@ function loadSample(v) {
   preset = { id: v.id, grades: v.grades, flags: v.flags };
   $('form').requestSubmit();
 }
+// Sample vehicles (made-up data) aren't listed on the page; /?sample=<id> still opens one for testing.
 const samplesReady = fetch('/demo_vehicles.json').then((r) => r.json()).then(({ vehicles }) => {
-  for (const v of vehicles) {
-    samples[v.id] = v;
-    const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${esc(v.label)}</td><td class="vin-cell">${esc(v.vin)}</td><td>${esc(TITLE_LABEL[v.title_status])}</td><td><button class="btn btn-ghost btn-sm" type="button">Open</button></td>`;
-    tr.querySelector('button').onclick = () => loadSample(v);
-    $('samples').appendChild(tr);
-  }
+  for (const v of vehicles) samples[v.id] = v;
 }).catch(() => {});
 
 $('clear').onclick = () => {
   $('vin').value = ''; $('vin').dispatchEvent(new Event('input'));
-  codes.set([]); comps.set([]); $('clean').value = ''; photos = []; renderPhotos(); setTitle('unknown'); setDrivable('unknown'); $('state').value = '';
+  codes.set([]); comps.set([]); $('clean').value = ''; photos = []; renderPhotos(); setTitle('unknown'); setDrivable('unknown'); $('state').value = ''; $('mileage').value = ''; $('mileage-hint').textContent = MILEAGE_HINT;
   preset = null; state = null; $('result').hidden = true; $('empty').hidden = false;
   history.replaceState(null, '', '/'); $('vin').focus();
 };
@@ -275,11 +324,7 @@ $('form').addEventListener('submit', async (e) => {
   e.preventDefault();
   codes.flush(); comps.flush();
   const vin = $('vin').value.trim();
-  if (!VIN_RE.test(vin)) {
-    const hint = $('vin-hint'); hint.classList.add('bad');
-    hint.textContent = /[IOQ]/.test(vin) ? 'VINs never use I, O or Q. Check for a 1 or a 0.' : `${vin.length} characters; a VIN has 17.`;
-    $('vin').focus(); return;
-  }
+  if (!VIN_RE.test(vin)) { flagBadVin(vin); $('vin').focus(); return; }
   if (photoBytes() > MAX_BYTES) { $('drop').scrollIntoView({ block: 'center' }); return; }
   $('go').disabled = true; $('go').textContent = photos.length ? 'Sorting photos…' : 'Running…';
   try {
@@ -287,7 +332,7 @@ $('form').addEventListener('submit', async (e) => {
       post('/api/decode-codes', { vin, codes: codes.get(), title_status: getTitle() }),
       photos.length ? gradePhotoFlow(vin, (t) => { $('go').textContent = t; }).catch((x) => x) : null,
       // Market fit for the ACV vs Copart scorecard: public listings of this model in the seller's state.
-      post('/api/market-fit', { vin, state: getState() }).then((r) => r.json()).catch((e) => ({ ran: false, error: e.message })),
+      post('/api/market-fit', { vin, state: getState(), mileage: getMileage() }).then((r) => r.json()).catch((e) => ({ ran: false, error: e.message })),
     ]);
     const c = await cRes.json().catch(() => ({}));
     if (!cRes.ok) throw new Error(c.error || `The server answered ${cRes.status}.`);
@@ -302,14 +347,19 @@ $('form').addEventListener('submit', async (e) => {
       : preset ? 'Sample grades, standing in for graded photos.'
       : 'No photos, so every part starts as not visible. Click a grade to set it.';
     const odo = photo && photo.data && photo.data.vehicle && photo.data.vehicle.odometer_unit === 'mi' ? photo.data.vehicle.odometer_visible : null;
-    if (market && market.mileage == null && odo) market.mileage = odo;
+    // Typed mileage wins; otherwise use the dash reading and show it in the field so it can be corrected.
+    if (!getMileage() && odo) {
+      $('mileage').value = odo;
+      $('mileage-hint').textContent = `Read from the dash photo: ${Number(odo).toLocaleString('en-US')} mi. Correct it if that's wrong.`;
+    }
+    if (market) market.mileage = getMileage();
     state = { vin, codes: c, photo, grades, flags, gradeNote, photoGaps: photo && photo.data ? photo.data.photo_gaps : [], sampleId: preset && preset.id,
       drivable: getDrivable(), region: getState(), market };
 
     await recompute(true);
   } catch (err) {
     $('result').hidden = false;
-    $('result').innerHTML = `<div class="error-box"><h3>Couldn't check this vehicle</h3><p>${esc(err.message)} Try again or open a sample below.</p></div>`;
+    $('result').innerHTML = `<div class="error-box"><h3>Couldn't check this vehicle</h3><p>${esc(err.message)} Check the inputs and try again.</p></div>`;
     $('result').scrollIntoView({ behavior: reduceMotion() ? 'auto' : 'smooth', block: 'center' });
   } finally {
     $('go').disabled = false; $('go').textContent = 'Run check';
@@ -341,30 +391,53 @@ async function recompute(first = false) {
     vehicle,
   };
   // The engine (engine/, via /api/route) decides where to send the car: ACV or Copart.
+  // One repair cost: the engine gets the same repair estimate the page shows (parts table,
+  // fault codes, allowance for unknowns), so the two never price the damage differently.
+  const d = await post('/api/decide', body).then((r) => r.json());
+  if (ticket !== pending) return;
   const routeBody = { vin: state.vin, vehicle: state.codes.vehicle, title_status: body.title_status,
     grades: body.grades, flags: body.flags, codes: body.codes, values: body.values,
+    repair: d.repair ? { low: d.repair.low, high: d.repair.high } : undefined,
     ...(state.region ? { region: state.region } : {}), ...(state.market && state.market.mileage ? { mileage: state.market.mileage } : {}) };
-  const [d, rt] = await Promise.all([
-    post('/api/decide', body).then((r) => r.json()),
-    post('/api/route', routeBody).then(async (r) => (r.ok ? r.json() : { error: (await r.json().catch(() => ({}))).error || `engine answered ${r.status}` }))
-      .catch((e) => ({ error: e.message })),
-  ]);
+  const rt = await post('/api/route', routeBody)
+    .then(async (r) => (r.ok ? r.json() : { error: (await r.json().catch(() => ({}))).error || `engine answered ${r.status}` }))
+    .catch((e) => ({ error: e.message }));
   if (ticket !== pending) return;
   state.route = rt;
   render(d, first);
 }
 
+// The engine's routing is the headline: where to send the car.
 const DEST_CLASS = { ACV: 'ok', Copart: 'bad', 'Parts buyer': 'warn' };
-function routeBlock() {
+const DEST_LAMP = { ACV: ['on-acv', 'A'], Copart: ['on-copart', 'C'], 'Parts buyer': ['on-amber', 'P'] };
+const cap = (s) => s[0].toUpperCase() + s.slice(1);
+function routeHero(first) {
+  const r = state.route;
+  if (!r || r.error) return '';
+  const best = r.options[0], next = r.options[1];
+  const [lamp, glyph] = DEST_LAMP[r.destination] || ['', '?'];
+  const gap = best.expected - next.expected;
+  // Both top exits at ACV and nearly tied: the destination is clear, the repair choice isn't.
+  const acvTie = best.destination === 'ACV' && next.destination === 'ACV' && gap < Math.max(500, best.expected * 0.05);
+  const why = acvTie
+    ? `Repairing first and selling as-is come out within ${money(gap)} of each other (expected net about ${money(best.expected)}), so the destination is ACV either way. Use “Repair or sell as-is?” below to choose.`
+    : `<b>${esc(cap(r.winner_label))}.</b> Expected net ${money(best.expected)}, middle 80% ${money(best.p10)} to ${money(best.p90)}. Next best: ${esc(next.label)} (${esc(next.destination)}), ${money(gap)} behind.`;
+  return `<div class="rec hero"><div class="lamp ${lamp}${first ? ' ignite' : ''}" aria-hidden="true">${glyph}</div><div>
+    <h3>Send it to ${esc(r.destination)}</h3>
+    <p class="why">${why}</p>
+    ${r.needs_human_review && !acvTie ? `<p class="check"><b>Have a person review this one.</b> ${esc((r.review_reasons || []).join(' '))}</p>` : ''}
+  </div></div>`;
+}
+function routeExits() {
   const r = state.route;
   if (!r) return '';
-  if (r.error) return `<div class="sec"><h3>Where to send it</h3><p class="notice">The routing engine isn't available: ${esc(r.error)}</p></div>`;
-  const rows = r.options.map((o, i) => `<tr${i === 0 ? ' class="total"' : ''}><td>${esc(o.label[0].toUpperCase() + o.label.slice(1))}</td><td><span class="badge ${DEST_CLASS[o.destination] || ''}">${esc(o.destination)}</span></td><td class="amt">${money(o.p10)} to ${money(o.p90)}</td><td class="amt">${money(o.expected)}</td></tr>`).join('');
+  if (r.error) return `<div class="sec sec-full"><p class="notice">The routing engine isn't available right now (${esc(r.error)}). The repair-or-sell analysis below still works.</p></div>`;
+  const rows = r.options.map((o, i) => `<tr${i === 0 ? ' class="total"' : ''}><td>${esc(cap(o.label))}</td><td><span class="badge ${DEST_CLASS[o.destination] || ''}">${esc(o.destination)}</span></td><td class="amt">${money(o.p10)} to ${money(o.p90)}</td><td class="amt">${money(o.expected)}</td></tr>`).join('');
   return `<div class="sec route">
-    <h3>Where to send it: <span class="dest dest-${esc(r.destination.split(' ')[0].toLowerCase())}">${esc(r.destination)}</span></h3>
-    <p class="tab-note">${esc(r.answer || '')} The engine ranks four exits by net proceeds over 1,000 simulated outcomes.${r.needs_human_review ? ' <b>A human should review this one.</b>' : ''}</p>
+    <h3>${ic('route')}All four exits</h3>
+    <p class="tab-note">Net proceeds over 1,000 simulated outcomes, using the repair estimate below. ${esc(r.answer || '')}</p>
     <table class="lines"><tbody><tr><td><b>Exit</b></td><td><b>Goes to</b></td><td class="amt"><b>Middle 80%</b></td><td class="amt"><b>Expected net</b></td></tr>${rows}</tbody></table>
-    ${r.flip_conditions && r.flip_conditions.length ? `<p class="tab-note" style="margin-top:12px"><b>What would flip it:</b> ${esc(r.flip_conditions.join(' '))}</p>` : ''}
+    ${r.flip_conditions && r.flip_conditions.length ? `<p class="tab-note" style="margin-top:12px"><b>What would change the answer:</b> ${esc(r.flip_conditions.join(' '))}</p>` : ''}
     <details style="margin-top:8px"><summary style="cursor:pointer;color:var(--steel);font-size:13px">How the engine read your inputs</summary><ul class="tab-note" style="margin:8px 0 0">${r.notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul></details>
   </div>`;
 }
@@ -381,8 +454,14 @@ function scorecardBlock(d) {
   const listings = m && m.ran && m.sample && m.sample.length
     ? `<details style="margin-top:8px"><summary style="cursor:pointer;color:var(--steel);font-size:13px">Listings found${m.price_low ? ` (${money(m.price_low)} to ${money(m.price_high)})` : ''}</summary><ul class="tab-note" style="margin:8px 0 0">${m.sample.map((x) => `<li><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.title || x.url)}</a></li>`).join('')}</ul></details>` : '';
   const close = s.close_margin ?? 5;
+  // Cross-check on the engine's headline: say plainly whether the points agree.
+  const eng = state.route && !state.route.error ? state.route.destination : null;
+  const agree = !eng || s.winner === 'too_close' ? ''
+    : (eng === 'ACV') === (s.winner === 'acv')
+      ? `<p class="tab-note"><b>Agrees with the engine</b> (${esc(eng)}).</p>`
+      : `<p class="notice">The points favor ${esc(CH_LABEL[s.winner])} but the engine, which prices every exit, says ${esc(eng)}. Look at the categories below for the reason.</p>`;
   return `<div class="sec scorecard">
-    <h3>ACV vs Copart scorecard: <span class="dest">${esc(CH_LABEL[s.winner])}</span></h3>
+    <h3>${ic('scale')}Points check: <span class="dest">${esc(CH_LABEL[s.winner])}</span></h3>${agree}
     <div class="totals"><div class="tot${s.winner === 'acv' ? ' win' : ''}">ACV<b>${s.acv}</b></div><div class="tot${s.winner === 'copart' ? ' win' : ''}">Copart<b>${s.copart}</b></div></div>
     <p class="tab-note">${s.forced ? esc(s.forced) + ' ' : ''}Out of 100 points (${esc(weights)}). Each finding gives its share of a category to the channel it favors; ${s.margin < close && !s.forced ? `the totals are within ${close} points, so it's too close to call` : 'the higher total wins'}.${s.missing.length ? ` Not scored yet: ${esc(s.missing.join(', '))}.` : ''}</p>
     <table class="lines"><tbody><tr><td><b>Finding</b></td><td class="pts"><b>ACV</b></td><td class="pts"><b>Copart</b></td></tr>${rows}
@@ -413,6 +492,7 @@ function shareUrl() {
   const cs = codes.get(); if (cs.length) u.searchParams.set('codes', cs.join(','));
   if (state.drivable && state.drivable !== 'unknown') u.searchParams.set('drivable', state.drivable);
   if (state.region) u.searchParams.set('state', state.region);
+  if (getMileage()) u.searchParams.set('mileage', getMileage());
   const v = readValues();
   if (!reg && v.clean_wholesale) u.searchParams.set('clean', v.clean_wholesale);
   if (!reg && v.salvage_comps.length) u.searchParams.set('comps', v.salvage_comps.join(','));
@@ -437,7 +517,7 @@ function titleBadge() {
   return `<span class="badge ${cls}">${esc(TITLE_LABEL[t] || t)}${r.title_source && r.title_source.title_state ? ` (${esc(r.title_source.title_state)})` : ''}${esc(where)}</span>`;
 }
 
-function recBlock(d, first) {
+function recBlock(d, first, compact = false) {
   const pct = d.p_fix == null ? null : Math.round(d.p_fix * 100);
   const V = {
     fix: ['on-green', '✓', 'Fix it, then sell', pct === 100 ? 'Fixing came out ahead in all 1,000 simulated outcomes.' : `Fixing came out ahead in ${pct}% of 1,000 simulated outcomes.`],
@@ -446,7 +526,7 @@ function recBlock(d, first) {
     not_fixable: ['on-red', '!', 'Sell it as-is', 'A non-repairable title means it can\'t be registered again after repair.'],
   }[d.verdict] || ['', '–', 'Needs market values', `Add ${d.missing.join(' and ')} above.`];
   const check = d.check ? `<p class="check"><b>Check before deciding:</b> ${esc(d.check.label)}. If it comes back clean, fixing wins ${Math.round(d.check.p_fix_if_resolved * 100)}% of the time.</p>` : '';
-  return `<div class="rec"><div class="lamp ${V[0]}${first ? ' ignite' : ''}" aria-hidden="true">${V[1]}</div><div><h3>${esc(V[2])}</h3><p class="why">${esc(V[3])}</p>${check}</div></div>`;
+  return `<div class="rec${compact ? ' compact' : ''}"><div class="lamp ${V[0]}${first ? ' ignite' : ''}" aria-hidden="true">${V[1]}</div><div><h3>${esc(V[2])}</h3><p class="why">${esc(V[3])}</p>${check}</div></div>`;
 }
 
 function rangesBlock(d) {
@@ -531,17 +611,16 @@ function codesTab() {
   if (!r.codes.length) return '<p class="tab-note">No codes from the scan tool.</p>';
   const sev = (s) => s[0].toUpperCase() + s.slice(1);
   const inspect = r.triage === 'full_inspection' ? 'A full inspection is worth paying for.' : `A full inspection isn't worth paying for: ${r.reason.replace(/^Skip inspection:\s*/, '')}`;
-  // OpenAI's price for all codes fixed together (from /api/decode-codes) is what the repair estimate uses when present.
+  // One fault-code total: each code priced for this car, shared repairs counted once, real quotes kept as they are.
+  // OpenAI's root causes and modules (r.combination) explain it.
   const k = r.combination;
-  const priced = k && k.cost_high > 0
-    ? `${r.summary.count} code${r.summary.count === 1 ? '' : 's'} priced together at ${money(k.cost_low)} to ${money(k.cost_high)} in the repair estimate (${k.confidence} confidence; one by one they'd add ${money(r.summary.cost_low)} to ${money(r.summary.cost_high)}).`
-    : `${r.summary.count} code${r.summary.count === 1 ? '' : 's'}, ${money(r.summary.cost_low)} to ${money(r.summary.cost_high)} in the repair estimate.`;
-  const causes = k && k.root_causes.length ? `<ul class="tab-note" style="margin:10px 0 0">${k.root_causes.map((x) => `<li><b>${esc(x.codes.join(', '))}</b>: ${esc(x.repair)} (${money(x.cost_low)} to ${money(x.cost_high)})</li>`).join('')}${k.modules.map((m) => `<li>Module: ${esc(m.module.replace(/_/g, ' '))}, ${m.status === 'replacement_likely' ? 'replacement likely' : 'fault reported'} (${esc(m.codes.join(', '))})</li>`).join('')}</ul>` : '';
+  const priced = `${r.summary.count} code${r.summary.count === 1 ? '' : 's'}, ${money(r.summary.cost_low)} to ${money(r.summary.cost_high)} in the repair estimate.${r.summary.shared_repair ? ` Shared repair counted once: ${esc(r.summary.shared_repair)}` : ''}`;
+  const causes = k && (k.root_causes.length || k.modules.length) ? `<ul class="tab-note" style="margin:10px 0 0">${k.root_causes.map((x) => `<li><b>${esc(x.codes.join(', '))}</b>: ${esc(x.repair)}</li>`).join('')}${k.modules.map((m) => `<li>Module: ${esc(m.module.replace(/_/g, ' '))}, ${m.status === 'replacement_likely' ? 'replacement likely' : 'fault reported'} (${esc(m.codes.join(', '))})</li>`).join('')}</ul>` : '';
   return `<p class="tab-note">${priced} ${esc(inspect)}</p>${causes}
     <ul class="codelist">${r.codes.map((c) => `
       <li class="sev-${esc(c.severity)}"><span class="code">${esc(c.code)}</span><span class="desc">${c.description === 'unknown' ? 'Meaning unknown' : esc(c.description)}</span>
-        <span class="cost">${c.source === 'invalid' ? '' : `${money(c.cost_low)} to ${money(c.cost_high)}`}</span>
-        <span class="meta">${esc(sev(c.severity))}, ${esc(c.system)}, ${esc(CODE_SOURCE[c.source] || c.source)}</span></li>`).join('')}</ul>`;
+        <span class="cost">${c.source === 'invalid' ? '' : `${money(c.cost_low)} to ${money(c.cost_high)}`}${c.cost_alone ? `<small> (${money(c.cost_alone.low)} to ${money(c.cost_alone.high)} alone)</small>` : ''}</span>
+        <span class="meta">${esc(sev(c.severity))}, ${esc(c.system)}, ${esc(CODE_SOURCE[c.source] || c.source)}${COST_SOURCE[c.cost_source] ? `; ${esc(COST_SOURCE[c.cost_source])}` : ''}${c.quote_note ? ` (${esc(c.quote_note)})` : ''}${c.repair && c.cost_source === 'openai_estimate' ? `. Likely fix: ${esc(c.repair)}` : ''}</span></li>`).join('')}</ul>`;
 }
 
 // The whole check as one JSON document: inputs, decision, fault codes and both photo stages.
@@ -581,17 +660,20 @@ function render(d, first) {
   const out = $('result');
   const report = buildReport(d);
   out.hidden = false;
+  out.classList.toggle('reveal', !!first); // cards rise in on a new result, not on reviewer edits
   const y = window.scrollY;
   const engine = state.codes.vehicle.engine ? `<span class="vin-code">${esc(state.codes.vehicle.engine)}</span>` : '';
   out.innerHTML = `
-    <div class="vehbar"><h2>${esc(vehicleName())}</h2><span class="vin-code">${esc(state.vin)}</span>${engine}${titleBadge()}<span class="spacer"></span>
-      <button class="btn btn-ghost btn-sm" type="button" data-copy>Copy link</button>
-      <button class="btn btn-ghost btn-sm" type="button" data-download>Download JSON</button></div>
-    ${recBlock(d, first)}${rangesBlock(d)}${routeBlock()}${scorecardBlock(d)}
-    <div class="sec"><h3>Where the numbers come from</h3>${repairTab(d)}</div>
-    <div class="sec"><h3>Condition</h3>${conditionTab()}</div>
-    <div class="sec"><h3>Fault codes</h3>${codesTab()}</div>
-    <div class="sec"><details><summary style="cursor:pointer;color:var(--orange);font-weight:500;font-size:14px">API response (same as Download JSON)</summary><pre style="margin-top:10px">${esc(JSON.stringify(report, null, 2))}</pre></details></div>`;
+    <div class="vehbar"><div class="veh-id"><h2>${esc(vehicleName())}</h2><div class="veh-meta"><span class="vin-code">${esc(state.vin)}</span>${engine}${titleBadge()}</div></div>
+      <div class="veh-actions"><button class="btn btn-ghost btn-sm" type="button" data-copy>${ic('link')}Copy link</button>
+      <button class="btn btn-ghost btn-sm" type="button" data-download>${ic('download')}Download JSON</button></div></div>
+    ${state.route && !state.route.error
+      ? `${routeHero(first)}${routeExits()}<div class="sec sec-decide"><h3>${ic('wrench')}Repair or sell as-is?</h3>${recBlock(d, false, true)}${rangesBlock(d)}</div>${scorecardBlock(d)}`
+      : `${recBlock(d, first)}${rangesBlock(d)}${routeExits()}${scorecardBlock(d)}`}
+    <div class="sec sec-repair"><h3>${ic('receipt')}Where the numbers come from</h3>${repairTab(d)}</div>
+    <div class="sec sec-condition"><h3>${ic('clipboard')}Condition</h3>${conditionTab()}</div>
+    <div class="sec sec-codes"><h3>${ic('gauge')}Fault codes</h3>${codesTab()}</div>
+    <div class="sec sec-api"><details><summary style="cursor:pointer;color:var(--orange);font-weight:500;font-size:14px">${ic('code')}API response (same as Download JSON)</summary><pre style="margin-top:10px">${esc(JSON.stringify(report, null, 2))}</pre></details></div>`;
   out.querySelector('[data-download]').onclick = () => downloadJson(report);
   if (first) {
     history.replaceState(null, '', shareUrl().replace(location.origin, ''));
@@ -612,6 +694,7 @@ function render(d, first) {
   if (q.get('title')) setTitle(q.get('title'));
   if (q.get('drivable')) setDrivable(q.get('drivable'));
   if (q.get('state')) $('state').value = q.get('state').toUpperCase();
+  if (q.get('mileage')) $('mileage').value = q.get('mileage').replace(/[^0-9]/g, '');
   if (q.get('codes')) codes.set(q.get('codes').split(','));
   if (q.get('clean')) $('clean').value = q.get('clean');
   if (q.get('comps')) comps.set(q.get('comps').split(','));

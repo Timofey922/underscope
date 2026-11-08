@@ -220,6 +220,31 @@
           "title": "Region",
           "type": "string"
         },
+        "repair_override_cents": {
+          "anyOf": [
+            {
+              "maxItems": 3,
+              "minItems": 3,
+              "prefixItems": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                }
+              ],
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Repair Override Cents"
+        },
         "salvage_comps_cents": {
           "anyOf": [
             {

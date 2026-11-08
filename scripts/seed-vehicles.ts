@@ -21,11 +21,15 @@ const rows = JSON.parse(readFileSync('data/vehicles.local.json', 'utf8')).map((v
   ].filter(Boolean);
   if (v.clean_wholesale != null && !(Number(v.clean_wholesale) > 0)) problems.push('clean_wholesale must be a positive number');
   if (v.salvage_comps != null && !(Array.isArray(v.salvage_comps) && v.salvage_comps.every((n: unknown) => Number(n) > 0))) problems.push('salvage_comps must be a list of positive numbers');
+  const q = v.code_quotes;
+  if (q != null && !(typeof q === 'object' && !Array.isArray(q) && Object.entries(q).every(([c, x]: [string, any]) =>
+    /^[PCBU][0-3][0-9A-F]{3}$/.test(c) && Number(x?.low) > 0 && Number(x?.high) >= Number(x?.low)))) problems.push('code_quotes must look like {"P0087": {"low": 4000, "high": 7500, "note": "..."}}');
   if (problems.length) throw new Error(`Entry ${i + 1}: ${problems.join('; ')}`);
   return {
     vin, title_status: v.title_status, title_state: v.title_state ?? null,
     odometer: v.odometer ?? null, source: v.source, note: v.note ?? null,
     clean_wholesale: v.clean_wholesale ?? null, salvage_comps: v.salvage_comps ?? null, values_note: v.values_note ?? null,
+    code_quotes: v.code_quotes ?? null,
     updated_at: new Date().toISOString(),
   };
 });

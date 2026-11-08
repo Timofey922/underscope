@@ -124,6 +124,9 @@ def simulate(
         (vehicle.engine_audio_abnormal, h["engine_audio_extra_cents"]),
     ):
         reserve = reserve + (h["unknown_flag_extra_cents"] if flag is None else extra * int(flag))
+    if vehicle.repair_override_cents:
+        # The caller's estimate already widened for unseen damage; don't reserve for it twice.
+        reserve = np.zeros(n)
     nets[Path.REPAIR_THEN_ACV] = sale - rep - fee - t_acv - holding - reserve
     comps[Path.REPAIR_THEN_ACV] = {
         "sale_price": sale, "repair_cost": -rep, "acv_fees": -fee, "transport": -t_acv,

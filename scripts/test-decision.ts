@@ -2,6 +2,9 @@
 // decision engine, prints both net ranges, and fails if a verdict differs from "expect".
 import 'dotenv/config';
 import { readFileSync } from 'node:fs';
+// This tests the decision math, so code prices must not move between runs: without a key the
+// decoder uses its fixed fallback prices instead of asking OpenAI. (Live pricing: npm run test:codes.)
+delete process.env.OPENAI_API_KEY;
 import { decodeScan } from '../api/decode-codes.ts';
 import { PARTS } from '../api/grade-photos.ts';
 import { decide, type Grade } from '../api/_lib/decision.ts';

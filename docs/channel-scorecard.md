@@ -97,9 +97,11 @@ All lean Copart:
 
 | Finding | Points |
 |---|---|
-| 5+ public listings of this year/make/model in the state | ACV 6 |
-| 1–4 listings | ACV 2 |
+| this year/make/model listed on 2+ different public sites in the state (e.g. CarGurus, Cars.com) | ACV 6 |
+| listed on 1 site: thin dealer market | ACV 2 |
 | no listings: no local dealer market | Copart 6 |
+
+It counts different listing sites, not search results: each result is usually a search page covering many cars.
 | over 15 years old or over 200,000 miles | Copart 4 |
 
 Anything that can't be scored scores 0 and is listed in `missing`: title, drivability, clean value, market fit.
@@ -134,7 +136,7 @@ One OpenAI call per scan (`assessCombination()`, model `OPENAI_CODES_MODEL`, els
 }
 ```
 
-When the page sends it, the repair estimate uses this price as one line ("Fault codes together") instead of adding each code at its own price. Without it (no OpenAI key, no codes, or the call failed) each code keeps its table or severity price. Examples from testing with gpt-5.5:
+It runs at the same time as the per-code pricing call. Its `cost_low`/`cost_high` are then set to the scan's one fault-code total (`summary`): each code priced by gpt-5.5 for this car, shared repairs counted once, real quotes from the registry kept as they are. So the repair estimate, the scorecard and the page all use the same number; the root causes and modules explain it. Earlier testing of this call on its own, with gpt-5.5: Examples from testing with gpt-5.5:
 
 | Codes | One by one | Together |
 |---|---|---|
@@ -172,9 +174,31 @@ When the page sends it, the repair estimate uses this price as one line ("Fault 
 
 1. Decodes the VIN with NHTSA vPIC (`decodeVin()` in `api/decode-codes.ts`).
 2. Runs one Firecrawl search: `"<year> <make> <model> used for sale <State>"`.
-3. Counts results whose title or snippet names the make and model, and collects `$` prices from the snippets.
+3. Keeps results whose title or snippet names the make and model, and counts the **different sites** among them.
+   - Results are mostly search pages ("Used Mazda3 for sale in New York"), each covering many cars, so the count of results means little; the number of sites carrying the model is what's scored.
+   - Prices: `$` amounts from the snippets, keeping only $1,500–300,000, then dropping any more than 3× from the median. With fewer than 2 left there is no price range; this drops text like "$500 below market".
 
-ACV, Copart and IAAI sites are excluded from the query and dropped from the results. The search covers **public listings only**, never auction platforms' data. Without `FIRECRAWL_API_KEY`, without a state, or if the VIN won't decode, it answers `ran: false` with an `error`, and market fit scores 0.
+ACV, Copart and IAAI sites are excluded from the query and dropped from the results. The search covers **public listings only**, never auction platforms' data. Results are cached per model and state for an hour on a warm function.
+
+```json
+{
+  "ran": "boolean",
+  "vehicle": { "year": "string | null", "make": "string | null", "model": "string | null" },
+  "state": "string | null",
+  "query": "string | null",
+  "listings": "int (matching search results, mostly search pages)",
+  "sites": ["string (different listing sites, e.g. cargurus.com; this is what's scored)"],
+  "price_low": "int | null",
+  "price_high": "int | null",
+  "sample": [{ "title": "string", "url": "string (one per site, up to 5)" }],
+  "age_years": "int | null",
+  "mileage": "int | null",
+  "source": "firecrawl",
+  "error": "string (only when ran is false)"
+}
+```
+
+Without `FIRECRAWL_API_KEY`, without a state, or if the VIN won't decode, it answers `ran: false` with an `error`, and market fit scores 0. The key lives only in `.env` and Vercel settings.
 
 ## Test
 

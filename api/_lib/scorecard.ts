@@ -44,9 +44,10 @@ export const SCORECARD_CONFIG = {
     shares: { frame: 0.3, airbags: 0.2, fluid_leak: 0.15, flood: 0.15, unseen_parts: 0.2 },
     unseenPartsAt: 5,
   },
-  marketFit: {                         // same points as before: 6 for listings, 4 for age or mileage
+  marketFit: {                         // 60% of the category for local listings, 40% for age or mileage
     shares: { listings: 0.6, age: 0.4 },
-    manyListings: 5, listingsLean: { many: 1, some: 1 / 3, none: -1 },
+    // Counts different listing sites (cargurus, cars.com...), not search results: each result page covers many cars.
+    manySites: 2, sitesLean: { many: 1, one: 1 / 3, none: -1 },
     oldYears: 15, highMileage: 200_000,
   },
 };
@@ -68,7 +69,7 @@ export type CodeAssessment = {
 
 type Tri = boolean | 'unknown';
 export type MarketFit = {
-  ran: boolean; listings?: number; age_years?: number | null; mileage?: number | null; state?: string | null; error?: string;
+  ran: boolean; listings?: number; sites?: string[]; age_years?: number | null; mileage?: number | null; state?: string | null; error?: string;
 };
 export type ScoreInput = {
   title_status?: string;
@@ -244,11 +245,13 @@ export function scoreChannels(inp: ScoreInput): Scorecard {
   // 5. Market fit (10, unchanged): public listings found by /api/market-fit, and age or mileage.
   const m = inp.market, mf = C.marketFit, wm = W.market_fit;
   const fitRows: Row[] = [];
-  if (m && m.ran && typeof m.listings === 'number') {
-    const n = m.listings;
-    fitRows.push(row(`${n} public listing${n === 1 ? '' : 's'} of this model${m.state ? ` in ${m.state}` : ''}`,
-      wm * mf.shares.listings * (n >= mf.manyListings ? mf.listingsLean.many : n > 0 ? mf.listingsLean.some : mf.listingsLean.none),
-      n > 0 ? 'Dealers sell this car locally, so it fits ACV\'s market.' : 'No local dealer market: more likely a Copart car.'));
+  if (m && m.ran && (Array.isArray(m.sites) || typeof m.listings === 'number')) {
+    const n = m.sites ? m.sites.length : (m.listings ?? 0) > 0 ? 1 : 0;
+    const where = m.state ? ` in ${m.state}` : '';
+    fitRows.push(row(n ? `listed on ${n} public site${n === 1 ? '' : 's'}${where}${m.sites?.length ? ` (${m.sites.slice(0, 3).join(', ')}${m.sites.length > 3 ? '…' : ''})` : ''}` : `no public listings${where}`,
+      wm * mf.shares.listings * (n >= mf.manySites ? mf.sitesLean.many : n === 1 ? mf.sitesLean.one : mf.sitesLean.none),
+      n >= mf.manySites ? 'Dealers sell this model locally, so it fits ACV\'s market.'
+        : n === 1 ? 'Only one site lists it locally: a thin dealer market.' : 'No local dealer market: more likely a Copart car.'));
   } else {
     missing.push('market fit (state, or listing search unavailable)');
     fitRows.push(row(m?.error ? `not run: ${m.error}` : 'not run', 0,

@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "seed:vehicles": "tsx scripts/seed-vehicles.ts",
     "test:decision": "tsx scripts/test-decision.ts",
+    "score:photos": "tsx scripts/score-photos.ts",
     "test:scorecard": "tsx scripts/test-scorecard.ts"
   },
   "dependencies": {

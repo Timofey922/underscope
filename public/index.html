@@ -47,10 +47,16 @@
     <p class="lede">Add the VIN, photos and scan-tool codes. Underscope prices the damage, compares repairing and reselling on ACV, selling as-is on ACV, salvage on Copart and parting it out, and tells you which nets the most.</p>
   </div>
 
-  <section class="intake" aria-label="Vehicle intake">
+  <section class="intake card" aria-label="Vehicle intake">
+    <ol class="stepper" aria-label="Steps">
+      <li><button type="button" class="step" data-step="0" aria-current="step"><span class="step-n" aria-hidden="true">1</span><span class="step-label">Vehicle</span></button></li>
+      <li><button type="button" class="step" data-step="1"><span class="step-n" aria-hidden="true">2</span><span class="step-label">Photos</span></button></li>
+      <li><button type="button" class="step" data-step="2"><span class="step-n" aria-hidden="true">3</span><span class="step-label">Trouble codes</span></button></li>
+      <li><button type="button" class="step" data-step="3"><span class="step-n" aria-hidden="true">4</span><span class="step-label">Market values</span></button></li>
+    </ol>
     <form id="form" novalidate>
-      <div class="card">
-        <div class="card-head"><h2><svg class="ic" aria-hidden="true"><use href="#i-car"></use></svg>Vehicle</h2></div>
+      <div class="step-panel" data-panel="0">
+        <div class="card-head"><h2 tabindex="-1"><svg class="ic" aria-hidden="true"><use href="#i-car"></use></svg>Vehicle</h2><span class="step-of">Step 1 of 4</span></div>
         <div class="card-body">
           <div class="field">
             <label for="vin">VIN</label>
@@ -96,8 +102,8 @@
         </div>
       </div>
 
-      <div class="card">
-        <div class="card-head"><h2 id="photos-label"><svg class="ic" aria-hidden="true"><use href="#i-camera"></use></svg>Photos</h2></div>
+      <div class="step-panel" data-panel="1" hidden>
+        <div class="card-head"><h2 id="photos-label" tabindex="-1"><svg class="ic" aria-hidden="true"><use href="#i-camera"></use></svg>Photos</h2><span class="step-of">Step 2 of 4</span></div>
         <div class="card-body">
           <div class="field">
             <label class="drop" id="drop">
@@ -111,8 +117,8 @@
         </div>
       </div>
 
-      <div class="card">
-        <div class="card-head"><h2 id="codes-label"><svg class="ic" aria-hidden="true"><use href="#i-wrench"></use></svg>Trouble codes</h2></div>
+      <div class="step-panel" data-panel="2" hidden>
+        <div class="card-head"><h2 id="codes-label" tabindex="-1"><svg class="ic" aria-hidden="true"><use href="#i-wrench"></use></svg>Trouble codes</h2><span class="step-of">Step 3 of 4</span></div>
         <div class="card-body">
           <div class="field">
             <div class="tags" id="codes"><input id="code-input" autocomplete="off" spellcheck="false" placeholder="P0300" aria-labelledby="codes-label"></div>
@@ -121,8 +127,8 @@
         </div>
       </div>
 
-      <div class="card">
-        <div class="card-head"><h2><svg class="ic" aria-hidden="true"><use href="#i-tag"></use></svg>Market values</h2></div>
+      <div class="step-panel" data-panel="3" hidden>
+        <div class="card-head"><h2 tabindex="-1"><svg class="ic" aria-hidden="true"><use href="#i-tag"></use></svg>Market values</h2><span class="step-of">Step 4 of 4</span></div>
         <div class="card-body">
           <div class="two">
             <div class="field">
@@ -144,10 +150,12 @@
         </div>
       </div>
     </form>
-    <div class="card intake-foot">
-      <span class="hint" id="go-hint"></span>
+    <div class="intake-foot">
       <button class="btn btn-ghost" id="clear" type="button">Clear</button>
-      <button class="btn btn-primary" id="go" type="submit" form="form">Run check</button>
+      <span class="hint" id="go-hint"></span>
+      <button class="btn btn-ghost" id="back" type="button" hidden>Back</button>
+      <button class="btn btn-primary" id="next" type="button">Next</button>
+      <button class="btn btn-primary" id="go" type="submit" form="form" hidden>Run check</button>
     </div>
   </section>
 

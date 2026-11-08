@@ -17,6 +17,10 @@ export const CLASSIFY_CONFIG = {
   maxPhotos: 30,
   maxRegionsPerPhoto: 4,
   imageDetail: 'high' as const,
+  // Usually ~10 s, but one call in testing took 68 s. Each attempt is cut off at timeoutMs and tried again once, so a
+  // stuck call costs at most ~2 x 25 s and the function still answers inside Vercel's 60 s limit.
+  timeoutMs: 25_000,
+  attempts: 2,
 };
 
 const SHOWS = ['exterior', 'interior', 'dashboard', 'engine_bay', 'underbody', 'label_or_document', 'detail', 'other'] as const;
@@ -129,7 +133,8 @@ export function positionsFrom(atLeft: string, atRight: string, front: string, re
 export async function classifyPhotos(photos: string[]): Promise<PhotoClass[]> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error('Set OPENAI_API_KEY');
-  const ai = new OpenAI({ apiKey });
+  // maxRetries 0: the SDK's own retries (up to 2, each with the full timeout) would blow the time budget; we retry below.
+  const ai = new OpenAI({ apiKey, timeout: CLASSIFY_CONFIG.timeoutMs, maxRetries: 0 });
   const content = [
     { type: 'text' as const, text: `${photos.length} photo(s) of one vehicle, numbered in order. Each has the 4x4 grid drawn on it.` },
     ...photos.flatMap((url, i) => [
@@ -138,7 +143,7 @@ export async function classifyPhotos(photos: string[]): Promise<PhotoClass[]> {
     ]),
   ];
   let lastError = '';
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < CLASSIFY_CONFIG.attempts; attempt++) {
     try {
       const res = await ai.chat.completions.create({
         model: CLASSIFY_CONFIG.model,

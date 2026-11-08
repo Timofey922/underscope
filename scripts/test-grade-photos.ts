@@ -65,7 +65,9 @@ for (const id of ids) {
   const files = readdirSync(folder).filter((f) => /\.(jpe?g|png|webp)$/i.test(f)).sort((a, b) => num(a) - num(b) || a.localeCompare(b)).map((f) => join(folder, f));
   try {
     const t0 = Date.now();
-    const stage1 = await post('classify-photos', { photos: files.map(gridded) });
+    // Same as the page: if photo sorting fails (after its own retry), grade without views and close-ups.
+    const stage1 = await post('classify-photos', { photos: files.map(gridded) }).catch((e: Error) => ({ photos: [], error: e.message }));
+    if (stage1.error) console.warn(`${id}: photo sorting failed (${stage1.error}); grading without close-ups`);
     const t1 = Date.now();
     const photos = files.map((f) => resized(f, 1000, 80));
     // Crops that would push the request past the budget are skipped, as on the page.
@@ -73,7 +75,7 @@ for (const id of ids) {
     const picked = pickCrops(stage1.photos).map((r) => ({ ...r, image: cutCrop(files[r.photo - 1], r.box) }))
       .filter((r) => (bytes + r.image.length > REQUEST_BUDGET ? false : ((bytes += r.image.length), true)));
     const crops = picked.map((r) => ({ photo: r.photo, kind: r.kind, part: r.part, note: r.note, image: r.image }));
-    const views = stage1.photos.map((p: { view: string }) => (['exterior_unknown_side', 'other'].includes(p.view) ? null : p.view));
+    const views = stage1.error ? undefined : stage1.photos.map((p: { view: string }) => (['exterior_unknown_side', 'other'].includes(p.view) ? null : p.view));
     const mb = (photos.join('').length + crops.reduce((n, c) => n + c.image.length, 0)) / 1e6;
     const result = await post('grade-photos', { vin: VIN, photos, views, crops });
     const t2 = Date.now();

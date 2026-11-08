@@ -8,6 +8,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
 import { lookupRegistry, type RegistryTitle } from './_lib/registry.js';
+import { MODULES, type CodeAssessment } from './_lib/scorecard.js';
 import { decodeVinFull, bodyType } from './_lib/vin.js';
 
 // ---- Config: every threshold and fallback lives here ----
@@ -26,6 +27,8 @@ export const CONFIG = {
     minor: [50, 400], moderate: [150, 1500], major: [400, 4000], critical: [1000, 6000], unknown: [100, 3000],
   } as Record<string, [number, number]>,
   maxCodes: 50,
+  // Price of all codes fixed together, from OpenAI (codes often share one root cause, so summing them overstates).
+  combination: { maxCost: 60000 },
 };
 
 const SYSTEMS = ['engine', 'transmission', 'brakes/ABS', 'airbag/SRS', 'electrical', 'emissions', 'body'];
@@ -59,6 +62,9 @@ export type DecodeResult = {
   summary: { count: number; worst_severity: string; cost_low: number; cost_high: number; shared_repair?: string | null };
   triage: 'full_inspection' | 'skip_inspection_sell_as_is';
   reason: string;
+  // OpenAI's price for fixing all valid codes together and the non-engine modules they point to (null without codes
+  // or when OpenAI is unavailable). Feeds the ACV vs Copart scorecard; `summary` still adds each code's own cost.
+  combination: CodeAssessment | null;
 };
 
 // ---- Steps ----
@@ -209,6 +215,78 @@ function countSharedOnce(decoded: DecodedCode[], ai: AIReply | null): string | n
   return t.shared_repair && t.shared_repair.toLowerCase() !== 'none' ? t.shared_repair.trim() : 'Some codes share one repair; it is counted once.';
 }
 
+// All codes of one scan, priced together for this vehicle, plus the non-engine control modules they implicate.
+const COMBINATION_SCHEMA = {
+  type: 'object', additionalProperties: false, required: ['root_causes', 'cost_low', 'cost_high', 'modules', 'confidence', 'note'],
+  properties: {
+    root_causes: {
+      type: 'array',
+      items: {
+        type: 'object', additionalProperties: false, required: ['codes', 'cause', 'repair', 'cost_low', 'cost_high'],
+        properties: { codes: { type: 'array', items: { type: 'string' } }, cause: { type: 'string' }, repair: { type: 'string' }, cost_low: { type: 'integer' }, cost_high: { type: 'integer' } },
+      },
+    },
+    cost_low: { type: 'integer' },
+    cost_high: { type: 'integer' },
+    modules: {
+      type: 'array',
+      items: {
+        type: 'object', additionalProperties: false, required: ['module', 'status', 'codes', 'note'],
+        properties: {
+          module: { type: 'string', enum: [...MODULES] }, status: { type: 'string', enum: ['fault_reported', 'replacement_likely'] },
+          codes: { type: 'array', items: { type: 'string' } }, note: { type: 'string' },
+        },
+      },
+    },
+    confidence: { type: 'string', enum: ['low', 'medium', 'high'] },
+    note: { type: 'string' },
+  },
+};
+
+export async function assessCombination(codes: DecodedCode[], vehicle: Vehicle): Promise<CodeAssessment | null> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey || codes.length === 0) return null;
+  const ai = new OpenAI({ apiKey });
+  const model = CONFIG.codesModel();
+  const car = carLine(vehicle);
+  const system = [
+    'You price the repair of a set of OBD-II trouble codes read from one vehicle, as a used-car reconditioning manager would. Reply as json matching the schema.',
+    'Codes often share one root cause (misfires on several cylinders, a lean condition on both banks, one failed sensor or a wiring fault that sets codes in several modules, a dead battery that sets many U-codes). Group them into root_causes and price each root cause once, not each code.',
+    'Prices are whole US dollars for parts plus labor at a typical independent shop for this vehicle. cost_low and cost_high cover fixing every code together: the sum of the root causes, low and high.',
+    'modules: the non-engine control modules the codes point to (airbag_srs, abs_brakes, transmission_control, body_control, instrument_cluster, network_communication, steering_suspension, other_electronic). Use replacement_likely only when the codes usually mean the module itself must be replaced (for example stored crash data after an airbag deployment); otherwise fault_reported. Leave the list empty when no such module is involved; the engine computer itself is not listed.',
+    'If you are not sure what a code means for this vehicle, say so in the cause, use a wide price range and confidence "low". Never invent a specific repair.',
+  ].join('\n');
+  const list = codes.map((c) => `${c.code}: ${c.description} (${c.system}, ${c.severity})`).join('\n');
+  const sampling = /^(gpt-5|o\d)/.test(model) ? { reasoning_effort: 'low' as const } : { temperature: 0 };
+  const known = new Set(codes.map((c) => c.code));
+  const dollars = (n: unknown) => Math.max(0, Math.min(CONFIG.combination.maxCost, Math.round(Number(n) || 0)));
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await ai.chat.completions.create({
+        model, ...sampling,
+        response_format: { type: 'json_schema', json_schema: { name: 'code_combination', strict: true, schema: COMBINATION_SCHEMA } },
+        messages: [{ role: 'system', content: system }, { role: 'user', content: `Vehicle: ${car}\nCodes:\n${list}` }],
+      });
+      const r: any = JSON.parse(res.choices[0].message.content ?? '');
+      const pair = (lo: unknown, hi: unknown) => { const a = dollars(lo), b = dollars(hi); return a <= b ? [a, b] : [b, a]; };
+      const [lo, hi] = pair(r.cost_low, r.cost_high);
+      if (hi === 0 && codes.some((c) => c.severity !== 'minor')) throw new Error('no price for the codes');
+      const only = (xs: unknown) => (Array.isArray(xs) ? xs.map((x) => String(x).toUpperCase()).filter((x) => known.has(x)) : []);
+      return {
+        root_causes: (r.root_causes ?? []).map((x: any) => { const [a, b] = pair(x.cost_low, x.cost_high); return { codes: only(x.codes), cause: String(x.cause), repair: String(x.repair), cost_low: a, cost_high: b }; }),
+        cost_low: lo, cost_high: hi,
+        modules: (r.modules ?? []).filter((m: any) => (MODULES as readonly string[]).includes(m.module))
+          .map((m: any) => ({ module: m.module, status: m.status === 'replacement_likely' ? 'replacement_likely' : 'fault_reported', codes: only(m.codes), note: String(m.note) })),
+        confidence: ['low', 'medium', 'high'].includes(r.confidence) ? r.confidence : 'low',
+        note: String(r.note ?? ''),
+      };
+    } catch (e) {
+      console.warn(`OpenAI code combination attempt ${attempt + 1} failed: ${(e as Error).message.slice(0, 200)}`);
+    }
+  }
+  return null;
+}
+
 function triage(valid: DecodedCode[], title: TitleStatus): { triage: DecodeResult['triage']; reason: string } {
   const t = CONFIG.triage;
   const reasons: string[] = [];
@@ -235,7 +313,9 @@ export async function decodeScan(vin: string, rawCodes: string[], title: TitleSt
   ]);
   if (registered) title = registered.title_status;
   // OpenAI explains codes the table lacks (every manufacturer-specific code, 2nd char "1") and prices them all.
-  const fromAI = await askOpenAI(valid, vehicle, table);
+  // Karthik's root-cause call runs at the same time (meanings from the table where known), so it adds no wait.
+  const provisional = valid.map((c) => table.get(c) ?? unknownCode(c));
+  const [fromAI, combination] = await Promise.all([askOpenAI(valid, vehicle, table), assessCombination(provisional, vehicle)]);
 
   // A real quote for this car (registry) replaces the estimate; meaning and severity stay.
   const quotes = registered?.code_quotes ?? {};
@@ -244,6 +324,10 @@ export async function decodeScan(vin: string, rawCodes: string[], title: TitleSt
     return q ? { ...d, cost_low: q.low, cost_high: q.high, cost_source: 'quote' as const, quote_note: q.note ?? null } : d;
   });
   const shared = countSharedOnce(decoded, fromAI);
+  const total = { low: decoded.reduce((s, c) => s + c.cost_low, 0), high: decoded.reduce((s, c) => s + c.cost_high, 0) };
+  // One fault-code total everywhere (repair estimate, scorecard, page): per-code prices with shared repairs counted
+  // once and real quotes kept. The root-cause call keeps its causes and modules; its own price is replaced.
+  if (combination) Object.assign(combination, { cost_low: total.low, cost_high: total.high });
   const rank = (s: string) => SEVERITIES.indexOf(s);
   const worst = decoded.reduce((w, c) => (rank(c.severity) > rank(w) ? c.severity : w), decoded.length ? 'unknown' : 'none');
 
@@ -258,11 +342,12 @@ export async function decodeScan(vin: string, rawCodes: string[], title: TitleSt
     summary: {
       count: decoded.length,
       worst_severity: worst,
-      cost_low: decoded.reduce((s, c) => s + c.cost_low, 0),
-      cost_high: decoded.reduce((s, c) => s + c.cost_high, 0),
+      cost_low: total.low,
+      cost_high: total.high,
       shared_repair: shared,
     },
     ...triage(decoded, title),
+    combination,
   };
 }
 
@@ -279,7 +364,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).json({
       endpoint: 'POST /api/decode-codes',
       body: { vin: '17-character VIN', codes: ['P0300', 'C0035'], title_status: `optional: ${TITLE_STATUSES.join(' | ')}` },
-      returns: 'vehicle, title_status, codes[], summary, triage, reason',
+      returns: 'vehicle, title_status, codes[], summary, triage, reason, combination (all codes priced together + non-engine modules, from OpenAI)',
       try_it: '/',
     });
   }

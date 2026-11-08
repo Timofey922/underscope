@@ -79,6 +79,7 @@ The grid is drawn by `drawGrid()` in `public/app.js` (and `gridded()` in `script
 | `damages` | every problem: part, type (dent, crack, missing...), severity, description, photos |
 | `missing_parts` | specific items that are gone |
 | `flags` | airbags deployed, frame suspected, fluid leak, flood, fire, suspension: true / false / "unknown" |
+| `drivability` | could it be driven, per item with a note and photos: `damage_location` (none / cosmetic / affects_driving), `fluids` (dry / seepage / leaking), `rust` (none / surface / heavy), `tires` (good / worn / flat_or_damaged), `brakes` (ok / warning / damaged), `glass` (intact / chipped / cracked_or_broken), `modifications` (none / minor / major), each "unknown" when no photo shows it. The two passes keep the worse status. Feeds the ACV vs Copart scorecard (`docs/channel-scorecard.md`). |
 | `primary_damage_area`, `overall_severity`, `photo_gaps`, `summary` | overview for a person |
 | `repair_estimate` | the priced repair, see below (default $95/hr labor) |
 | `meta` | model, seconds, attempts, photo and crop counts |
@@ -159,6 +160,10 @@ Prices in `part_grades` and `repair_estimate` come from `/api/decide`, so they f
 | `FIRECRAWL_API_KEY` | `npm run check:parts` dealer prices (and market fit) | server only |
 
 Both stages switch automatically between models: gpt-5.x and o-series models get `reasoning_effort: low`, gpt-4o gets `temperature: 0`.
+
+Stage 1 cuts each attempt off at 25 s and tries once more (`timeoutMs`, `attempts`; the OpenAI SDK's own retries are off), so it answers inside Vercel's 60 s even when OpenAI is slow. If it still fails, the page grades the photos without views and close-ups instead of failing the check.
+
+The VIN typed on the page is not sent to the grading model; otherwise it copied it as "read from the label". `vin_matches_input` is worked out in code, and a VIN of one repeated character is dropped. `photo_gaps` from the two passes are merged, so the same missing angle ("no clear underbody photo" / "no dedicated underbody photo") is listed once (`dedupeGaps()`).
 
 Tuning knobs: `CLASSIFY_CONFIG` in `api/classify-photos.ts` (model, boxes per photo), `GRADE_CONFIG` in `api/grade-photos.ts` (max photos, max crops, image detail, passes, second look and its time budget), and in `public/app.js` `MAX_CROPS` and `REQUEST_BUDGET` (4.3 MB, the page skips crops that would go over Vercel's limit).
 

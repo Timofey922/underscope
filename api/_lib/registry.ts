@@ -9,13 +9,15 @@ export type RegistryTitle = {
   clean_wholesale: number | null;
   salvage_comps: number[] | null;
   values_note: string | null;
+  // Real repair quotes per fault code for this car; they replace the generic dtc_codes estimate.
+  code_quotes: Record<string, { low: number; high: number; note?: string }> | null;
 };
 
 export async function lookupRegistry(vin: string): Promise<RegistryTitle | null> {
   const url = process.env.SUPABASE_URL, key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) return null; // no server key: behave as if not registered
   const db = createClient(url, key, { auth: { persistSession: false } });
-  const { data, error } = await db.from('vehicles').select('title_status, title_state, source, clean_wholesale, salvage_comps, values_note').eq('vin', vin).maybeSingle();
+  const { data, error } = await db.from('vehicles').select('title_status, title_state, source, clean_wholesale, salvage_comps, values_note, code_quotes').eq('vin', vin).maybeSingle();
   if (error) { console.warn(`vehicles lookup failed: ${error.message}`); return null; }
   return data as RegistryTitle | null;
 }

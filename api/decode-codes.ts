@@ -32,10 +32,11 @@ export type TitleStatus = (typeof TITLE_STATUSES)[number];
 const CODE_RE = /^[PCBU][0-3][0-9A-F]{3}$/;
 const VIN_RE = /^[A-HJ-NPR-Z0-9]{17}$/;
 
-type Source = 'generic_table' | 'openai' | 'unknown' | 'invalid';
+type Source = 'generic_table' | 'openai' | 'unknown' | 'invalid' | 'quote';
 export type DecodedCode = {
   code: string; description: string; system: string; severity: string;
   cost_low: number; cost_high: number; source: Source;
+  quote_note?: string | null; // where a 'quote' cost came from
 };
 export type Vehicle = { year: string | null; make: string | null; model: string | null; engine: string | null };
 export type DecodeResult = {
@@ -171,7 +172,12 @@ export async function decodeScan(vin: string, rawCodes: string[], title: TitleSt
   const missing = valid.filter((c) => !table.has(c));
   const fromAI = new Map((await askOpenAI(missing, vehicle)).map((d) => [d.code, d]));
 
-  const decoded = valid.map((c) => table.get(c) ?? fromAI.get(c)!);
+  // A real quote for this car (registry) replaces the estimated cost; meaning and severity stay.
+  const quotes = registered?.code_quotes ?? {};
+  const decoded = valid.map((c) => {
+    const d = table.get(c) ?? fromAI.get(c)!, q = quotes[c];
+    return q ? { ...d, cost_low: q.low, cost_high: q.high, source: 'quote' as const, quote_note: q.note ?? null } : d;
+  });
   const rank = (s: string) => SEVERITIES.indexOf(s);
   const worst = decoded.reduce((w, c) => (rank(c.severity) > rank(w) ? c.severity : w), decoded.length ? 'unknown' : 'none');
 

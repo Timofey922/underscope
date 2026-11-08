@@ -120,6 +120,7 @@ Upload photos + VIN -> part grid with grade and source photo -> both nets with b
 
 ## Test
 Run all 20 vehicles; compare model grade vs our grade per part in a sheet. Report agreement % and expensive misses (model "fine" where truth is "replace").
+Photos: `npm run score:photos -- --template` writes a blank `truth.json` per `test_vehicles/<id>/` (label blind, without looking at the model's answer); `npm run test:photos` (with `npm run dev`) writes `grade.json`; `npm run score:photos` writes `test_vehicles/ACCURACY.md` with parts right, recall, precision, expensive misses, wrong side and a confusion table. Quote recall and expensive misses, not only "parts right" (most parts are fine, so it runs high). Karthik's last hand-checked run on 24 Copart lots: gpt-5.5 ~92% parts right, ~82% recall, ~89% precision, 0 wrong side.
 Fault codes: `npm run test:codes` runs the 10 demo scans and checks each triage.
 Decision: `npm run test:decision` runs every vehicle in `public/demo_vehicles.json` and checks it gets its `expect` verdict.
 

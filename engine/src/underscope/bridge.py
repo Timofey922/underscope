@@ -125,6 +125,8 @@ def to_engine(payload: dict[str, Any]) -> tuple[VehicleRecord, list[DamageFindin
         notes.append(f"Repair estimate ${lo:,} to ${hi:,} taken from the app (parts, labor, "
                      "fault codes, allowance for unknowns); engine placeholder costs not used.")
 
+    if not v.get("year") or not v.get("make"):
+        notes.append("Vehicle not decoded from the VIN; the engine assumes a 2020 model year.")
     clean = values.get("clean_wholesale")
     comps = [int(x) for x in values.get("salvage_comps") or [] if int(x) > 0]
     if not clean:

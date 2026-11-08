@@ -9,6 +9,7 @@ import { createClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
 import { lookupRegistry, type RegistryTitle } from './_lib/registry.js';
 import { MODULES, type CodeAssessment } from './_lib/scorecard.js';
+import { decodeVinFull, bodyType } from './_lib/vin.js';
 
 // ---- Config: every threshold and fallback lives here ----
 export const CONFIG = {
@@ -26,7 +27,6 @@ export const CONFIG = {
     minor: [50, 400], moderate: [150, 1500], major: [400, 4000], critical: [1000, 6000], unknown: [100, 3000],
   } as Record<string, [number, number]>,
   maxCodes: 50,
-  vpicTimeoutMs: 8000,
   // Price of all codes fixed together, from OpenAI (codes often share one root cause, so summing them overstates).
   combination: { maxCost: 60000 },
 };
@@ -49,7 +49,10 @@ export type DecodedCode = {
   repair?: string | null;     // the likely fix the price covers
   quote_note?: string | null; // where a 'quote' cost came from
 };
-export type Vehicle = { year: string | null; make: string | null; model: string | null; engine: string | null };
+export type Vehicle = {
+  year: string | null; make: string | null; model: string | null; engine: string | null;
+  trim?: string | null; body_class?: string | null; body_type?: string | null; drive_type?: string | null; warning?: string | null; // from vPIC
+};
 export type DecodeResult = {
   vehicle: Vehicle;
   title_status: TitleStatus;
@@ -66,20 +69,20 @@ export type DecodeResult = {
 
 // ---- Steps ----
 
+/** Vehicle from the VIN (api/_lib/vin.ts: NHTSA vPIC, cached). Empty fields if vPIC is down or doesn't know the VIN. */
 export async function decodeVin(vin: string): Promise<Vehicle> {
-  const empty: Vehicle = { year: null, make: null, model: null, engine: null };
-  try {
-    const url = `https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues/${vin}?format=json`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(CONFIG.vpicTimeoutMs) });
-    const r = (await res.json()).Results?.[0] ?? {};
-    const v = (s: string) => (r[s] && String(r[s]).trim()) || null;
-    const engine = [v('DisplacementL') && `${Number(v('DisplacementL')).toFixed(1)}L`, v('FuelTypePrimary')]
-      .filter(Boolean).join(' ') || null;
-    return { year: v('ModelYear'), make: v('Make'), model: v('Model'), engine };
-  } catch {
-    return empty; // vPIC down: keep going, the model just gets less context
-  }
+  const r = await decodeVinFull(vin);
+  if (!r.ok) return { year: null, make: null, model: null, engine: null };
+  const d = r.data;
+  const engine = [d.displacementL && `${d.displacementL.toFixed(1)}L`, d.engineCylinders && `${d.engineCylinders}-cyl`, d.fuelType]
+    .filter(Boolean).join(' ') || null;
+  return { year: d.year ? String(d.year) : null, make: d.make, model: d.model, engine,
+    trim: d.trim, body_class: d.bodyClass, body_type: bodyType(d.bodyClass), drive_type: d.driveType, warning: d.warning ?? null };
 }
+
+/** The vehicle as one line for the OpenAI prompts: year, make, model, trim, engine, drive, body. */
+export const carLine = (v: Vehicle) =>
+  [v.year, v.make, v.model, v.trim, v.engine, v.drive_type, v.body_class].filter(Boolean).join(' ') || 'unknown vehicle';
 
 async function lookupTable(codes: string[]): Promise<Map<string, DecodedCode>> {
   // Read-only lookup: dtc_codes is public under RLS, so the anon key is enough if the service key is absent.
@@ -134,7 +137,7 @@ async function askOpenAI(codes: string[], vehicle: Vehicle, known: Map<string, D
   if (!apiKey || codes.length === 0) return null;
   const ai = new OpenAI({ apiKey });
   const model = CONFIG.codesModel();
-  const car = [vehicle.year, vehicle.make, vehicle.model, vehicle.engine].filter(Boolean).join(' ') || 'unknown vehicle';
+  const car = carLine(vehicle);
   const system = [
     'You explain and price OBD-II diagnostic trouble codes for one specific vehicle. Reply as json matching the schema, one entry per input code.',
     'Meaning: when a code comes with a known meaning, keep it (description, system, severity). Otherwise explain it for this make; if you are not sure what it means, set description, system and severity to "unknown". Never guess.',
@@ -245,7 +248,7 @@ export async function assessCombination(codes: DecodedCode[], vehicle: Vehicle):
   if (!apiKey || codes.length === 0) return null;
   const ai = new OpenAI({ apiKey });
   const model = CONFIG.codesModel();
-  const car = [vehicle.year, vehicle.make, vehicle.model, vehicle.engine].filter(Boolean).join(' ') || 'unknown vehicle';
+  const car = carLine(vehicle);
   const system = [
     'You price the repair of a set of OBD-II trouble codes read from one vehicle, as a used-car reconditioning manager would. Reply as json matching the schema.',
     'Codes often share one root cause (misfires on several cylinders, a lean condition on both banks, one failed sensor or a wiring fault that sets codes in several modules, a dead battery that sets many U-codes). Group them into root_causes and price each root cause once, not each code.',

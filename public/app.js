@@ -373,7 +373,7 @@ async function recompute(first = false) {
   // Vehicle for eBay parts prices: the VIN decode when it names one, else what the photos show. Samples keep table prices.
   const pv = (state.photo && state.photo.data && state.photo.data.vehicle) || {}, cv = state.codes.vehicle || {};
   const vehicle = state.sampleId ? null : cv.make && cv.model
-    ? { year: cv.year, make: cv.make, model: cv.model, body_type: pv.body_type || null }
+    ? { year: cv.year, make: cv.make, model: cv.model, body_type: cv.body_type || pv.body_type || null }
     : pv.make && pv.model ? { year: pv.year, make: pv.make, model: pv.model, body_type: pv.body_type || null } : null;
   const body = {
     title_status: state.codes.title_status,

@@ -14,7 +14,8 @@
     "seed:vehicles": "tsx scripts/seed-vehicles.ts",
     "test:decision": "tsx scripts/test-decision.ts",
     "score:photos": "tsx scripts/score-photos.ts",
-    "test:scorecard": "tsx scripts/test-scorecard.ts"
+    "test:scorecard": "tsx scripts/test-scorecard.ts",
+    "test:vin": "tsx scripts/test-vin.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.119.0",

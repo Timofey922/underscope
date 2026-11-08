@@ -65,10 +65,12 @@ const codes = tagField($('codes'), $('code-input'), $('codes-hint'), {
   normalize: (s) => String(s).trim().toUpperCase(), valid: (c) => CODE_RE.test(c), show: (c) => c,
   hintText: (bad) => bad.length ? `${bad.join(', ')}: codes start with P, C, B or U plus 4 characters.` : 'Enter after each code. Leave empty if none.',
 });
+const COMPS_HINT = 'Enter 3+ sold prices from similar salvage lots.';
+let compsNote = ''; // "estimated from similar vehicles" when the registry supplied comps for a look-alike car
 const comps = tagField($('comps'), $('comp-input'), $('comps-hint'), {
   normalize: (s) => { const t = String(s).trim(); const n = Math.round(Number(t.replace(/[$,\s]/g, ''))); return n > 0 ? String(n) : t; },
   valid: (x) => /^\d+$/.test(x), show: (x) => /^\d+$/.test(x) ? money(+x) : x,
-  hintText: (bad) => bad.length ? `${bad.join(', ')} isn't a dollar amount.` : '5 to 10 damaged lots of the same model and year.',
+  hintText: (bad) => bad.length ? `${bad.join(', ')} isn't a dollar amount.` : compsNote || COMPS_HINT,
 });
 
 // ---------- Assumptions ----------
@@ -161,8 +163,32 @@ async function cropFrom(file, box) {
   return c.toDataURL('image/jpeg', 0.82);
 }
 
+// Progress list under the Run button: each step shows its seconds; the running one counts up.
+const STEP_LABEL = { sort: 'Sorting photos', crop: 'Cutting close-ups', grade: 'Grading 25 parts', codes: 'Decoding fault codes', price: 'Pricing repairs' };
+const progress = (() => {
+  let rows = {}, timer = null;
+  const el = $('progress');
+  const paint = () => { const now = Date.now(); for (const [k, r] of Object.entries(rows)) {
+    r.li.className = r.state; r.lbl.textContent = STEP_LABEL[r.key] + (r.state === 'done' ? '' : '…'); r.secs.textContent = r.state === 'pending' ? '' : `${Math.round(((r.end || now) - r.start) / 1000)} s`; } };
+  return {
+    start(keys) {
+      el.innerHTML = ''; rows = {};
+      for (const k of keys) { const li = document.createElement('li'), lbl = document.createElement('span'), secs = document.createElement('span');
+        secs.className = 'secs'; li.append(lbl, secs); el.append(li); rows[k] = { key: k, li, lbl, secs, state: 'pending' }; }
+      el.hidden = false; clearInterval(timer); timer = setInterval(paint, 250); paint();
+    },
+    set(k, s) { const r = rows[k]; if (!r || r.state === 'done' || r.state === s) return;
+      // starting a photo step finishes the one before it
+      const order = ['sort', 'crop', 'grade']; const i = order.indexOf(k);
+      if (s === 'active' && i > 0) for (const p of order.slice(0, i)) this.set(p, 'done');
+      if (s === 'active') r.start = Date.now(); if (s === 'done') { r.start ??= Date.now(); r.end = Date.now(); }
+      r.state = s; paint(); },
+    stop() { clearInterval(timer); timer = null; paint(); setTimeout(() => { if (!timer) $('progress').hidden = true; }, 2500); },
+  };
+})();
+
 async function gradePhotoFlow(vin, status) {
-  status('Sorting photos…');
+  status('sort');
   // Photo sorting only adds views and close-ups (it already retries once on the server). If it still fails, grade the
   // photos without them rather than failing the whole check.
   let stage1;
@@ -174,7 +200,7 @@ async function gradePhotoFlow(vin, status) {
     stage1 = { error: e.message };
   }
   const sorted = Array.isArray(stage1.photos);
-  status(sorted ? 'Cutting close-ups…' : 'Photo sorting failed; grading without close-ups…');
+  status('crop'); // if sorting failed there are no close-ups to cut; grading goes on without them
   const regions = sorted ? pickRegions(stage1.photos, MAX_CROPS) : [];
   const crops = [];
   let bytes = photoBytes();
@@ -184,7 +210,7 @@ async function gradePhotoFlow(vin, status) {
     bytes += image.length;
     crops.push({ photo: r.photo, kind: r.kind, part: r.part, note: r.note, image });
   }
-  status('Grading photos…');
+  status('grade');
   const views = sorted ? stage1.photos.map((p) => (['exterior_unknown_side', 'other'].includes(p.view) ? null : p.view)) : undefined;
   const res = await post('/api/grade-photos', { vin, photos: photos.map((p) => p.dataUrl), ...(views ? { views } : {}), crops });
   return { res, stage1, crops: crops.map(({ image, ...meta }) => meta) };
@@ -214,14 +240,34 @@ renderPhotos();
 
 // ---------- VIN + registry ----------
 const CLEAN_HINT = 'Same year, model and mileage, no damage, clean title.';
-let registryVin = null;
+let registryVin = null, compsEstimated = false;
 $('vin').addEventListener('input', (e) => {
   const v = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
   e.target.value = v;
   const hint = $('vin-hint'); hint.classList.remove('bad');
   hint.textContent = v.length === 0 ? "17 characters, on the dash or the driver's door jamb." : `${v.length} of 17`;
-  if (VIN_RE.test(v)) checkRegistry(v); else showRegistry(null);
+  if (VIN_RE.test(v)) { showDecoded(v); checkRegistry(v); } else { showRegistry(null); setCompsField(false); }
 });
+// Decoded "year make model trim" (NHTSA vPIC via /api/decode-vin) under the VIN field.
+let decodeVin = null;
+async function showDecoded(vin) {
+  decodeVin = vin;
+  const hint = $('vin-hint');
+  hint.textContent = 'Looking up this VIN…';
+  const r = await fetch('/api/decode-vin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ vin }) })
+    .then(async (x) => ({ ok: x.ok, j: await x.json().catch(() => ({})) })).catch(() => ({ ok: false, j: { error: 'VIN lookup unavailable' } }));
+  if (decodeVin !== vin) return;
+  if (!r.ok) { hint.classList.add('bad'); hint.textContent = r.j.error === 'VIN not recognized' ? 'VIN not recognized. Check it against the door-jamb label.' : r.j.error || 'VIN not recognized.'; return; }
+  const v = r.j, make = v.make && (v.make.length <= 3 ? v.make : v.make.replace(/\B\w+/g, (m) => m.toLowerCase()));
+  hint.classList.remove('bad');
+  hint.textContent = [v.year, make, v.model, v.trim].filter(Boolean).join(' ') + (v.warning ? `. Check the VIN: ${v.warning.replace(/^\d+ - /, '')}.` : '');
+}
+// Salvage comps are typed in only for cars not in the registry.
+function setCompsField(show, similar = null) {
+  $('comps-field').hidden = !show;
+  compsNote = similar ? `Estimated from similar vehicles (${similar.from.join(', ')}). Replace with real sold prices if you have them.` : '';
+  if (similar) comps.set(similar.comps.map(String)); else if (show) comps.set(comps.get());
+}
 function showRegistry(rec) {
   const th = $('title-hint'), ch = $('clean-hint');
   th.classList.toggle('verified', !!rec); ch.classList.remove('verified');
@@ -234,7 +280,8 @@ async function checkRegistry(vin) {
   try {
     const r = await fetch(`/api/vehicle?vin=${encodeURIComponent(vin)}`).then((x) => x.json());
     if (registryVin !== vin) return null;
-    if (!r.registered) { showRegistry(null); return null; }
+    if (!r.registered) { showRegistry(null); setCompsField(true, r.similar); compsEstimated = !!r.similar; return null; }
+    setCompsField(false); compsEstimated = false;
     setTitle(r.title_status);
     if (r.clean_wholesale) $('clean').value = r.clean_wholesale;
     if (r.salvage_comps && r.salvage_comps.length) comps.set(r.salvage_comps);
@@ -304,7 +351,7 @@ const samplesReady = fetch('/demo_vehicles.json').then((r) => r.json()).then(({ 
 
 $('clear').onclick = () => {
   $('vin').value = ''; $('vin').dispatchEvent(new Event('input'));
-  codes.set([]); comps.set([]); $('clean').value = ''; photos = []; renderPhotos(); setTitle('unknown'); setDrivable('unknown'); $('state').value = ''; $('mileage').value = ''; $('mileage-hint').textContent = MILEAGE_HINT;
+  codes.set([]); comps.set([]); $('clean').value = ''; photos = []; renderPhotos(); setTitle('unknown'); setDrivable('unknown'); $('state').value = ''; $('mileage').value = ''; setCompsField(false); compsEstimated = false; decodeVin = null; $('mileage-hint').textContent = MILEAGE_HINT;
   preset = null; state = null; $('result').hidden = true; $('empty').hidden = false;
   history.replaceState(null, '', '/'); $('vin').focus();
 };
@@ -326,11 +373,13 @@ $('form').addEventListener('submit', async (e) => {
   const vin = $('vin').value.trim();
   if (!VIN_RE.test(vin)) { flagBadVin(vin); $('vin').focus(); return; }
   if (photoBytes() > MAX_BYTES) { $('drop').scrollIntoView({ block: 'center' }); return; }
-  $('go').disabled = true; $('go').textContent = photos.length ? 'Sorting photos…' : 'Running…';
+  $('go').disabled = true; $('go').textContent = 'Running…';
+  progress.start(photos.length ? ['sort', 'crop', 'grade', 'codes', 'price'] : ['codes', 'price']);
+  progress.set('codes', 'active'); if (photos.length) progress.set('sort', 'active');
   try {
     const [cRes, flow, market] = await Promise.all([
-      post('/api/decode-codes', { vin, codes: codes.get(), title_status: getTitle() }),
-      photos.length ? gradePhotoFlow(vin, (t) => { $('go').textContent = t; }).catch((x) => x) : null,
+      post('/api/decode-codes', { vin, codes: codes.get(), title_status: getTitle() }).finally(() => progress.set('codes', 'done')),
+      photos.length ? gradePhotoFlow(vin, (k) => progress.set(k, 'active')).catch((x) => x).finally(() => progress.set('grade', 'done')) : null,
       // Market fit for the ACV vs Copart scorecard: public listings of this model in the seller's state.
       post('/api/market-fit', { vin, state: getState(), mileage: getMileage() }).then((r) => r.json()).catch((e) => ({ ran: false, error: e.message })),
     ]);
@@ -362,6 +411,7 @@ $('form').addEventListener('submit', async (e) => {
     $('result').innerHTML = `<div class="error-box"><h3>Couldn't check this vehicle</h3><p>${esc(err.message)} Check the inputs and try again.</p></div>`;
     $('result').scrollIntoView({ behavior: reduceMotion() ? 'auto' : 'smooth', block: 'center' });
   } finally {
+    progress.stop();
     $('go').disabled = false; $('go').textContent = 'Run check';
   }
 });
@@ -393,8 +443,12 @@ async function recompute(first = false) {
   // The engine (engine/, via /api/route) decides where to send the car: ACV or Copart.
   // One repair cost: the engine gets the same repair estimate the page shows (parts table,
   // fault codes, allowance for unknowns), so the two never price the damage differently.
+  if (first) progress.set('price', 'active');
   const d = await post('/api/decide', body).then((r) => r.json());
   if (ticket !== pending) return;
+  // Not enough market data (no clean value or fewer than 3 comps): no headline, no nets, no engine run, because the
+  // engine would fill the gap with placeholder prices. The page shows the vehicle, photo grades and codes instead.
+  if (!d.verdict) { state.route = null; progress.set('price', 'done'); render(d, first); return; }
   const routeBody = { vin: state.vin, vehicle: state.codes.vehicle, title_status: body.title_status,
     grades: body.grades, flags: body.flags, codes: body.codes, values: body.values,
     repair: d.repair ? { low: d.repair.low, high: d.repair.high } : undefined,
@@ -404,6 +458,7 @@ async function recompute(first = false) {
     .catch((e) => ({ error: e.message }));
   if (ticket !== pending) return;
   state.route = rt;
+  progress.set('price', 'done');
   render(d, first);
 }
 
@@ -411,7 +466,7 @@ async function recompute(first = false) {
 const DEST_CLASS = { ACV: 'ok', Copart: 'bad', 'Parts buyer': 'warn' };
 const DEST_LAMP = { ACV: ['on-acv', 'A'], Copart: ['on-copart', 'C'], 'Parts buyer': ['on-amber', 'P'] };
 const cap = (s) => s[0].toUpperCase() + s.slice(1);
-function routeHero(first) {
+function routeHero(first, d) {
   const r = state.route;
   if (!r || r.error) return '';
   const best = r.options[0], next = r.options[1];
@@ -420,7 +475,7 @@ function routeHero(first) {
   // Both top exits at ACV and nearly tied: the destination is clear, the repair choice isn't.
   const acvTie = best.destination === 'ACV' && next.destination === 'ACV' && gap < Math.max(500, best.expected * 0.05);
   const why = acvTie
-    ? `Repairing first and selling as-is come out within ${money(gap)} of each other (expected net about ${money(best.expected)}), so the destination is ACV either way. Use “Repair or sell as-is?” below to choose.`
+    ? `Repairing first and selling as-is come out within ${money(gap)} of each other (expected net about ${money(best.expected)}), so the destination is ACV either way.${d && d.verdict ? ' Use “Repair or sell as-is?” below to choose.' : ' There are no sold salvage prices on record for this vehicle, so the two cannot be told apart yet.'}`
     : `<b>${esc(cap(r.winner_label))}.</b> Expected net ${money(best.expected)}, middle 80% ${money(best.p10)} to ${money(best.p90)}. Next best: ${esc(next.label)} (${esc(next.destination)}), ${money(gap)} behind.`;
   return `<div class="rec hero"><div class="lamp ${lamp}${first ? ' ignite' : ''}" aria-hidden="true">${glyph}</div><div>
     <h3>Send it to ${esc(r.destination)}</h3>
@@ -434,7 +489,7 @@ function routeExits() {
   if (r.error) return `<div class="sec sec-full"><p class="notice">The routing engine isn't available right now (${esc(r.error)}). The repair-or-sell analysis below still works.</p></div>`;
   const rows = r.options.map((o, i) => `<tr${i === 0 ? ' class="total"' : ''}><td>${esc(cap(o.label))}</td><td><span class="badge ${DEST_CLASS[o.destination] || ''}">${esc(o.destination)}</span></td><td class="amt">${money(o.p10)} to ${money(o.p90)}</td><td class="amt">${money(o.expected)}</td></tr>`).join('');
   return `<div class="sec route">
-    <h3>${ic('route')}All four exits</h3>
+    <h3>${ic('route')}${r.options.length === 4 ? 'All four exits' : `The ${r.options.length} exits open to this car`}</h3>
     <p class="tab-note">Net proceeds over 1,000 simulated outcomes, using the repair estimate below. ${esc(r.answer || '')}</p>
     <table class="lines"><tbody><tr><td><b>Exit</b></td><td><b>Goes to</b></td><td class="amt"><b>Middle 80%</b></td><td class="amt"><b>Expected net</b></td></tr>${rows}</tbody></table>
     ${r.flip_conditions && r.flip_conditions.length ? `<p class="tab-note" style="margin-top:12px"><b>What would change the answer:</b> ${esc(r.flip_conditions.join(' '))}</p>` : ''}
@@ -505,6 +560,13 @@ async function copyLink() {
 }
 
 // ---------- Render ----------
+/** One friendly line on the market data a recommendation still needs. */
+function missingLine(d) {
+  const need = [];
+  if (d.missing.some((m) => /clean/.test(m))) need.push('the clean wholesale value');
+  if (d.missing.some((m) => /salvage/.test(m))) need.push('3 or more sold prices from similar salvage lots');
+  return `There isn't enough market data to recommend a channel yet. Add ${need.join(' and ') || 'the market values'} on step 4 and run the check again.`;
+}
 function vehicleName() {
   const v = state.codes.vehicle;
   const make = v.make && (v.make.length <= 3 ? v.make : v.make.replace(/\B\w+/g, (m) => m.toLowerCase()));
@@ -524,7 +586,7 @@ function recBlock(d, first, compact = false) {
     sell_as_is: ['on-red', '!', 'Sell it as-is', pct === 0 ? 'Selling as-is came out ahead in all 1,000 simulated outcomes.' : `Fixing came out ahead in only ${pct}% of 1,000 simulated outcomes.`],
     too_close: ['on-amber', '?', 'Too close to call', `Fixing came out ahead in ${pct}% of 1,000 simulated outcomes; the ranges overlap too much to choose.`],
     not_fixable: ['on-red', '!', 'Sell it as-is', 'A non-repairable title means it can\'t be registered again after repair.'],
-  }[d.verdict] || ['', '–', 'Needs market values', `Add ${d.missing.join(' and ')} above.`];
+  }[d.verdict] || ['', '–', 'Needs market values', d.missing.some((m) => /clean/.test(m)) ? 'Add the clean wholesale value above.' : 'No sold salvage prices on record for this vehicle, so its as-is value is unknown.'];
   const check = d.check ? `<p class="check"><b>Check before deciding:</b> ${esc(d.check.label)}. If it comes back clean, fixing wins ${Math.round(d.check.p_fix_if_resolved * 100)}% of the time.</p>` : '';
   return `<div class="rec${compact ? ' compact' : ''}"><div class="lamp ${V[0]}${first ? ' ignite' : ''}" aria-hidden="true">${V[1]}</div><div><h3>${esc(V[2])}</h3><p class="why">${esc(V[3])}</p>${check}</div></div>`;
 }
@@ -564,7 +626,7 @@ function repairTab(d) {
     <table class="lines"><tbody>${rows}${widen}<tr class="total"><td>Repair estimate</td><td class="amt">${money(r.low)} to ${money(r.high)}</td></tr></tbody></table>
     <dl class="facts">
       ${d.arv ? `<div class="fact"><dt>Value after repair</dt><dd>${money(d.arv.low)} to ${money(d.arv.high)}<small>Clean wholesale less 5–12% for condition, ${esc(titleNote)}</small></dd></div>` : ''}
-      ${d.as_is ? `<div class="fact"><dt>Value as-is</dt><dd>${money(d.as_is.low)} to ${money(d.as_is.high)}<small>Range of ${d.as_is.comps} salvage comps</small></dd></div>` : ''}
+      ${d.as_is ? `<div class="fact"><dt>Value as-is</dt><dd>${money(d.as_is.low)} to ${money(d.as_is.high)}<small>${compsEstimated ? `Estimated from similar vehicles (${d.as_is.comps} sold lots)` : `From ${d.as_is.comps} sold salvage lots`}</small></dd></div>` : ''}
       <div class="fact"><dt>Costs to sell</dt><dd>${money(a.fix_selling_fee)} + ${money(a.daily_cost)}/day<small>After repair. As-is: ${money(a.as_is_fee)} fee + ${money(a.transport)} transport</small></dd></div>
     </dl>`;
 }
@@ -667,13 +729,13 @@ function render(d, first) {
     <div class="vehbar"><div class="veh-id"><h2>${esc(vehicleName())}</h2><div class="veh-meta"><span class="vin-code">${esc(state.vin)}</span>${engine}${titleBadge()}</div></div>
       <div class="veh-actions"><button class="btn btn-ghost btn-sm" type="button" data-copy>${ic('link')}Copy link</button>
       <button class="btn btn-ghost btn-sm" type="button" data-download>${ic('download')}Download JSON</button></div></div>
-    ${state.route && !state.route.error
-      ? `${routeHero(first)}${routeExits()}<div class="sec sec-decide"><h3>${ic('wrench')}Repair or sell as-is?</h3>${recBlock(d, false, true)}${rangesBlock(d)}</div>${scorecardBlock(d)}`
+    ${!d.verdict ? `<div class="sec sec-full"><p class="notice">${esc(missingLine(d))}</p></div>`
+      : state.route && !state.route.error
+      ? `${routeHero(first, d)}${routeExits()}${d.verdict ? `<div class="sec sec-decide"><h3>${ic('wrench')}Repair or sell as-is?</h3>${recBlock(d, false, true)}${rangesBlock(d)}</div>` : ''}${scorecardBlock(d)}`
       : `${recBlock(d, first)}${rangesBlock(d)}${routeExits()}${scorecardBlock(d)}`}
-    <div class="sec sec-repair"><h3>${ic('receipt')}Where the numbers come from</h3>${repairTab(d)}</div>
+    ${d.verdict ? `<div class="sec sec-repair"><h3>${ic('receipt')}Where the numbers come from</h3>${repairTab(d)}</div>` : ''}
     <div class="sec sec-condition"><h3>${ic('clipboard')}Condition</h3>${conditionTab()}</div>
-    <div class="sec sec-codes"><h3>${ic('gauge')}Fault codes</h3>${codesTab()}</div>
-    <div class="sec sec-api"><details><summary style="cursor:pointer;color:var(--orange);font-weight:500;font-size:14px">${ic('code')}API response (same as Download JSON)</summary><pre style="margin-top:10px">${esc(JSON.stringify(report, null, 2))}</pre></details></div>`;
+    <div class="sec sec-codes"><h3>${ic('gauge')}Fault codes</h3>${codesTab()}</div>`;
   out.querySelector('[data-download]').onclick = () => downloadJson(report);
   if (first) {
     history.replaceState(null, '', shareUrl().replace(location.origin, ''));

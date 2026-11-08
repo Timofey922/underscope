@@ -5,7 +5,8 @@ const GRADE_ORDER = ['fine', 'repairable', 'replace', 'unknown'];
 const GRADE_LABEL = { fine: 'Fine', repairable: 'Repairable', replace: 'Replace', unknown: 'Not visible' };
 const TITLE_LABEL = { clean: 'Clean', salvage: 'Salvage', rebuilt: 'Rebuilt', flood: 'Flood', non_repairable: 'Non-repairable', lemon: 'Lemon buyback', unknown: 'Title not confirmed' };
 const SOURCE_LABEL = { title_document: 'title document', dealer_listing: 'dealer listing', online_listing: 'online listing', nmvtis_report: 'NMVTIS report' };
-const CODE_SOURCE = { generic_table: 'code table', openai: 'explained by OpenAI for this make', unknown: 'meaning unknown for this make', invalid: 'not a valid code', quote: 'quote for this car' };
+const CODE_SOURCE = { generic_table: 'meaning from code table', openai: 'meaning from OpenAI for this make', unknown: 'meaning unknown for this make', invalid: 'not a valid code' };
+const COST_SOURCE = { quote: 'price: real quote for this car', openai_estimate: 'price: AI estimate for this car', table_fallback: 'price: rough table estimate (AI unavailable)', severity_fallback: 'price: rough estimate by severity (AI unavailable)' };
 const FLAG_LABEL = { airbags_deployed: 'Airbags deployed', frame_suspected: 'Frame damage', fluid_leak: 'Fluid leak' };
 const ASSUME = [
   ['labor_rate', 'Labor ($/hr)', 95], ['daily_cost', 'Holding ($/day)', 20], ['fix_days', 'Days to fix + resell', 30], ['as_is_days', 'Days to sell as-is', 7],
@@ -585,7 +586,7 @@ function codesTab() {
     <ul class="codelist">${r.codes.map((c) => `
       <li class="sev-${esc(c.severity)}"><span class="code">${esc(c.code)}</span><span class="desc">${c.description === 'unknown' ? 'Meaning unknown' : esc(c.description)}</span>
         <span class="cost">${c.source === 'invalid' ? '' : `${money(c.cost_low)} to ${money(c.cost_high)}`}</span>
-        <span class="meta">${esc(sev(c.severity))}, ${esc(c.system)}, ${esc(CODE_SOURCE[c.source] || c.source)}${c.quote_note ? ` (${esc(c.quote_note)})` : ''}</span></li>`).join('')}</ul>`;
+        <span class="meta">${esc(sev(c.severity))}, ${esc(c.system)}, ${esc(CODE_SOURCE[c.source] || c.source)}${COST_SOURCE[c.cost_source] ? `; ${esc(COST_SOURCE[c.cost_source])}` : ''}${c.quote_note ? ` (${esc(c.quote_note)})` : ''}${c.repair && c.cost_source === 'openai_estimate' ? `. Likely fix: ${esc(c.repair)}` : ''}</span></li>`).join('')}</ul>`;
 }
 
 // The whole check as one JSON document: inputs, decision, fault codes and both photo stages.

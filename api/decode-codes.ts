@@ -1,7 +1,9 @@
 // POST /api/decode-codes  { vin, codes, title_status? } -> decoded fault codes, summary and triage.
 // title_status is entered by the seller (no free API returns title brands by VIN).
-// Generic codes come from the Supabase dtc_codes table; manufacturer-specific or
-// unlisted codes are explained by OpenAI at request time (it must say "unknown" rather than guess).
+// Meaning: generic codes from the Supabase dtc_codes table; manufacturer-specific or unlisted codes
+// are explained by OpenAI (it must say "unknown" rather than guess).
+// Price: OpenAI (gpt-5.5) prices every code for this exact vehicle at request time. A real quote
+// stored with a registry vehicle beats it; fixed bands are only a fallback when the model can't price.
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
@@ -15,9 +17,10 @@ export const CONFIG = {
     skipSystemsAtMajor: ['transmission', 'airbag/SRS'], // major-or-worse in these systems -> skip
     skipTitles: ['non_repairable', 'flood'],       // seller-entered title brands that skip inspection
   },
-  // Model for explaining codes the table doesn't have. OPENAI_CODES_MODEL overrides; defaults to OPENAI_MODEL.
+  // Model that explains and prices codes. OPENAI_CODES_MODEL overrides; defaults to OPENAI_MODEL.
   codesModel: () => process.env.OPENAI_CODES_MODEL || process.env.OPENAI_MODEL || 'gpt-5.5',
-  // Cost band for codes explained by OpenAI (the table has its own costs).
+  codesReasoning: 'medium' as const, // more thought per price; ~10-20 s with gpt-5.5
+  // Fallback only, when the model can't price a code (no key, API error, or it says unknown).
   costBySeverity: {
     minor: [50, 400], moderate: [150, 1500], major: [400, 4000], critical: [1000, 6000], unknown: [100, 3000],
   } as Record<string, [number, number]>,
@@ -32,10 +35,14 @@ export type TitleStatus = (typeof TITLE_STATUSES)[number];
 const CODE_RE = /^[PCBU][0-3][0-9A-F]{3}$/;
 const VIN_RE = /^[A-HJ-NPR-Z0-9]{17}$/;
 
-type Source = 'generic_table' | 'openai' | 'unknown' | 'invalid' | 'quote';
+type Source = 'generic_table' | 'openai' | 'unknown' | 'invalid'; // where the meaning came from
+// Where the price came from: real quote for this car, OpenAI estimate for this car, or a fixed fallback band.
+type CostSource = 'quote' | 'openai_estimate' | 'table_fallback' | 'severity_fallback' | 'none';
 export type DecodedCode = {
   code: string; description: string; system: string; severity: string;
   cost_low: number; cost_high: number; source: Source;
+  cost_source: CostSource;
+  repair?: string | null;     // the likely fix the price covers
   quote_note?: string | null; // where a 'quote' cost came from
 };
 export type Vehicle = { year: string | null; make: string | null; model: string | null; engine: string | null };
@@ -75,72 +82,97 @@ async function lookupTable(codes: string[]): Promise<Map<string, DecodedCode>> {
   const db = createClient(url, key, { auth: { persistSession: false } });
   const { data, error } = await db.from('dtc_codes').select('*').in('code', codes);
   if (error) throw new Error(`dtc_codes lookup failed: ${error.message}`);
-  return new Map((data ?? []).map((r) => [r.code, { ...r, source: 'generic_table' as const }]));
+  return new Map((data ?? []).map((r) => [r.code, { ...r, source: 'generic_table' as const, cost_source: 'table_fallback' as const }]));
 }
 
 function unknownCode(code: string): DecodedCode {
   const [lo, hi] = CONFIG.costBySeverity.unknown;
-  return { code, description: 'unknown', system: 'unknown', severity: 'unknown', cost_low: lo, cost_high: hi, source: 'unknown' };
+  return { code, description: 'unknown', system: 'unknown', severity: 'unknown', cost_low: lo, cost_high: hi, source: 'unknown', cost_source: 'severity_fallback' };
 }
 
-// Strict schema: one entry per code, enums for system/severity, "unknown" always allowed.
+// Strict schema: one entry per code, enums for system/severity, "unknown" / null always allowed.
 const CODES_SCHEMA = {
   type: 'object', additionalProperties: false, required: ['codes'],
   properties: {
     codes: {
       type: 'array',
       items: {
-        type: 'object', additionalProperties: false, required: ['code', 'description', 'system', 'severity'],
+        type: 'object', additionalProperties: false,
+        required: ['code', 'description', 'system', 'severity', 'repair', 'cost_low', 'cost_high'],
         properties: {
           code: { type: 'string' },
           description: { type: 'string' },
           system: { type: 'string', enum: [...SYSTEMS, 'unknown'] },
           severity: { type: 'string', enum: [...SEVERITIES, 'unknown'] },
+          repair: { type: 'string' },
+          cost_low: { type: ['integer', 'null'] },
+          cost_high: { type: ['integer', 'null'] },
         },
       },
     },
   },
 };
 
-async function askOpenAI(codes: string[], vehicle: Vehicle): Promise<DecodedCode[]> {
+type AIItem = { description: string; system: string; severity: string; repair: string; cost_low: number | null; cost_high: number | null };
+
+/** Explains codes the table doesn't know and prices every code for this vehicle. null on failure. */
+async function askOpenAI(codes: string[], vehicle: Vehicle, known: Map<string, DecodedCode>): Promise<Map<string, AIItem> | null> {
   const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey || codes.length === 0) return codes.map(unknownCode);
+  if (!apiKey || codes.length === 0) return null;
   const ai = new OpenAI({ apiKey });
   const model = CONFIG.codesModel();
   const car = [vehicle.year, vehicle.make, vehicle.model, vehicle.engine].filter(Boolean).join(' ') || 'unknown vehicle';
   const system = [
-    'You explain OBD-II diagnostic trouble codes for a specific vehicle. Reply as json matching the schema, one entry per input code.',
-    'Use "critical" for deployed airbags, loss of oil pressure, overheating or anything unsafe to drive.',
-    'If you are not sure what a code means for this make, set description, system and severity to "unknown". Never guess.',
+    'You explain and price OBD-II diagnostic trouble codes for one specific vehicle. Reply as json matching the schema, one entry per input code.',
+    'Meaning: when a code comes with a known meaning, keep it (description, system, severity). Otherwise explain it for this make; if you are not sure what it means, set description, system and severity to "unknown". Never guess.',
+    'Severity: "critical" for deployed airbags, loss of oil pressure, overheating or anything unsafe to drive.',
+    'Price: cost_low and cost_high are the total US independent-shop bill in dollars (parts + labor + diagnosis) to clear this code on THIS vehicle.',
+    'cost_low = the most common cheap fix (e.g. a sensor or filter); cost_high = the expensive fix the code often turns out to be (e.g. high-pressure fuel pump, injectors, turbo, transmission valve body).',
+    'Price for this exact engine and brand: direct injection, turbo, diesel, hybrid and luxury or exotic makes (BMW, Mercedes, Audi, Porsche, Land Rover, Maserati...) cost far more in parts and labor than an economy car. Do not reuse generic price ranges.',
+    'repair: one short line naming the likely fixes the range covers. If you cannot price it for this vehicle, set cost_low and cost_high to null.',
   ].join('\n');
+  const lines = codes.map((c) => {
+    const k = known.get(c);
+    return k ? `${c}: known meaning "${k.description}" (${k.system}, ${k.severity})` : `${c}: meaning not known, explain it for this make`;
+  });
   // Reasoning models (gpt-5.x, o-series) take reasoning_effort and reject temperature; others take temperature 0.
-  const sampling = /^(gpt-5|o\d)/.test(model) ? { reasoning_effort: 'low' as const } : { temperature: 0 };
+  const sampling = /^(gpt-5|o\d)/.test(model) ? { reasoning_effort: CONFIG.codesReasoning } : { temperature: 0 };
 
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const res = await ai.chat.completions.create({
         model, ...sampling,
         response_format: { type: 'json_schema', json_schema: { name: 'dtc_codes', strict: true, schema: CODES_SCHEMA } },
-        messages: [{ role: 'system', content: system }, { role: 'user', content: `Vehicle: ${car}\nCodes: ${codes.join(', ')}` }],
+        messages: [{ role: 'system', content: system }, { role: 'user', content: `Vehicle: ${car}\nCodes:\n${lines.join('\n')}` }],
       });
       const items: any[] = JSON.parse(res.choices[0].message.content ?? '').codes;
       const byCode = new Map(items.map((i) => [String(i.code).toUpperCase(), i]));
       if (!codes.every((c) => byCode.has(c))) throw new Error('missing codes in OpenAI reply');
-      return codes.map((code) => {
-        const i = byCode.get(code);
-        const severity = SEVERITIES.includes(i.severity) ? i.severity : 'unknown';
-        const sys = SYSTEMS.includes(i.system) ? i.system : 'unknown';
-        const desc = typeof i.description === 'string' && i.description.trim() ? i.description.trim() : 'unknown';
-        const [lo, hi] = CONFIG.costBySeverity[severity];
-        const isUnknown = desc.toLowerCase() === 'unknown';
-        return { code, description: desc, system: sys, severity, cost_low: lo, cost_high: hi, source: isUnknown ? 'unknown' : 'openai' };
-      });
+      return new Map(codes.map((c) => [c, byCode.get(c) as AIItem]));
     } catch (e) {
-      // API error, invalid JSON or missing codes: retry once, then fall back to unknown
+      // API error, invalid JSON or missing codes: retry once, then fall back
       console.warn(`OpenAI attempt ${attempt + 1} failed: ${(e as Error).message.slice(0, 200)}`);
     }
   }
-  return codes.map(unknownCode);
+  return null;
+}
+
+/** Table/AI meaning + AI price for one code; fixed bands only when the model gave no usable price. */
+function merge(code: string, table: DecodedCode | undefined, a: AIItem | undefined): DecodedCode {
+  let d: DecodedCode;
+  if (table) d = { ...table };
+  else if (a) {
+    const severity = SEVERITIES.includes(a.severity) ? a.severity : 'unknown';
+    const desc = typeof a.description === 'string' && a.description.trim() ? a.description.trim() : 'unknown';
+    const [lo, hi] = CONFIG.costBySeverity[severity];
+    d = { code, description: desc, system: SYSTEMS.includes(a.system) ? a.system : 'unknown', severity,
+      cost_low: lo, cost_high: hi, source: desc.toLowerCase() === 'unknown' ? 'unknown' : 'openai', cost_source: 'severity_fallback' };
+  } else d = unknownCode(code);
+  const lo = Number(a?.cost_low), hi = Number(a?.cost_high);
+  if (a && a.cost_low != null && a.cost_high != null && lo > 0 && hi >= lo && d.source !== 'unknown') {
+    Object.assign(d, { cost_low: Math.round(lo), cost_high: Math.round(hi), cost_source: 'openai_estimate', repair: a.repair?.trim() || null });
+  }
+  return d;
 }
 
 function triage(valid: DecodedCode[], title: TitleStatus): { triage: DecodeResult['triage']; reason: string } {
@@ -168,15 +200,14 @@ export async function decodeScan(vin: string, rawCodes: string[], title: TitleSt
     decodeVin(vin), valid.length ? lookupTable(valid) : new Map(), lookupRegistry(vin),
   ]);
   if (registered) title = registered.title_status;
-  // Not in the table (includes every manufacturer-specific code, 2nd char "1") -> OpenAI.
-  const missing = valid.filter((c) => !table.has(c));
-  const fromAI = new Map((await askOpenAI(missing, vehicle)).map((d) => [d.code, d]));
+  // OpenAI explains codes the table lacks (every manufacturer-specific code, 2nd char "1") and prices them all.
+  const fromAI = await askOpenAI(valid, vehicle, table);
 
-  // A real quote for this car (registry) replaces the estimated cost; meaning and severity stay.
+  // A real quote for this car (registry) replaces the estimate; meaning and severity stay.
   const quotes = registered?.code_quotes ?? {};
   const decoded = valid.map((c) => {
-    const d = table.get(c) ?? fromAI.get(c)!, q = quotes[c];
-    return q ? { ...d, cost_low: q.low, cost_high: q.high, source: 'quote' as const, quote_note: q.note ?? null } : d;
+    const d = merge(c, table.get(c), fromAI?.get(c)), q = quotes[c];
+    return q ? { ...d, cost_low: q.low, cost_high: q.high, cost_source: 'quote' as const, quote_note: q.note ?? null } : d;
   });
   const rank = (s: string) => SEVERITIES.indexOf(s);
   const worst = decoded.reduce((w, c) => (rank(c.severity) > rank(w) ? c.severity : w), decoded.length ? 'unknown' : 'none');
@@ -187,7 +218,7 @@ export async function decodeScan(vin: string, rawCodes: string[], title: TitleSt
     title_source: registered ? { from: 'registry', source: registered.source, title_state: registered.title_state } : { from: 'seller' },
     codes: [
       ...decoded,
-      ...invalid.map((code) => ({ code, description: 'invalid code format', system: 'unknown', severity: 'unknown', cost_low: 0, cost_high: 0, source: 'invalid' as const })),
+      ...invalid.map((code) => ({ code, description: 'invalid code format', system: 'unknown', severity: 'unknown', cost_low: 0, cost_high: 0, source: 'invalid' as const, cost_source: 'none' as const })),
     ],
     summary: {
       count: decoded.length,

@@ -21,7 +21,7 @@ const num = (f: string) => Number(f.match(/(\d+)\.\w+$/)?.[1] ?? 0);
 const jpeg = (args: string[]) => 'data:image/jpeg;base64,' + execFileSync('convert', args).toString('base64');
 const resized = (p: string, side: number, q: number) => jpeg([p, '-auto-orient', '-resize', `${side}x${side}>`, '-quality', String(q), 'jpg:-']);
 const size = (p: string) => execFileSync('identify', ['-format', '%w %h', p]).toString().split(' ').map(Number);
-// Stage-1 image: 768 px with the labelled 4x4 grid (columns A-D, rows 1-4), same as drawGrid() in public/index.html.
+// Stage-1 image: 768 px with the labelled 4x4 grid (columns A-D, rows 1-4), same as drawGrid() in public/app.js.
 function gridded(p: string) {
   const [W, H] = size(p), k = Math.min(1, 768 / Math.max(W, H)), w = Math.round(W * k), h = Math.round(H * k);
   const draw: string[] = [];

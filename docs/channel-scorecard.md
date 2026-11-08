@@ -44,8 +44,8 @@ The scorecard is the quick, readable version: every point comes with a reason.
 | | flood or fire suspected | | +8 |
 | | each critical fault code | | +3 |
 | | 5+ parts not visible | | +2 |
-| **Market fit** | 5+ public listings of this year/make/model in the state | +6 | |
-| | 1–4 listings | +2 | |
+| **Market fit** | this year/make/model listed on 2+ different public sites in the state (e.g. CarGurus, Cars.com) | +6 | |
+| | listed on 1 site: thin dealer market | +2 | |
 | | no listings: no local dealer market | | +6 |
 | | over 15 years old or over 200,000 miles | | +4 |
 
@@ -74,7 +74,9 @@ Anything that can't be scored scores 0 and is listed in `missing`: no title, "no
 
 1. Decodes the VIN with NHTSA vPIC (`decodeVin()` in `api/decode-codes.ts`).
 2. Runs one Firecrawl search: `"<year> <make> <model> used for sale <State>"`.
-3. Counts results whose title or snippet names the make and model, and collects `$` prices from the snippets.
+3. Keeps results whose title or snippet names the make and model, and counts the **different sites** among them.
+   - Results are mostly search pages ("Used Mazda3 for sale in New York"), each covering many cars, so the count of results means little; the number of sites carrying the model is what's scored.
+   - Prices: `$` amounts from the snippets, keeping only $1,500–300,000, then dropping any more than 3× from the median. With fewer than 2 left there is no price range; this drops text like "$500 below market".
 
 ACV, Copart and IAAI sites are excluded from the query and dropped from the results. The search covers **public listings only**, never auction platforms' data. Results are cached per model and state for an hour on a warm function.
 
@@ -84,10 +86,11 @@ ACV, Copart and IAAI sites are excluded from the query and dropped from the resu
   "vehicle": { "year": "string | null", "make": "string | null", "model": "string | null" },
   "state": "string | null",
   "query": "string | null",
-  "listings": "int",
+  "listings": "int (matching search results, mostly search pages)",
+  "sites": ["string (different listing sites, e.g. cargurus.com; this is what's scored)"],
   "price_low": "int | null",
   "price_high": "int | null",
-  "sample": [{ "title": "string", "url": "string" }],
+  "sample": [{ "title": "string", "url": "string (one per site, up to 5)" }],
   "age_years": "int | null",
   "mileage": "int | null",
   "source": "firecrawl",

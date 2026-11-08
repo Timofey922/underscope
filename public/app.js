@@ -20,6 +20,7 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&l
 const money = (n) => (n < 0 ? '−$' : '$') + Math.abs(Math.round(n)).toLocaleString('en-US');
 const label = (s) => s.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
 const reduceMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+const ic = (n) => `<svg class="ic" aria-hidden="true"><use href="#i-${n}"></use></svg>`; // icon from the sprite in index.html
 const post = (url, body) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('show'), 1800); }
 
@@ -224,6 +225,51 @@ async function checkRegistry(vin) {
   } catch { showRegistry(null); return null; }
 }
 
+// ---------- Step-by-step intake ----------
+// One box: Vehicle -> Photos -> Trouble codes -> Market values -> Run check. Navigation only; every field
+// stays in the one form, so a run (button, Enter on the last step, deep link, sample) submits all of it.
+const panels = [...document.querySelectorAll('.step-panel')];
+const stepBtns = [...document.querySelectorAll('.stepper [data-step]')];
+let step = 0, reached = 0;
+function flagBadVin(vin) {
+  const hint = $('vin-hint'); hint.classList.add('bad');
+  hint.textContent = /[IOQ]/.test(vin) ? 'VINs never use I, O or Q. Check for a 1 or a 0.' : `${vin.length} characters; a VIN has 17.`;
+}
+function showStep(n, focus = false) {
+  step = Math.max(0, Math.min(panels.length - 1, n)); reached = Math.max(reached, step);
+  panels.forEach((p, i) => { p.hidden = i !== step; });
+  stepBtns.forEach((b, i) => {
+    b.classList.toggle('done', i < reached && i !== step);
+    if (i === step) b.setAttribute('aria-current', 'step'); else b.removeAttribute('aria-current');
+  });
+  document.querySelector('.stepper').style.setProperty('--progress', (step + 1) / panels.length);
+  const last = step === panels.length - 1;
+  $('back').hidden = step === 0; $('next').hidden = last; $('go').hidden = !last;
+  if (focus) (step === 0 ? $('vin') : panels[step].querySelector('h2')).focus({ preventScroll: true });
+}
+function goTo(n) {
+  const vin = $('vin').value.trim();
+  if (n > 0 && !VIN_RE.test(vin)) { flagBadVin(vin); showStep(0); $('vin').focus(); return; } // a VIN first
+  const box = document.querySelector('.intake');
+  box.classList.add('animate'); box.classList.toggle('back', n < step); // direction of the slide
+  showStep(n, true);
+}
+$('next').addEventListener('click', () => goTo(step + 1));
+$('back').addEventListener('click', () => goTo(step - 1));
+stepBtns.forEach((b) => b.addEventListener('click', () => goTo(Number(b.dataset.step))));
+// Enter moves to the next step until the last one (a tag field with text still adds its tag).
+$('form').addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' || step === panels.length - 1 || e.target.tagName !== 'INPUT') return;
+  if (e.target.closest('.tags') && e.target.value.trim()) return;
+  e.preventDefault(); e.stopPropagation(); goTo(step + 1);
+}, true);
+// Any run shows the step that needs attention, or the last step (where the button shows progress).
+$('form').addEventListener('submit', () => {
+  showStep(!VIN_RE.test($('vin').value.trim()) ? 0 : photoBytes() > MAX_BYTES ? 1 : panels.length - 1);
+}, true);
+$('clear').addEventListener('click', () => { reached = 0; showStep(0); }); // before the reset below, so the VIN can take focus
+showStep(0);
+
 // ---------- Samples ----------
 function loadSample(v) {
   $('vin').value = v.vin; $('vin').dispatchEvent(new Event('input'));
@@ -260,11 +306,7 @@ $('form').addEventListener('submit', async (e) => {
   e.preventDefault();
   codes.flush(); comps.flush();
   const vin = $('vin').value.trim();
-  if (!VIN_RE.test(vin)) {
-    const hint = $('vin-hint'); hint.classList.add('bad');
-    hint.textContent = /[IOQ]/.test(vin) ? 'VINs never use I, O or Q. Check for a 1 or a 0.' : `${vin.length} characters; a VIN has 17.`;
-    $('vin').focus(); return;
-  }
+  if (!VIN_RE.test(vin)) { flagBadVin(vin); $('vin').focus(); return; }
   if (photoBytes() > MAX_BYTES) { $('drop').scrollIntoView({ block: 'center' }); return; }
   $('go').disabled = true; $('go').textContent = photos.length ? 'Sorting photos…' : 'Running…';
   try {
@@ -362,10 +404,10 @@ function routeHero(first) {
 function routeExits() {
   const r = state.route;
   if (!r) return '';
-  if (r.error) return `<div class="sec"><p class="notice">The routing engine isn't available right now (${esc(r.error)}). The repair-or-sell analysis below still works.</p></div>`;
+  if (r.error) return `<div class="sec sec-full"><p class="notice">The routing engine isn't available right now (${esc(r.error)}). The repair-or-sell analysis below still works.</p></div>`;
   const rows = r.options.map((o, i) => `<tr${i === 0 ? ' class="total"' : ''}><td>${esc(cap(o.label))}</td><td><span class="badge ${DEST_CLASS[o.destination] || ''}">${esc(o.destination)}</span></td><td class="amt">${money(o.p10)} to ${money(o.p90)}</td><td class="amt">${money(o.expected)}</td></tr>`).join('');
   return `<div class="sec route">
-    <h3>All four exits</h3>
+    <h3>${ic('route')}All four exits</h3>
     <p class="tab-note">Net proceeds over 1,000 simulated outcomes, using the repair estimate below. ${esc(r.answer || '')}</p>
     <table class="lines"><tbody><tr><td><b>Exit</b></td><td><b>Goes to</b></td><td class="amt"><b>Middle 80%</b></td><td class="amt"><b>Expected net</b></td></tr>${rows}</tbody></table>
     ${r.flip_conditions && r.flip_conditions.length ? `<p class="tab-note" style="margin-top:12px"><b>What would change the answer:</b> ${esc(r.flip_conditions.join(' '))}</p>` : ''}
@@ -390,7 +432,7 @@ function scorecardBlock(d) {
       ? `<p class="tab-note"><b>Agrees with the engine</b> (${esc(eng)}).</p>`
       : `<p class="notice">The points favor ${esc(CH_LABEL[s.winner])} but the engine, which prices every exit, says ${esc(eng)}. Look at the categories below for the reason.</p>`;
   return `<div class="sec scorecard">
-    <h3>Points check: <span class="dest">${esc(CH_LABEL[s.winner])}</span></h3>${agree}
+    <h3>${ic('scale')}Points check: <span class="dest">${esc(CH_LABEL[s.winner])}</span></h3>${agree}
     <div class="totals"><div class="tot${s.winner === 'acv' ? ' win' : ''}">ACV<b>${s.acv}</b></div><div class="tot${s.winner === 'copart' ? ' win' : ''}">Copart<b>${s.copart}</b></div></div>
     <p class="tab-note">${s.forced ? esc(s.forced) + ' ' : ''}Each finding adds points to the channel it favors; ${s.margin < 5 && !s.forced ? 'the totals are within 5 points, so it\'s too close to call' : 'the higher total wins'}.${s.missing.length ? ` Not scored yet: ${esc(s.missing.join(', '))}.` : ''}</p>
     <table class="lines"><tbody><tr><td><b>Finding</b></td><td class="pts"><b>ACV</b></td><td class="pts"><b>Copart</b></td></tr>${rows}
@@ -583,19 +625,20 @@ function render(d, first) {
   const out = $('result');
   const report = buildReport(d);
   out.hidden = false;
+  out.classList.toggle('reveal', !!first); // cards rise in on a new result, not on reviewer edits
   const y = window.scrollY;
   const engine = state.codes.vehicle.engine ? `<span class="vin-code">${esc(state.codes.vehicle.engine)}</span>` : '';
   out.innerHTML = `
-    <div class="vehbar"><h2>${esc(vehicleName())}</h2><span class="vin-code">${esc(state.vin)}</span>${engine}${titleBadge()}<span class="spacer"></span>
-      <button class="btn btn-ghost btn-sm" type="button" data-copy>Copy link</button>
-      <button class="btn btn-ghost btn-sm" type="button" data-download>Download JSON</button></div>
+    <div class="vehbar"><div class="veh-id"><h2>${esc(vehicleName())}</h2><div class="veh-meta"><span class="vin-code">${esc(state.vin)}</span>${engine}${titleBadge()}</div></div>
+      <div class="veh-actions"><button class="btn btn-ghost btn-sm" type="button" data-copy>${ic('link')}Copy link</button>
+      <button class="btn btn-ghost btn-sm" type="button" data-download>${ic('download')}Download JSON</button></div></div>
     ${state.route && !state.route.error
-      ? `${routeHero(first)}${routeExits()}${scorecardBlock(d)}<div class="sec"><h3>Repair or sell as-is?</h3>${recBlock(d, false, true)}${rangesBlock(d)}</div>`
+      ? `${routeHero(first)}${routeExits()}<div class="sec sec-decide"><h3>${ic('wrench')}Repair or sell as-is?</h3>${recBlock(d, false, true)}${rangesBlock(d)}</div>${scorecardBlock(d)}`
       : `${recBlock(d, first)}${rangesBlock(d)}${routeExits()}${scorecardBlock(d)}`}
-    <div class="sec"><h3>Where the numbers come from</h3>${repairTab(d)}</div>
-    <div class="sec"><h3>Condition</h3>${conditionTab()}</div>
-    <div class="sec"><h3>Fault codes</h3>${codesTab()}</div>
-    <div class="sec"><details><summary style="cursor:pointer;color:var(--orange);font-weight:500;font-size:14px">API response (same as Download JSON)</summary><pre style="margin-top:10px">${esc(JSON.stringify(report, null, 2))}</pre></details></div>`;
+    <div class="sec sec-repair"><h3>${ic('receipt')}Where the numbers come from</h3>${repairTab(d)}</div>
+    <div class="sec sec-condition"><h3>${ic('clipboard')}Condition</h3>${conditionTab()}</div>
+    <div class="sec sec-codes"><h3>${ic('gauge')}Fault codes</h3>${codesTab()}</div>
+    <div class="sec sec-api"><details><summary style="cursor:pointer;color:var(--orange);font-weight:500;font-size:14px">${ic('code')}API response (same as Download JSON)</summary><pre style="margin-top:10px">${esc(JSON.stringify(report, null, 2))}</pre></details></div>`;
   out.querySelector('[data-download]').onclick = () => downloadJson(report);
   if (first) {
     history.replaceState(null, '', shareUrl().replace(location.origin, ''));

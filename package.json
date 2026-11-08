@@ -6,6 +6,7 @@
     "dev": "tsx watch --clear-screen=false scripts/dev-server.ts",
     "test:photos": "tsx scripts/test-grade-photos.ts",
     "check:parts": "tsx scripts/check-part-prices.ts",
+    "review:labels": "tsx scripts/review-labels.ts",
     "seed:codes": "tsx scripts/seed-dtc-codes.ts",
     "seed:demo": "tsx scripts/seed-demo-scans.ts",
     "test:codes": "tsx scripts/test-decode-codes.ts",

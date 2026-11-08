@@ -108,7 +108,18 @@ const photoBytes = () => photos.reduce((n, p) => n + p.dataUrl.length, 0);
 // damage, the VIN label and the odometer as grid cells; stage 2 (/api/grade-photos) grades the photos plus
 // full-resolution close-ups of those boxes.
 const REQUEST_BUDGET = 4_300_000; // photos + close-ups, under Vercel's ~4.5 MB request limit
-const CROP_SIDE = 768, CROP_PAD = 0.15, MAX_CROPS = 10;
+const CROP_SIDE = 768, CROP_PAD = 0.15, MAX_CROPS = 16;
+
+// Labels and the odometer first (they need the pixels most), then damage boxes one photo at a time, so a photo with
+// many boxes can't use up the crops (or the upload budget) before the other photos get any.
+function pickRegions(stage1Photos, max) {
+  const all = stage1Photos.flatMap((p) => p.regions.map((r) => ({ photo: p.photo, ...r })));
+  const labels = all.filter((r) => r.kind !== 'damage').sort((a, b) => (a.kind === 'vin_label' ? 0 : 1) - (b.kind === 'vin_label' ? 0 : 1));
+  const byPhoto = stage1Photos.map((p) => all.filter((r) => r.kind === 'damage' && r.photo === p.photo));
+  const damage = [];
+  for (let i = 0; byPhoto.some((l) => i < l.length); i++) byPhoto.forEach((l) => { if (l[i]) damage.push(l[i]); });
+  return [...labels, ...damage].slice(0, max);
+}
 
 // Stage 1 image: 768 px with a labelled 4x4 grid (columns A-D left to right, rows 1-4 top to bottom).
 async function drawGrid(file) {
@@ -147,14 +158,12 @@ async function gradePhotoFlow(vin, status) {
   const stage1 = await s1.json().catch(() => null);
   if (!s1.ok || !stage1 || !Array.isArray(stage1.photos)) throw new Error((stage1 && stage1.error) || `Photo sorting answered ${s1.status}.`);
   status('Cutting close-ups…');
-  const rank = (k) => (k === 'vin_label' ? 0 : k === 'odometer' ? 1 : 2); // labels need the pixels most
-  const regions = stage1.photos.flatMap((p) => p.regions.map((r) => ({ photo: p.photo, ...r })))
-    .sort((a, b) => rank(a.kind) - rank(b.kind)).slice(0, MAX_CROPS);
+  const regions = pickRegions(stage1.photos, MAX_CROPS);
   const crops = [];
   let bytes = photoBytes();
   for (const r of regions) {
     const image = await cropFrom(photos[r.photo - 1].file, r.box);
-    if (bytes + image.length > REQUEST_BUDGET) break;
+    if (bytes + image.length > REQUEST_BUDGET) continue; // a smaller crop further down may still fit
     bytes += image.length;
     crops.push({ photo: r.photo, kind: r.kind, part: r.part, note: r.note, image });
   }

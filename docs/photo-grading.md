@@ -5,14 +5,19 @@ How Underscope turns photos of a damaged vehicle into part grades, a list of pro
 ```
 photos (page)
   │
-  ├─ 1. /api/classify-photos   gpt-4o-mini (OPENAI_CLASSIFY_MODEL)
+  ├─ 1. /api/classify-photos   gpt-4o (OPENAI_CLASSIFY_MODEL)
   │      768 px photos with a labelled 4x4 grid
-  │      → which view each photo is (front-left, rear, interior...), boxes around damage, VIN label, odometer
+  │      → which view each photo is (front-left, rear, interior...), boxes around anything that might be damage,
+  │        the VIN label and the odometer (up to 4 per photo)
   │
-  ├─ page cuts close-up crops out of the full-resolution photos around those boxes (up to 10)
+  ├─ page cuts close-up crops out of the full-resolution photos around those boxes
+  │      (up to 16, one photo at a time, within the 4.3 MB request budget)
   │
-  ├─ 2. /api/grade-photos      gpt-4o for testing, gpt-5.5 later (OPENAI_MODEL)
+  ├─ 2. /api/grade-photos      gpt-5.5 (OPENAI_MODEL)
   │      1000 px photos + views + crops
+  │      a. two grading passes at once (the second sees the photos in reverse order); keep the worse grade per part
+  │      b. damage seen only in photos of the other side moves to the mirror-image part
+  │      c. second look at fine parts next to damage, with the photos that show the damage
   │      → 25 part grades, every problem with its severity, flags, vehicle, VIN, odometer
   │      → repair_estimate: replaced parts priced from eBay for the vehicle seen, the rest from data/repair_costs.csv
   │
@@ -25,11 +30,17 @@ photos (page)
 
 ## Why two stages
 
-Stage 1 uses a cheap model for the easy, mechanical jobs:
+Stage 1 uses a fast model for the easy, mechanical jobs:
 - **Sort the photos.** It answers simple picture questions: what is at the left and right edge of the picture, and is the front end on the image's left, center or right. Code (`viewFrom()` in `api/classify-photos.ts`) turns those answers into the vehicle's side. Small models mix up the picture's left with the vehicle's left when asked directly; they get the picture questions right.
-- **Point at things worth a closer look.** It names grid cells (A1 to D4) around damage, the VIN label and the odometer. The page cuts those areas out of the original photo at full resolution, so stage 2 sees small dents and label text in detail even though the full photos are downscaled.
+- **Point at things worth a closer look.** It names grid cells (A1 to D4) around anything that might be damage, the VIN label and the odometer. The page cuts those areas out of the original photo at full resolution, so stage 2 sees small dents and label text in detail even though the full photos are downscaled. It is told to mark doubtful spots too, because stage 2 throws out false alarms but rarely finds damage nobody pointed at. On the 26 test cars the boxes covered 12% of the hand-labeled damage with the old prompt on gpt-4o-mini, 24% with the new prompt, and 35% on gpt-4o (which was also faster, about 12 s a car).
 
-Stage 2 does the grading with the photos, the views from stage 1 and the crops. Crops are hints: a crop with no real damage is treated as a false alarm.
+Stage 2 does the grading with the photos, the views from stage 1 and the crops. Crops are hints: a crop with no real damage is treated as a false alarm. Around the grading call, `gradePhotos()` adds three checks (all in `GRADE_CONFIG`):
+
+- **Grade twice, keep the worse** (`passes: 2`). Two calls run at the same time, the second with photos and crops in reverse order (each keeps its number). Per part the worse grade wins (replace > repairable > fine > unknown), with that pass's evidence and damages; flags take true over unknown over false. A missed dent costs more than an extra "repairable". Same wait as one call, twice the cost.
+- **Right side** (`fixSides()`). Fenders, doors, quarter panels and mirrors only show from their own side. If every side view that shows a part's damage is a view of the other side (stage 1's view per photo; three-quarter views count only for doors), the damage moves to the mirror-image part, and the part itself becomes fine (or unknown when no photo shows its side). Each move is listed in `meta.side_fixes`.
+- **Second look next to damage** (`recheck`). Fine parts next to a damaged part (bumper next to fender, headlight, hood...) get one more call with the photos and crops that show the damage, asking about those parts only. A part is raised to repairable or replace only when the answer names a photo that shows it; nothing is lowered. Skipped when the passes took over 35 s (`recheckAfterS`), so stage 2 stays under Vercel's 60 s. Listed in `meta.recheck`.
+
+The grade rules (`GRADE_RULES`) are shared by the passes and the second look. They include fixed rules for glass, lights, mirrors, wheels and tires (any crack in a windshield or lens, a hanging or broken mirror, a flat tire or bent wheel means replace), the parts most often missed in testing.
 
 Copart photos come in a fixed order (1 front-left, 2 rear-left, 3 rear-right, 4 front-right, 5 front, 6 rear, then interior, dashboard, engine, labels), but nothing relies on that order, so seller photos in any order work.
 
@@ -142,14 +153,14 @@ Prices in `part_grades` and `repair_estimate` come from `/api/decide`, so they f
 | Env var | Used for | Now |
 |---|---|---|
 | `OPENAI_API_KEY` | both stages | server only, never in code |
-| `OPENAI_CLASSIFY_MODEL` | stage 1 | `gpt-4o-mini` (default) |
-| `OPENAI_MODEL` | stage 2 | `gpt-4o` while testing; `gpt-5.5` once testing is done |
+| `OPENAI_CLASSIFY_MODEL` | stage 1 | `gpt-4o` (default); set it to `gpt-4o` or remove it where it still says `gpt-4o-mini` |
+| `OPENAI_MODEL` | stage 2 | `gpt-5.5` |
 | `EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET` | eBay parts prices (`/api/decide`, `/api/grade-photos`) | production keyset, server only; without them parts use the table |
 | `FIRECRAWL_API_KEY` | `npm run check:parts` dealer prices (and market fit) | server only |
 
-Stage 2 switches automatically between models: gpt-5.x and o-series models get `reasoning_effort: low`, gpt-4o gets `temperature: 0`.
+Both stages switch automatically between models: gpt-5.x and o-series models get `reasoning_effort: low`, gpt-4o gets `temperature: 0`.
 
-Tuning knobs: `CLASSIFY_CONFIG` in `api/classify-photos.ts`, `GRADE_CONFIG` in `api/grade-photos.ts` (max photos, max crops, image detail), and in `public/app.js` `MAX_CROPS` and `REQUEST_BUDGET` (4.3 MB, the page shrinks images to stay under Vercel's limit).
+Tuning knobs: `CLASSIFY_CONFIG` in `api/classify-photos.ts` (model, boxes per photo), `GRADE_CONFIG` in `api/grade-photos.ts` (max photos, max crops, image detail, passes, second look and its time budget), and in `public/app.js` `MAX_CROPS` and `REQUEST_BUDGET` (4.3 MB, the page skips crops that would go over Vercel's limit).
 
 ## Testing
 
@@ -165,18 +176,31 @@ npm run test:photos -- 46404106 67524236
 
 `test_vehicles/` (Copart photos, results and hand-made ground truth) is kept out of git: the photos are only for testing and contain real VINs.
 
-### Results on 24 Copart lots (vs hand-checked ground truth)
+### Results on 26 Copart lots (Nov 8, against the hand labels in `truth.json`)
 
-| Setup | Parts graded right | Damage found (recall) | Damage flags correct (precision) | Wrong side (of 40 one-sided damages) | Time per vehicle |
-|---|---|---|---|---|---|
-| gpt-5.5 alone, best prompt | ~92% | ~82% | ~89% | 0 | ~22 s |
-| gpt-4o alone | ~83.5% | ~67% | ~74% | 7–8 | ~10 s |
-| gpt-4o-mini → gpt-4o (now) | ~86% | ~66% | ~83% | 7–8 | ~27 s |
+| Setup | Parts graded right | Damage found (recall) | Flagged damage that is real (precision) | Expensive misses (label replace, model fine) | Wrong side | Stage 1 + stage 2 time |
+|---|---|---|---|---|---|---|
+| gpt-4o-mini → gpt-4o, old flow | 86.0% | 67.4% | 82.1% | 10 | 7 | ~27 s in all |
+| gpt-4o-mini → gpt-5.5, old flow | 88.2% | 76.0% | 79.7% | 9 | 5 | 15 + 24 s (max 37 / 33) |
+| gpt-4o → gpt-5.5, new close-ups and rules, one pass | 91.6% | 82.2% | 86.2% | 4 | 1 | |
+| + grade twice, keep the worse | 91.6% | 88.4% | 83.2% | 3 | 1 | |
+| + second look next to damage (**now**) | 91.6% | 89.9% | 82.3% | 2 | 1 | 9 + 34 s (max 12 / 45) |
 
-gpt-4o reads VINs, odometers and make/model about as well as gpt-5.5, but misses about a third of the damage, mostly small dents and scratches, and gets the side wrong more often. gpt-5.5 is the target once the flow is settled.
+The one-pass, two-pass and second-look rows come from the same run (`meta.passes` keeps each pass's grades). Most parts are fine, so "parts graded right" runs high; quote recall and expensive misses. Grading twice trades about 3 points of precision for 6 of recall; the second look raised 4 parts, 2 of them matching the labels. The side fix moved nothing on these cars: with gpt-4o's views and the new close-ups only one wrong-side case was left, and there the view itself points to the side the model chose (see the label review).
+
+Earlier, on 24 lots (Karthik's hand-checked run, different labels): gpt-5.5 alone with the best prompt ~92% right, ~82% recall, ~89% precision, 0 wrong side; gpt-4o alone ~83.5% / ~67% / ~74%.
+
+### Checking the labels
+
+```bash
+npm run review:labels -- base55.json v2.json
+```
+
+Writes `test_vehicles/LABEL_REVIEW.md`: every part where a hand label and a model run disagree, what the model saw and which photos to look at. A `review.json` per vehicle adds a blind second look (someone grading the same photos without seeing the label or the model). The script never changes `truth.json`; fix a label only when the photos clearly show it is wrong.
 
 ## Known limits
 
 - Dents and scratches are the weak spot, especially for gpt-4o. Broken glass, missing bumpers, crushed corners and flat tires are reliable.
+- Stage 2 now takes 25–45 s for 12–14 photos (two passes plus the second look). With many more photos the second look is skipped to stay under 60 s; set `passes: 1` in `GRADE_CONFIG` if time matters more than recall.
 - Frame, mechanical, flood and underbody damage can't be seen in normal photos; those come back `unknown` and widen the repair band instead of being guessed.
 - Replaced parts are eBay asking prices for the exact vehicle when there are enough listings; labor, paint, repairs, hidden front-end damage and anything eBay can't price come from a generic table. None of it is a shop quote.

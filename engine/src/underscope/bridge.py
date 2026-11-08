@@ -112,6 +112,19 @@ def to_engine(payload: dict[str, Any]) -> tuple[VehicleRecord, list[DamageFindin
         mech = (lo * 100, hi * 100)
         notes.append(f"{len(codes)} fault code(s) add ${lo:,} to ${hi:,} of mechanical repair.")
 
+    # One repair cost: when the app sends its repair estimate (parts table + fault codes,
+    # widened for unknowns), the engine uses it instead of its placeholder panel costs.
+    repair = payload.get("repair") or {}
+    override = None
+    if repair.get("high") is not None and repair.get("low") is not None:
+        lo, hi = sorted((int(repair["low"]), int(repair["high"])))
+        ex = int(repair.get("expected") or (lo + hi) // 2)
+        override = (lo * 100, min(max(ex, lo), hi) * 100, hi * 100)
+        mech = None  # fault codes are already inside the app's estimate
+        notes = [n for n in notes if "of mechanical repair" not in n]
+        notes.append(f"Repair estimate ${lo:,} to ${hi:,} taken from the app (parts, labor, "
+                     "fault codes, allowance for unknowns); engine placeholder costs not used.")
+
     clean = values.get("clean_wholesale")
     comps = [int(x) for x in values.get("salvage_comps") or [] if int(x) > 0]
     if not clean:
@@ -130,6 +143,7 @@ def to_engine(payload: dict[str, Any]) -> tuple[VehicleRecord, list[DamageFindin
         clean_value_cents=int(clean) * 100 if clean else None,
         salvage_comps_cents=[c * 100 for c in comps] or None,
         mechanical_repair_cents=mech,
+        repair_override_cents=override,
     )
     return vehicle, findings, notes
 
@@ -138,22 +152,32 @@ def route(payload: dict[str, Any]) -> dict[str, Any]:
     """Run the engine on an app payload and say where the car should go."""
     vehicle, findings, notes = to_engine(payload)
     rec = evaluate(vehicle, findings)
+    options = list(rec.options)
+    if payload.get("title_status") == "non_repairable":
+        # A non-repairable title can't be repaired and registered or sold to dealers as a road
+        # car: only salvage buyers and dismantlers. The engine has no such title, so filter.
+        options = [o for o in options if o.path in (Path.COPART_SALVAGE, Path.PART_OUT)]
+        notes.append("Non-repairable title: ACV exits removed (can't be repaired and resold).")
+    winner = options[0].path
     dollars = lambda c: round(c / 100)  # noqa: E731
+    filtered = winner != rec.winner or len(options) < len(rec.options)
+    answer = (f"Non-repairable title: only salvage and parts buyers can take it; "
+              f"{LABEL[winner]} nets the most." if filtered else rec.answer)  # fmt: skip
     return {
-        "destination": DESTINATION[rec.winner],
-        "winner": rec.winner.value,
-        "winner_label": LABEL[rec.winner],
-        "answer": rec.answer,
-        "explanation": rec.explanation,
-        "needs_human_review": rec.needs_human_review,
-        "review_reasons": rec.review_reasons,
+        "destination": DESTINATION[winner],
+        "winner": winner.value,
+        "winner_label": LABEL[winner],
+        "answer": answer,
+        "explanation": answer if filtered else rec.explanation,
+        "needs_human_review": rec.needs_human_review and not filtered,
+        "review_reasons": [] if filtered else rec.review_reasons,
         "total_loss_decides": rec.total_loss_decides,
-        "flip_conditions": rec.flip_conditions,
+        "flip_conditions": [] if filtered else rec.flip_conditions,
         "options": [{
             "path": o.path.value, "label": LABEL[o.path], "destination": DESTINATION[o.path],
             "expected": dollars(o.expected_cents), "p10": dollars(o.p10_cents),
             "p50": dollars(o.p50_cents), "p90": dollars(o.p90_cents),
-        } for o in rec.options],  # fmt: skip
+        } for o in options],  # fmt: skip
         "inputs": {"findings": len(findings), "title": vehicle.title_status.value,
                    "undercarriage_damage": vehicle.undercarriage_damage,
                    "engine_audio_abnormal": vehicle.engine_audio_abnormal},  # fmt: skip

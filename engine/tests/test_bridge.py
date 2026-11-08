@@ -88,3 +88,30 @@ def test_mechanical_repair_raises_the_repair_estimate():
 def test_bad_vin_is_rejected():
     with pytest.raises(ValueError, match="17 characters"):
         to_engine(payload(vin="SHORT"))
+
+
+def test_app_repair_estimate_replaces_engine_costs():
+    """One repair cost: the app's estimate (with codes and unknowns) is what the engine uses."""
+    codes = [{"code": "P0730", "system": "transmission", "severity": "major", "cost_low": 500,
+              "cost_high": 4500, "source": "generic_table"}]
+    p = payload({"hood": "replace"}, codes=codes, repair={"low": 1200, "high": 5200})
+    vehicle, _, notes = to_engine(p)
+    assert vehicle.repair_override_cents == (120_000, 320_000, 520_000)
+    assert vehicle.mechanical_repair_cents is None  # codes are inside the app's estimate
+    assert not any("of mechanical repair" in n for n in notes)
+    assert any("taken from the app" in n for n in notes)
+
+
+def test_app_repair_estimate_drives_the_decision():
+    cheap = route(payload({"hood": "replace"}, repair={"low": 300, "high": 600}))
+    dear = route(payload({"hood": "replace"}, repair={"low": 9000, "high": 14000}))
+    exp = lambda r: {o["path"]: o["expected"] for o in r["options"]}["repair_then_acv"]  # noqa: E731
+    assert exp(cheap) > exp(dear)
+    assert dear["destination"] != "ACV" or dear["winner"] != "repair_then_acv"
+
+
+def test_non_repairable_title_never_routes_to_acv():
+    out = route(payload({"left_front_door": "replace"}, title_status="non_repairable"))
+    assert {o["destination"] for o in out["options"]} <= {"Copart", "Parts buyer"}
+    assert out["destination"] in {"Copart", "Parts buyer"}
+    assert "Non-repairable" in out["answer"] and not out["flip_conditions"]

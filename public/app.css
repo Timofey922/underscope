@@ -256,3 +256,11 @@ footer { max-width: 880px; margin: 0 auto; padding: 8px 20px 28px; color: var(--
 .route h3 .dest-acv { background: var(--green); }
 .route h3 .dest-copart { background: var(--orange); }
 .route .lines td { vertical-align: middle; }
+.lamp.on-acv { background: var(--green); box-shadow: 0 0 0 5px rgba(30, 123, 70, .14); }
+.lamp.on-copart { background: var(--orange); box-shadow: 0 0 0 5px rgba(211, 67, 25, .16); }
+.rec.hero h3 { font-size: 30px; }
+.rec.compact { padding: 6px 0 0; grid-template-columns: auto 1fr; }
+.rec.compact .lamp { width: 30px; height: 30px; font-size: 15px; }
+.rec.compact h3 { font-size: 17px; margin: 4px 0 2px; }
+.rec.compact .why { font-size: 14px; }
+.sec .ranges { padding-left: 0; padding-right: 0; }

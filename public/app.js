@@ -304,29 +304,52 @@ async function recompute(first = false) {
     assumptions: readAssumptions(),
   };
   // The engine (engine/, via /api/route) decides where to send the car: ACV or Copart.
+  // One repair cost: the engine gets the same repair estimate the page shows (parts table,
+  // fault codes, allowance for unknowns), so the two never price the damage differently.
+  const d = await post('/api/decide', body).then((r) => r.json());
+  if (ticket !== pending) return;
   const routeBody = { vin: state.vin, vehicle: state.codes.vehicle, title_status: body.title_status,
-    grades: body.grades, flags: body.flags, codes: body.codes, values: body.values };
-  const [d, rt] = await Promise.all([
-    post('/api/decide', body).then((r) => r.json()),
-    post('/api/route', routeBody).then(async (r) => (r.ok ? r.json() : { error: (await r.json().catch(() => ({}))).error || `engine answered ${r.status}` }))
-      .catch((e) => ({ error: e.message })),
-  ]);
+    grades: body.grades, flags: body.flags, codes: body.codes, values: body.values,
+    repair: d.repair ? { low: d.repair.low, high: d.repair.high } : undefined };
+  const rt = await post('/api/route', routeBody)
+    .then(async (r) => (r.ok ? r.json() : { error: (await r.json().catch(() => ({}))).error || `engine answered ${r.status}` }))
+    .catch((e) => ({ error: e.message }));
   if (ticket !== pending) return;
   state.route = rt;
   render(d, first);
 }
 
+// The engine's routing is the headline: where to send the car.
 const DEST_CLASS = { ACV: 'ok', Copart: 'bad', 'Parts buyer': 'warn' };
-function routeBlock() {
+const DEST_LAMP = { ACV: ['on-acv', 'A'], Copart: ['on-copart', 'C'], 'Parts buyer': ['on-amber', 'P'] };
+const cap = (s) => s[0].toUpperCase() + s.slice(1);
+function routeHero(first) {
+  const r = state.route;
+  if (!r || r.error) return '';
+  const best = r.options[0], next = r.options[1];
+  const [lamp, glyph] = DEST_LAMP[r.destination] || ['', '?'];
+  const gap = best.expected - next.expected;
+  // Both top exits at ACV and nearly tied: the destination is clear, the repair choice isn't.
+  const acvTie = best.destination === 'ACV' && next.destination === 'ACV' && gap < Math.max(500, best.expected * 0.05);
+  const why = acvTie
+    ? `Repairing first and selling as-is come out within ${money(gap)} of each other (expected net about ${money(best.expected)}), so the destination is ACV either way. Use “Repair or sell as-is?” below to choose.`
+    : `<b>${esc(cap(r.winner_label))}.</b> Expected net ${money(best.expected)}, middle 80% ${money(best.p10)} to ${money(best.p90)}. Next best: ${esc(next.label)} (${esc(next.destination)}), ${money(gap)} behind.`;
+  return `<div class="rec hero"><div class="lamp ${lamp}${first ? ' ignite' : ''}" aria-hidden="true">${glyph}</div><div>
+    <h3>Send it to ${esc(r.destination)}</h3>
+    <p class="why">${why}</p>
+    ${r.needs_human_review && !acvTie ? `<p class="check"><b>Have a person review this one.</b> ${esc((r.review_reasons || []).join(' '))}</p>` : ''}
+  </div></div>`;
+}
+function routeExits() {
   const r = state.route;
   if (!r) return '';
-  if (r.error) return `<div class="sec"><h3>Where to send it</h3><p class="notice">The routing engine isn't available: ${esc(r.error)}</p></div>`;
-  const rows = r.options.map((o, i) => `<tr${i === 0 ? ' class="total"' : ''}><td>${esc(o.label[0].toUpperCase() + o.label.slice(1))}</td><td><span class="badge ${DEST_CLASS[o.destination] || ''}">${esc(o.destination)}</span></td><td class="amt">${money(o.p10)} to ${money(o.p90)}</td><td class="amt">${money(o.expected)}</td></tr>`).join('');
+  if (r.error) return `<div class="sec"><p class="notice">The routing engine isn't available right now (${esc(r.error)}). The repair-or-sell analysis below still works.</p></div>`;
+  const rows = r.options.map((o, i) => `<tr${i === 0 ? ' class="total"' : ''}><td>${esc(cap(o.label))}</td><td><span class="badge ${DEST_CLASS[o.destination] || ''}">${esc(o.destination)}</span></td><td class="amt">${money(o.p10)} to ${money(o.p90)}</td><td class="amt">${money(o.expected)}</td></tr>`).join('');
   return `<div class="sec route">
-    <h3>Where to send it: <span class="dest dest-${esc(r.destination.split(' ')[0].toLowerCase())}">${esc(r.destination)}</span></h3>
-    <p class="tab-note">${esc(r.answer || '')} The engine ranks four exits by net proceeds over 1,000 simulated outcomes.${r.needs_human_review ? ' <b>A human should review this one.</b>' : ''}</p>
+    <h3>All four exits</h3>
+    <p class="tab-note">Net proceeds over 1,000 simulated outcomes, using the repair estimate below. ${esc(r.answer || '')}</p>
     <table class="lines"><tbody><tr><td><b>Exit</b></td><td><b>Goes to</b></td><td class="amt"><b>Middle 80%</b></td><td class="amt"><b>Expected net</b></td></tr>${rows}</tbody></table>
-    ${r.flip_conditions && r.flip_conditions.length ? `<p class="tab-note" style="margin-top:12px"><b>What would flip it:</b> ${esc(r.flip_conditions.join(' '))}</p>` : ''}
+    ${r.flip_conditions && r.flip_conditions.length ? `<p class="tab-note" style="margin-top:12px"><b>What would change the answer:</b> ${esc(r.flip_conditions.join(' '))}</p>` : ''}
     <details style="margin-top:8px"><summary style="cursor:pointer;color:var(--steel);font-size:13px">How the engine read your inputs</summary><ul class="tab-note" style="margin:8px 0 0">${r.notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul></details>
   </div>`;
 }
@@ -376,7 +399,7 @@ function titleBadge() {
   return `<span class="badge ${cls}">${esc(TITLE_LABEL[t] || t)}${r.title_source && r.title_source.title_state ? ` (${esc(r.title_source.title_state)})` : ''}${esc(where)}</span>`;
 }
 
-function recBlock(d, first) {
+function recBlock(d, first, compact = false) {
   const pct = d.p_fix == null ? null : Math.round(d.p_fix * 100);
   const V = {
     fix: ['on-green', '✓', 'Fix it, then sell', pct === 100 ? 'Fixing came out ahead in all 1,000 simulated outcomes.' : `Fixing came out ahead in ${pct}% of 1,000 simulated outcomes.`],
@@ -385,7 +408,7 @@ function recBlock(d, first) {
     not_fixable: ['on-red', '!', 'Sell it as-is', 'A non-repairable title means it can\'t be registered again after repair.'],
   }[d.verdict] || ['', '–', 'Needs market values', `Add ${d.missing.join(' and ')} above.`];
   const check = d.check ? `<p class="check"><b>Check before deciding:</b> ${esc(d.check.label)}. If it comes back clean, fixing wins ${Math.round(d.check.p_fix_if_resolved * 100)}% of the time.</p>` : '';
-  return `<div class="rec"><div class="lamp ${V[0]}${first ? ' ignite' : ''}" aria-hidden="true">${V[1]}</div><div><h3>${esc(V[2])}</h3><p class="why">${esc(V[3])}</p>${check}</div></div>`;
+  return `<div class="rec${compact ? ' compact' : ''}"><div class="lamp ${V[0]}${first ? ' ignite' : ''}" aria-hidden="true">${V[1]}</div><div><h3>${esc(V[2])}</h3><p class="why">${esc(V[3])}</p>${check}</div></div>`;
 }
 
 function rangesBlock(d) {
@@ -503,7 +526,9 @@ function render(d, first) {
     <div class="vehbar"><h2>${esc(vehicleName())}</h2><span class="vin-code">${esc(state.vin)}</span>${engine}${titleBadge()}<span class="spacer"></span>
       <button class="btn btn-ghost btn-sm" type="button" data-copy>Copy link</button>
       <button class="btn btn-ghost btn-sm" type="button" data-download>Download JSON</button></div>
-    ${recBlock(d, first)}${rangesBlock(d)}${routeBlock()}
+    ${state.route && !state.route.error
+      ? `${routeHero(first)}${routeExits()}<div class="sec"><h3>Repair or sell as-is?</h3>${recBlock(d, false, true)}${rangesBlock(d)}</div>`
+      : `${recBlock(d, first)}${rangesBlock(d)}${routeExits()}`}
     <div class="sec"><h3>Where the numbers come from</h3>${repairTab(d)}</div>
     <div class="sec"><h3>Condition</h3>${conditionTab()}</div>
     <div class="sec"><h3>Fault codes</h3>${codesTab()}</div>

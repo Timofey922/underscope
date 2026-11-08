@@ -64,6 +64,11 @@ class VehicleRecord(BaseModel):
     # Optional mechanical repair range (low, high) in cents, e.g. from decoded OBD-II fault
     # codes; added to the body repair estimate from the damage findings.
     mechanical_repair_cents: tuple[int, int] | None = None
+    # Optional total repair estimate (low, expected, high) in cents from the caller, e.g. the
+    # web app's parts table plus fault codes, already widened for what photos can't show.
+    # When set it replaces the panel and mechanical estimates, and the hidden-damage reserve is
+    # skipped so unseen damage isn't counted twice.
+    repair_override_cents: tuple[int, int, int] | None = None
     # Optional findings supplied inline (used when no detector labels exist).
     findings: list[DamageFinding] = Field(default_factory=list)
 

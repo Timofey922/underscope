@@ -89,7 +89,9 @@ def value_vehicle(
     a = a or default_assumptions()
     clean = clean_value(vehicle, a)
     body = repair_cost(findings, a)
-    if vehicle.mechanical_repair_cents:
+    if vehicle.repair_override_cents:
+        body = Range(*sorted(vehicle.repair_override_cents))
+    elif vehicle.mechanical_repair_cents:
         lo, hi = sorted(vehicle.mechanical_repair_cents)
         body = Range(body.low + lo, body.expected + (lo + hi) // 2, body.high + hi)
     rep = Range(*(round(x * repair_cost_scale) for x in body))

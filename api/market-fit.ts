@@ -1,5 +1,5 @@
-// POST /api/market-fit  { vin, state, mileage? } -> how many public listings of the same year/make/model exist in that
-// state, for the "market fit" category of the ACV vs Copart scorecard (api/_lib/scorecard.ts).
+// POST /api/market-fit  { vin, state, mileage? } -> how many different public listing sites carry the same
+// year/make/model in that state, for the "market fit" category of the ACV vs Copart scorecard (api/_lib/scorecard.ts).
 // If dealers list this car in the state, it fits ACV's dealer market; if nobody does, it is more likely a Copart car.
 // Uses Firecrawl search (FIRECRAWL_API_KEY) over PUBLIC listings only: ACV and Copart sites are excluded from the
 // query and dropped from the results. Without a key or a state it answers { ran: false } and the category scores 0.
@@ -13,7 +13,9 @@ export const MARKET_CONFIG = {
   limit: 10,
   timeoutMs: 15000,
   excludedSites: ['acvauctions.com', 'acvmax.com', 'copart.com', 'iaai.com'],  // never use auction platforms' data
-  priceRange: [500, 300000] as [number, number],                              // ignore $ amounts outside this
+  priceRange: [1500, 300000] as [number, number],   // $ amounts outside this are not car prices ("$500 below market")
+  minPrices: 2,                                       // fewer usable prices than this -> no price range
+  outlierFactor: 3,                                   // drop prices more than 3x away from the median
 };
 
 export const STATES: Record<string, string> = {
@@ -32,8 +34,9 @@ export type MarketFitResult = {
   vehicle: { year: string | null; make: string | null; model: string | null };
   state: string | null;
   query: string | null;
-  listings: number;                       // results that name this make and model
-  price_low: number | null; price_high: number | null;   // $ amounts seen in those results
+  listings: number;                       // search results that name this make and model (mostly search pages, not cars)
+  sites: string[];                        // different listing sites among them: the number the scorecard uses
+  price_low: number | null; price_high: number | null;   // only when the snippets hold enough believable prices
   sample: { title: string; url: string }[];
   age_years: number | null;
   mileage: number | null;
@@ -66,7 +69,7 @@ export async function marketFit(vin: string, state: string | null, mileage: numb
   const vehicle = { year: v.year, make: v.make, model: v.model };
   const age = v.year ? new Date().getFullYear() - Number(v.year) : null;
   const out: MarketFitResult = {
-    ran: false, vehicle, state, query: null, listings: 0, price_low: null, price_high: null, sample: [],
+    ran: false, vehicle, state, query: null, listings: 0, sites: [], price_low: null, price_high: null, sample: [],
     age_years: age != null && age >= 0 ? age : null, mileage, source: 'firecrawl',
   };
   const key = process.env.FIRECRAWL_API_KEY;
@@ -85,13 +88,20 @@ export async function marketFit(vin: string, state: string | null, mileage: numb
       const text = `${h.title ?? ''} ${h.description ?? ''}`.toLowerCase();
       return need.every((w) => text.includes(w));
     });
-    const [lo, hi] = MARKET_CONFIG.priceRange;
-    const prices = relevant.flatMap((h) => [...`${h.title ?? ''} ${h.description ?? ''}`.matchAll(/\$\s?(\d{1,3}(?:,\d{3})+|\d{3,6})(?!\d)/g)]
-      .map((m) => Number(m[1].replace(/,/g, ''))).filter((n) => n >= lo && n <= hi));
+    const host = (u?: string) => { try { return new URL(u ?? '').hostname.replace(/^www\./, ''); } catch { return ''; } };
+    const sites = [...new Set(relevant.map((h) => host(h.url)).filter(Boolean))];
+    // Prices: keep plausible car prices, then drop outliers around the median; too few left -> no range.
+    const { priceRange: [lo, hi], minPrices, outlierFactor: k } = MARKET_CONFIG;
+    const raw = relevant.flatMap((h) => [...`${h.title ?? ''} ${h.description ?? ''}`.matchAll(/\$\s?(\d{1,3}(?:,\d{3})+|\d{3,6})(?!\d)/g)]
+      .map((m) => Number(m[1].replace(/,/g, ''))).filter((n) => n >= lo && n <= hi)).sort((a, b) => a - b);
+    const median = raw[Math.floor(raw.length / 2)];
+    const prices = raw.length >= minPrices ? raw.filter((n) => n >= median / k && n <= median * k) : [];
+    const ok = prices.length >= minPrices;
+    // One sample per site, so the list shows the spread of sites.
+    const sample = sites.slice(0, 5).map((s) => relevant.find((h) => host(h.url) === s)!).map((h) => ({ title: h.title ?? '', url: h.url ?? '' }));
     return {
-      ...out, ran: true, query, listings: relevant.length,
-      price_low: prices.length ? Math.min(...prices) : null, price_high: prices.length ? Math.max(...prices) : null,
-      sample: relevant.slice(0, 5).map((h) => ({ title: h.title ?? '', url: h.url ?? '' })),
+      ...out, ran: true, query, listings: relevant.length, sites,
+      price_low: ok ? prices[0] : null, price_high: ok ? prices[prices.length - 1] : null, sample,
     };
   } catch (e) {
     return { ...out, query, error: (e as Error).message.slice(0, 160) };
@@ -107,7 +117,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).json({
       endpoint: 'POST /api/market-fit',
       body: { vin: '17-character VIN', state: 'two-letter US state, e.g. NY', mileage: 'optional odometer reading' },
-      returns: 'ran, vehicle, state, query, listings, price_low, price_high, sample[], age_years, mileage, error?',
+      returns: 'ran, vehicle, state, query, listings, sites[], price_low, price_high, sample[], age_years, mileage, error?',
     });
   }
   if (req.method !== 'POST') return res.status(405).json({ error: 'Use POST' });

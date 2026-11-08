@@ -102,8 +102,13 @@ def value_vehicle(
     haircut = m["repaired_value_haircut_pct_at_total_damage"] / 100 * damage_score
     repaired = round(clean * (1 - haircut))
 
-    adj = 1 - m["salvage_damage_adjust_pct_per_unit_severity"] / 100 * damage_score
-    salvage = Range(*(round(clean * frac * adj) for frac in m["salvage_fraction_of_clean"]))
+    if vehicle.salvage_comps_cents:
+        # Real sold prices for comparable damaged vehicles beat the placeholder fraction.
+        comps = sorted(vehicle.salvage_comps_cents)
+        salvage = Range(comps[0], comps[len(comps) // 2], comps[-1])
+    else:
+        adj = 1 - m["salvage_damage_adjust_pct_per_unit_severity"] / 100 * damage_score
+        salvage = Range(*(round(clean * frac * adj) for frac in m["salvage_fraction_of_clean"]))
 
     # A buyer can always send the car to salvage, so as-is never prices below it.
     as_is = max(as_is, salvage.expected)

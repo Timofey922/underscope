@@ -22,6 +22,19 @@ it is built that way. `PROGRESS.md` holds the review log and open decisions.
 **See it in two minutes:** `.venv/bin/underscope demo`, then open `demo/index.html`: three cars
 from photos to checker review to the recommended exit, no API key needed.
 
+**Real cars (no training; OpenAI at request time):**
+
+```bash
+underscope check VIN --photos DIR --mileage N [--yes]   # NHTSA + registry + OpenAI vision
+underscope learn                                       # learn from checker-confirmed reviews
+```
+
+`check` decodes the VIN with NHTSA, takes the title, clean value and salvage comps from the
+Underscope registry (`/api/vehicle`) when the VIN is registered, grades the photos with OpenAI
+vision (`OPENAI_API_KEY`, `OPENAI_MODEL`, default gpt-5.5; read from the repo's `.env`), then
+ranks the four exits. `learn` compares what the detector reported with what checkers
+confirmed and fits the confidence calibration the detector then uses automatically.
+
 | Doc | For |
 |---|---|
 | [`docs/PITCH.md`](docs/PITCH.md) | A ten-minute demo script, the ask, and likely questions |
@@ -34,13 +47,15 @@ from photos to checker review to the recommended exit, no API key needed.
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'           # engine, tests
-.venv/bin/pip install -e '.[dev,vision]'    # plus the Claude vision damage detector
+.venv/bin/pip install -e '.[dev,vision]'    # plus the OpenAI vision damage detector
 make test   # pytest -q
 make lint   # ruff
 ```
 
-The vision detector reads credentials the way the Anthropic SDK does (`ANTHROPIC_API_KEY`, or a
-profile from `ant auth login`). Tests never call the API.
+On Windows use `.venv\Scripts\` instead of `.venv/bin/`. The OpenAI detector
+(`--detector openai`) reads `OPENAI_API_KEY` from the environment or the nearest `.env`. The
+original Claude detector (`--detector claude`) still works with `pip install -e '.[claude]'`
+and `ANTHROPIC_API_KEY`. Tests never call an API.
 
 ## Quick start
 

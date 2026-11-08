@@ -19,13 +19,32 @@ from underscope.perception import MockDetector
 
 class DetectorName(str, Enum):
     MOCK = "mock"
+    OPENAI = "openai"
     CLAUDE = "claude"
 
 
 NoCache = Annotated[
     bool,
-    typer.Option("--no-cache", help="Ask Claude again even for photos it already answered."),
+    typer.Option("--no-cache", help="Ask the vision model again even for photos it answered."),
 ]
+
+# Written by `underscope learn` from checker-confirmed reviews; used automatically when present.
+LEARNED_CALIBRATION = FsPath(".cache/learned_calibration.json")
+
+
+def _load_dotenv() -> None:
+    """Read KEY=VALUE lines from the nearest .env (this folder or a parent) into the
+    environment, without overriding variables already set. Values are never printed."""
+    import os
+
+    for folder in [FsPath.cwd(), *FsPath.cwd().parents]:
+        env = folder / ".env"
+        if env.is_file():
+            for line in env.read_text(encoding="utf-8").splitlines():
+                key, sep, value = line.strip().partition("=")
+                if sep and key and not key.startswith("#"):
+                    os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+            return
 
 
 def _make_detector(
@@ -35,13 +54,15 @@ def _make_detector(
     calibration: FsPath | None = None,
     cache: bool = True,
 ):
-    if name == DetectorName.CLAUDE:
+    if name in (DetectorName.OPENAI, DetectorName.CLAUDE):
         from underscope import calibration as cal
-        from underscope.vision import DEFAULT_CACHE_DIR, ClaudeVisionDetector
+        from underscope.vision import DEFAULT_CACHE_DIR, ClaudeVisionDetector, OpenAIVisionDetector
 
+        if calibration is None and LEARNED_CALIBRATION.is_file():
+            calibration = LEARNED_CALIBRATION  # what `learn` taught it from checker reviews
         table = cal.load(calibration) if calibration else None
-        return ClaudeVisionDetector(photo_root, calibration=table,
-                                    cache_dir=DEFAULT_CACHE_DIR if cache else None)  # fmt: skip
+        cls = OpenAIVisionDetector if name == DetectorName.OPENAI else ClaudeVisionDetector
+        return cls(photo_root, calibration=table, cache_dir=DEFAULT_CACHE_DIR if cache else None)
     return MockDetector.from_file(labels) if labels else MockDetector()
 
 
@@ -49,16 +70,16 @@ def _cost_gate(detector, photo_refs: list[str], yes: bool, hint: str = "") -> No
     """Before a paid run, say what it costs and stop unless --yes. Cached photos are free."""
     from underscope.vision import estimated_cost_usd
 
-    if yes or not hasattr(detector, "uncached"):  # only the paid detector has a cache
+    if yes or not hasattr(detector, "uncached"):  # only the paid detectors have a cache
         return
     todo = detector.uncached(list(dict.fromkeys(photo_refs)))
     if not todo:
         return
     cached = len(set(photo_refs)) - len(todo)
     reuse = f" ({cached} more already answered, reused free)" if cached else ""
-    cost = estimated_cost_usd(len(todo))
-    typer.echo(f"This sends {len(todo)} photos to Claude{reuse}, roughly ${cost:,.2f}. "
-               f"Re-run with --yes to go ahead{hint}.")  # fmt: skip
+    estimate = getattr(detector, "estimate_usd", estimated_cost_usd)
+    typer.echo(f"This sends {len(todo)} photos to {detector.model}{reuse}, roughly "
+               f"${estimate(len(todo)):,.2f}. Re-run with --yes to go ahead{hint}.")  # fmt: skip
     raise typer.Exit(1)
 
 AWAITING_CONFIRMATION = 3  # exit code: findings written for a checker, decision not made yet
@@ -101,6 +122,7 @@ def render(vehicle: VehicleRecord, rec: Recommendation) -> str:
 @app.callback()
 def main() -> None:
     """UnderScope command line."""
+    _load_dotenv()
 
 
 def _load_vehicle(path: FsPath) -> VehicleRecord:
@@ -234,7 +256,8 @@ def evaluate_cmd(
     ] = FsPath("reviews"),
     detector_name: Annotated[
         DetectorName,
-        typer.Option("--detector", help="mock reads labels; claude looks at the photos."),
+        typer.Option("--detector",
+                     help="mock reads labels; openai (or claude) looks at the photos."),
     ] = DetectorName.MOCK,
     photo_root: Annotated[
         FsPath, typer.Option("--photo-root", help="Folder the vehicle's photo_refs are in.")
@@ -393,7 +416,8 @@ def batch_cmd(
     ] = None,
     detector_name: Annotated[
         DetectorName,
-        typer.Option("--detector", help="mock reads labels; claude looks at the photos."),
+        typer.Option("--detector",
+                     help="mock reads labels; openai (or claude) looks at the photos."),
     ] = DetectorName.MOCK,
     photo_root: Annotated[
         FsPath, typer.Option("--photo-root", help="Folder the vehicles' photo_refs are in.")
@@ -765,6 +789,145 @@ def calibrate_cmd(
     else:
         typer.echo(f"\nSaved {out}. Score it on different photos than these: "
                    "detect-eval ... --calibration " + str(out) + " (or use --holdout)")  # fmt: skip
+
+
+PHOTO_TYPES = {".jpg", ".jpeg", ".png", ".webp"}
+# Engine title statuses are clean/salvage/rebuilt; the registry also knows flood,
+# non-repairable and lemon. Flood and non-repairable are branded salvage; lemon is a brand
+# that survives repair, so it is treated like rebuilt.
+TITLE_FROM_REGISTRY = {"clean": "clean", "salvage": "salvage", "rebuilt": "rebuilt",
+                       "flood": "salvage", "non_repairable": "salvage", "lemon": "rebuilt"}
+
+
+def _get_json(url: str) -> dict:
+    import urllib.request
+
+    req = urllib.request.Request(url, headers={"User-Agent": "underscope-engine"})
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        return json.loads(resp.read().decode())
+
+
+def vehicle_from_vin(vin: str, photos: FsPath | None, mileage: int, region: str,
+                     api: str) -> tuple[dict, list[str]]:  # fmt: skip
+    """A vehicle record for a real VIN: year/make/model/trim from NHTSA vPIC (free, public),
+    title and market values from the Underscope registry when the VIN is registered, photo
+    refs from the photo folder. Returns the record and notes on where each part came from."""
+    vin = vin.strip().upper()
+    notes: list[str] = []
+    r = _get_json(f"https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues/{vin}?format=json")
+    d = (r.get("Results") or [{}])[0]
+    if not d.get("Make"):
+        raise ValueError(f"NHTSA could not decode VIN {vin}")
+    rec: dict = {"vin": vin, "year": int(d.get("ModelYear") or 0), "make": d["Make"].title(),
+                 "model": d.get("Model") or "", "trim": d.get("Trim") or d.get("Series") or "",
+                 "mileage": mileage, "region": region}  # fmt: skip
+    notes.append("Year, make, model and trim from NHTSA vPIC.")
+    try:
+        reg = _get_json(f"{api.rstrip('/')}/api/vehicle?vin={vin}")
+    except Exception as err:  # registry is optional; the engine still runs without it
+        reg = {}
+        notes.append(f"Registry not reachable ({type(err).__name__}); title and values are "
+                     "placeholders.")  # fmt: skip
+    if reg.get("registered"):
+        rec["title_status"] = TITLE_FROM_REGISTRY.get(reg["title_status"], "clean")
+        source = reg["source"].replace("_", " ")
+        notes.append(f"Title {reg['title_status']} verified from the {source} (registry).")
+        if reg.get("clean_wholesale"):
+            rec["clean_value_cents"] = int(reg["clean_wholesale"]) * 100
+            notes.append(f"Clean value ${reg['clean_wholesale']:,} from the registry.")
+        if reg.get("salvage_comps"):
+            rec["salvage_comps_cents"] = [int(c) * 100 for c in reg["salvage_comps"]]
+            notes.append(f"Salvage band from {len(reg['salvage_comps'])} comparable sales.")
+    elif reg:
+        notes.append("VIN not in the registry: title assumed clean, values are placeholders.")
+    if photos:
+        rec["photo_refs"] = sorted(p.name for p in photos.iterdir()
+                                   if p.suffix.lower() in PHOTO_TYPES)  # fmt: skip
+        notes.append(f"{len(rec['photo_refs'])} photos from {photos}.")
+    return rec, notes
+
+
+@app.command("check")
+def check_cmd(
+    vin: Annotated[str, typer.Argument(help="A real 17-character VIN.")],
+    photos: Annotated[
+        FsPath | None,
+        typer.Option("--photos", exists=True, file_okay=False,
+                     help="Folder of this car's photos; graded by OpenAI vision."),
+    ] = None,  # fmt: skip
+    mileage: Annotated[int, typer.Option("--mileage", min=0, help="Odometer, miles.")] = 0,
+    region: Annotated[str, typer.Option("--region", help="State, for total-loss rules.")] = "NY",
+    api: Annotated[
+        str, typer.Option("--api", help="Underscope app for registry title and values.")
+    ] = "https://underscope-eight.vercel.app",
+    yes: Annotated[bool, typer.Option("--yes", help="Confirm the paid photo grading.")] = False,
+    skip_confirm: Annotated[
+        bool, typer.Option("--skip-confirm", help="Decide without a human checker.")
+    ] = False,
+    interactive: Annotated[
+        bool | None, typer.Option("--interactive/--no-interactive", help="Prompt the checker.")
+    ] = None,
+    as_json: Annotated[bool, typer.Option("--json", help="Print JSON.")] = False,
+) -> None:
+    """Evaluate a real car from its VIN (NHTSA + registry) and photos (OpenAI vision)."""
+    try:
+        rec, notes = vehicle_from_vin(vin, photos, mileage, region, api)
+    except Exception as err:
+        typer.echo(f"Could not build the vehicle: {err}", err=True)
+        raise typer.Exit(2) from err
+    if photos is None:
+        typer.echo("No --photos given: no damage to grade, so the decision assumes an "
+                   "undamaged car.", err=True)  # fmt: skip
+    path = FsPath("vehicles") / f"{rec['vin']}.json"
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(json.dumps(rec, indent=2))
+    typer.echo("\n".join(f"  {n}" for n in notes) + f"\n  Vehicle file: {path}\n", err=as_json)
+    evaluate_cmd(
+        vehicle_file=path, labels=None, as_json=as_json, review_mode=review.ReviewMode.ALL,
+        confirmed=None, skip_confirm=skip_confirm, interactive=interactive,
+        review_dir=FsPath("reviews"),
+        detector_name=DetectorName.OPENAI if photos else DetectorName.MOCK,
+        photo_root=photos or FsPath("."), calibration=None, yes=yes, no_cache=False,
+    )  # fmt: skip
+
+
+@app.command("learn")
+def learn_cmd(
+    review_dir: Annotated[
+        FsPath, typer.Option("--review-dir", help="Folder of review JSON files.")
+    ] = FsPath("reviews"),
+    min_count: Annotated[
+        int, typer.Option("--min-count", min=1, help="Fewest predictions to correct a band.")
+    ] = 5,
+) -> None:
+    """Learn from the checker: compare what the detector reported with what each checker
+    confirmed, and fit the confidence calibration the detector then uses automatically."""
+    from underscope import calibration as cal
+    from underscope.perception import merge_findings
+
+    truth, pred = {}, {}
+    for f in sorted(review_dir.glob("*.json")):
+        try:
+            req = review.load(f)
+        except Exception:
+            continue  # not a review file (e.g. a saved decision)
+        if req.status != "confirmed" or not req.sightings:
+            continue  # only checker-confirmed reviews of a real detector teach anything
+        truth[req.vin] = list(req.findings)
+        pred[req.vin] = merge_findings(list(req.sightings))
+    if not truth:
+        typer.echo(f"No confirmed reviews with detector output in {review_dir}. Run "
+                   "`underscope check VIN --photos DIR`, confirm it, then learn.")  # fmt: skip
+        raise typer.Exit(1)
+    table = cal.fit(truth, pred, "panel", min_count)
+    LEARNED_CALIBRATION.parent.mkdir(parents=True, exist_ok=True)
+    cal.save(table, LEARNED_CALIBRATION)
+    kept = sum(len(v) for v in truth.values())
+    said = sum(len(v) for v in pred.values())
+    typer.echo(cal.render(table))
+    typer.echo(f"\nLearned from {len(truth)} confirmed vehicles: the detector reported {said} "
+               f"damages, checkers confirmed {kept}. Saved {LEARNED_CALIBRATION}; the OpenAI "
+               "detector now uses it automatically.")  # fmt: skip
 
 
 class _MockPhotoDetector:

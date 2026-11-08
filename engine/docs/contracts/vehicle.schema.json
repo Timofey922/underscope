@@ -192,6 +192,21 @@
       "title": "Region",
       "type": "string"
     },
+    "salvage_comps_cents": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Salvage Comps Cents"
+    },
     "title_status": {
       "$ref": "#/$defs/TitleStatus",
       "default": "clean"

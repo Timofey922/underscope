@@ -11,8 +11,10 @@ dependencies = ["pydantic>=2", "numpy", "pandas", "pyyaml", "typer"]
 
 [project.optional-dependencies]
 dev = ["pytest", "ruff"]
-# Real damage detector (Claude vision). The engine and tests run without it.
-vision = ["anthropic", "pillow"]
+# Real damage detector (OpenAI vision; the Claude one also works with anthropic installed).
+# The engine and tests run without it.
+vision = ["openai", "pillow"]
+claude = ["anthropic", "pillow"]
 
 [project.scripts]
 underscope = "underscope.cli:app"

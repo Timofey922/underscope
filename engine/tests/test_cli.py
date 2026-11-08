@@ -327,7 +327,7 @@ def test_batch_with_claude_detector_needs_yes(tmp_path):
     result = runner.invoke(app, ["batch", str(FIXTURE_DIR), "--detector", "claude",
                                  "--review-dir", str(tmp_path)])  # fmt: skip
     assert result.exit_code == 1
-    assert "photos to Claude, roughly $" in result.output and "--yes" in result.output
+    assert "photos to claude-opus-5-5, roughly $" in result.output and "--yes" in result.output
     assert not list(tmp_path.iterdir())  # nothing ran
 
 

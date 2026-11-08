@@ -58,6 +58,9 @@ class VehicleRecord(BaseModel):
     insurance_claim: bool = False
     # Optional market anchor supplied by caller (cents); real source: ACV/Copart data.
     clean_value_cents: int | None = Field(default=None, ge=0)
+    # Optional sold prices of comparable damaged vehicles (cents); when given they set the
+    # salvage band instead of the placeholder fraction of clean value.
+    salvage_comps_cents: list[int] | None = None
     # Optional findings supplied inline (used when no detector labels exist).
     findings: list[DamageFinding] = Field(default_factory=list)
 

@@ -15,6 +15,8 @@ import base64
 import hashlib
 import io
 import json
+import os
+import re
 from pathlib import Path as FsPath
 from typing import Any
 
@@ -398,3 +400,119 @@ class ClaudeVisionDetector:
             found.extend(self.detect_photo(ref))
         # Photos overlap: the same dent seen twice must not be costed twice.
         return merge_findings(found)
+
+
+# ---------------------------------------------------------------- OpenAI
+
+OPENAI_MODEL = "gpt-5.5"
+# Rough USD per million tokens (input, output) for the pre-run cost estimate only, not billing.
+# Override with OPENAI_PRICE_PER_MTOK="in,out" when the real price list is known.
+OPENAI_PRICE_PER_MTOK = (2.50, 15.00)
+
+
+def _openai_price() -> tuple[float, float]:
+    raw = os.environ.get("OPENAI_PRICE_PER_MTOK", "")
+    try:
+        a, b = (float(x) for x in raw.split(","))
+        return (a, b)
+    except ValueError:
+        return OPENAI_PRICE_PER_MTOK
+
+
+class _Usage:
+    """OpenAI usage mapped to the input/output token names the cost report uses."""
+
+    def __init__(self, usage: Any):
+        self.input_tokens = getattr(usage, "prompt_tokens", 0) or 0
+        self.output_tokens = getattr(usage, "completion_tokens", 0) or 0
+
+
+class OpenAIVisionDetector(ClaudeVisionDetector):
+    """DamageDetector backed by OpenAI vision (Chat Completions with a strict JSON schema).
+
+    Same prompt, schema, answer cache, cross-photo merge and confidence calibration as the
+    Claude detector; only the API call differs. The key comes from OPENAI_API_KEY (the SDK
+    reads it); the model from OPENAI_MODEL, default gpt-5.5. One request per photo.
+    """
+
+    def __init__(self, photo_root: str | FsPath = ".", client: Any = None,
+                 model: str | None = None, effort: str = "low",
+                 calibration: dict[str, Any] | None = None,
+                 cache_dir: str | FsPath | None = None):  # fmt: skip
+        super().__init__(photo_root, client=client,
+                         model=model or os.environ.get("OPENAI_MODEL") or OPENAI_MODEL,
+                         effort=effort, calibration=calibration, cache_dir=cache_dir)  # fmt: skip
+
+    @property
+    def client(self) -> Any:
+        if self._client is None:
+            try:
+                import openai
+            except ImportError as err:
+                raise DetectionError(
+                    "the OpenAI detector needs the vision extra: pip install -e '.[vision]'"
+                ) from err
+            if not os.environ.get("OPENAI_API_KEY"):
+                raise DetectionError("set OPENAI_API_KEY (in .env or the environment)")
+            self._client = openai.OpenAI()
+        return self._client
+
+    def request_params(self, photo_ref: str) -> dict[str, Any]:
+        path = self.photo_root / photo_ref
+        if not path.is_file():
+            raise DetectionError(f"{photo_ref}: photo not found under {self.photo_root}")
+        src = image_block(path)["source"]  # downscaled, EXIF-upright, size-checked
+        url = f"data:{src['media_type']};base64,{src['data']}"
+        # Reasoning models (gpt-5.x, o-series) take reasoning_effort and reject temperature.
+        sampling: dict[str, Any] = (
+            {"reasoning_effort": self.effort} if re.match(r"(gpt-5|o\d)", self.model)
+            else {"temperature": 0}
+        )
+        return {
+            "model": self.model,
+            **sampling,
+            "response_format": {"type": "json_schema", "json_schema": {
+                "name": "photo_damage", "strict": True, "schema": SCHEMA}},
+            "messages": [
+                {"role": "system", "content": SYSTEM + "\nReply as json matching the schema."},
+                {"role": "user", "content": [
+                    {"type": "image_url", "image_url": {"url": url, "detail": "high"}},
+                    {"type": "text", "text": USER_TEXT},
+                ]},
+            ],
+        }  # fmt: skip
+
+    def detect_photo(self, photo_ref: str) -> list[DamageFinding]:
+        cached = self._cached(photo_ref)
+        if cached is not None:
+            self.cache_hits += 1
+            return self._use(cached, photo_ref)
+        response = self.client.chat.completions.create(**self.request_params(photo_ref))
+        self.usage.append(_Usage(getattr(response, "usage", None)))
+        choice = response.choices[0]
+        if getattr(choice.message, "refusal", None):
+            raise DetectionError(f"{photo_ref}: the model declined to analyze this photo")
+        if choice.finish_reason == "length":
+            raise DetectionError(f"{photo_ref}: response was cut off (length)")
+        text = choice.message.content
+        if not text:
+            raise DetectionError(f"{photo_ref}: response had no content")
+        found = self._use(text, photo_ref)  # only a usable answer is cached
+        self._store(photo_ref, text)
+        return found
+
+    def estimate_usd(self, photos: int) -> float:
+        p_in, p_out = _openai_price()
+        return photos * (EST_TOKENS_PER_PHOTO[0] * p_in + EST_TOKENS_PER_PHOTO[1] * p_out) / 1e6
+
+    def spent_usd(self, batch: bool = False) -> float:
+        p_in, p_out = _openai_price()
+        used = [u for u in self.usage if u is not None]
+        return (sum(u.input_tokens for u in used) * p_in
+                + sum(u.output_tokens for u in used) * p_out) / 1e6  # fmt: skip
+
+    def submit_batch(self, photo_refs: list[str]) -> dict[str, Any]:
+        raise DetectionError("batch mode is only built for the Claude detector; run without it")
+
+    def collect_batch(self, state: dict[str, Any]):  # type: ignore[override]
+        raise DetectionError("batch mode is only built for the Claude detector; run without it")

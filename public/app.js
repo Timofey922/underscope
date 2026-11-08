@@ -5,7 +5,7 @@ const GRADE_ORDER = ['fine', 'repairable', 'replace', 'unknown'];
 const GRADE_LABEL = { fine: 'Fine', repairable: 'Repairable', replace: 'Replace', unknown: 'Not visible' };
 const TITLE_LABEL = { clean: 'Clean', salvage: 'Salvage', rebuilt: 'Rebuilt', flood: 'Flood', non_repairable: 'Non-repairable', lemon: 'Lemon buyback', unknown: 'Title not confirmed' };
 const SOURCE_LABEL = { title_document: 'title document', dealer_listing: 'dealer listing', online_listing: 'online listing', nmvtis_report: 'NMVTIS report' };
-const CODE_SOURCE = { generic_table: 'code table', gemini: 'explained by Gemini for this make', unknown: 'meaning unknown for this make', invalid: 'not a valid code' };
+const CODE_SOURCE = { generic_table: 'code table', openai: 'explained by OpenAI for this make', unknown: 'meaning unknown for this make', invalid: 'not a valid code' };
 const FLAG_LABEL = { airbags_deployed: 'Airbags deployed', frame_suspected: 'Frame damage', fluid_leak: 'Fluid leak' };
 const ASSUME = [
   ['labor_rate', 'Labor ($/hr)', 95], ['daily_cost', 'Holding ($/day)', 20], ['fix_days', 'Days to fix + resell', 30], ['as_is_days', 'Days to sell as-is', 7],

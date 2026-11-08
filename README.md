@@ -26,7 +26,7 @@ photos + VIN + fault codes
         │
         ├─ vision     OpenAI grades 25 parts: fine / repairable / replace / unknown
         │             and flags hidden risks (airbags, frame, fluid leaks)
-        ├─ codes      decode DTCs (Supabase table, or Gemini + NHTSA vPIC for
+        ├─ codes      decode DTCs (Supabase table, or OpenAI + NHTSA vPIC for
         │             manufacturer codes) → system, severity, cost band, triage
         └─ decision   repair band (parts + labor, widened for unknowns)
                       as-is band (comparable salvage sales)
@@ -54,7 +54,7 @@ The front end is a Lovable app. The seller uploads photos and a VIN, then sees a
 | `test_vehicles/` | 20 test vehicles (photos only, gitignored) |
 | `engine/` | Artem's Python engine: damage detector, evaluation harness, calibration, review sheets, contracts. See `engine/README.md`. Tests: `cd engine && make test` (217 passing) |
 
-**Stack:** Lovable (React + TypeScript) front end on Vercel, Vercel functions in `api/`, OpenAI for photo grading (`openai`), Google Gemini via Vertex AI for fault codes (`@google/genai`), Supabase (Postgres).
+**Stack:** Lovable (React + TypeScript) front end on Vercel, Vercel functions in `api/`, OpenAI at request time for photo grading and fault codes (`openai`; no model training), Supabase (Postgres).
 
 ## Setup
 
@@ -70,7 +70,7 @@ npm run test:codes                 # run the 10 scans and print a summary table
 npm run test:decision              # run the sample vehicles through the decision and check each verdict
 ```
 
-Keys are read only from environment variables: `.env` locally, Vercel project settings in production. `GEMINI_API_KEY` and `SUPABASE_SERVICE_ROLE_KEY` are server-only; the front end only gets `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`.
+Keys are read only from environment variables: `.env` locally, Vercel project settings in production. `OPENAI_API_KEY` and `SUPABASE_SERVICE_ROLE_KEY` are server-only; the front end only gets `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`.
 
 ## Testing
 

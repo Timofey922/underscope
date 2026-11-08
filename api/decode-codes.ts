@@ -1,10 +1,10 @@
 // POST /api/decode-codes  { vin, codes, title_status? } -> decoded fault codes, summary and triage.
 // title_status is entered by the seller (no free API returns title brands by VIN).
 // Generic codes come from the Supabase dtc_codes table; manufacturer-specific or
-// unlisted codes are explained by Gemini (which must say "unknown" rather than guess).
+// unlisted codes are explained by OpenAI at request time (it must say "unknown" rather than guess).
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
-import { geminiClient } from './_lib/gemini.js';
+import OpenAI from 'openai';
 import { lookupRegistry, type RegistryTitle } from './_lib/registry.js';
 
 // ---- Config: every threshold and fallback lives here ----
@@ -15,7 +15,9 @@ export const CONFIG = {
     skipSystemsAtMajor: ['transmission', 'airbag/SRS'], // major-or-worse in these systems -> skip
     skipTitles: ['non_repairable', 'flood'],       // seller-entered title brands that skip inspection
   },
-  // Cost band for codes explained by Gemini (the table has its own costs).
+  // Model for explaining codes the table doesn't have. OPENAI_CODES_MODEL overrides; defaults to OPENAI_MODEL.
+  codesModel: () => process.env.OPENAI_CODES_MODEL || process.env.OPENAI_MODEL || 'gpt-5.5',
+  // Cost band for codes explained by OpenAI (the table has its own costs).
   costBySeverity: {
     minor: [50, 400], moderate: [150, 1500], major: [400, 4000], critical: [1000, 6000], unknown: [100, 3000],
   } as Record<string, [number, number]>,
@@ -30,7 +32,7 @@ export type TitleStatus = (typeof TITLE_STATUSES)[number];
 const CODE_RE = /^[PCBU][0-3][0-9A-F]{3}$/;
 const VIN_RE = /^[A-HJ-NPR-Z0-9]{17}$/;
 
-type Source = 'generic_table' | 'gemini' | 'unknown' | 'invalid';
+type Source = 'generic_table' | 'openai' | 'unknown' | 'invalid';
 export type DecodedCode = {
   code: string; description: string; system: string; severity: string;
   cost_low: number; cost_high: number; source: Source;
@@ -60,7 +62,7 @@ async function decodeVin(vin: string): Promise<Vehicle> {
       .filter(Boolean).join(' ') || null;
     return { year: v('ModelYear'), make: v('Make'), model: v('Model'), engine };
   } catch {
-    return empty; // vPIC down: keep going, Gemini just gets less context
+    return empty; // vPIC down: keep going, the model just gets less context
   }
 }
 
@@ -80,30 +82,49 @@ function unknownCode(code: string): DecodedCode {
   return { code, description: 'unknown', system: 'unknown', severity: 'unknown', cost_low: lo, cost_high: hi, source: 'unknown' };
 }
 
-async function askGemini(codes: string[], vehicle: Vehicle): Promise<DecodedCode[]> {
-  const client = geminiClient();
-  if (!client || codes.length === 0) return codes.map(unknownCode);
-  const { ai, model } = client;
+// Strict schema: one entry per code, enums for system/severity, "unknown" always allowed.
+const CODES_SCHEMA = {
+  type: 'object', additionalProperties: false, required: ['codes'],
+  properties: {
+    codes: {
+      type: 'array',
+      items: {
+        type: 'object', additionalProperties: false, required: ['code', 'description', 'system', 'severity'],
+        properties: {
+          code: { type: 'string' },
+          description: { type: 'string' },
+          system: { type: 'string', enum: [...SYSTEMS, 'unknown'] },
+          severity: { type: 'string', enum: [...SEVERITIES, 'unknown'] },
+        },
+      },
+    },
+  },
+};
+
+async function askOpenAI(codes: string[], vehicle: Vehicle): Promise<DecodedCode[]> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey || codes.length === 0) return codes.map(unknownCode);
+  const ai = new OpenAI({ apiKey });
+  const model = CONFIG.codesModel();
   const car = [vehicle.year, vehicle.make, vehicle.model, vehicle.engine].filter(Boolean).join(' ') || 'unknown vehicle';
   const system = [
-    'You explain OBD-II diagnostic trouble codes for a specific vehicle. Reply with JSON only, no prose.',
-    'Shape: {"codes":[{"code":"P1234","description":"...","system":"...","severity":"..."}]}, one entry per input code.',
-    `system must be one of: ${SYSTEMS.join(', ')}, or "unknown".`,
-    `severity must be one of: ${SEVERITIES.join(', ')}, or "unknown".`,
+    'You explain OBD-II diagnostic trouble codes for a specific vehicle. Reply as json matching the schema, one entry per input code.',
     'Use "critical" for deployed airbags, loss of oil pressure, overheating or anything unsafe to drive.',
     'If you are not sure what a code means for this make, set description, system and severity to "unknown". Never guess.',
   ].join('\n');
-  const prompt = `Vehicle: ${car}\nCodes: ${codes.join(', ')}`;
+  // Reasoning models (gpt-5.x, o-series) take reasoning_effort and reject temperature; others take temperature 0.
+  const sampling = /^(gpt-5|o\d)/.test(model) ? { reasoning_effort: 'low' as const } : { temperature: 0 };
 
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const res = await ai.models.generateContent({
-        model, contents: prompt,
-        config: { systemInstruction: system, temperature: 0, responseMimeType: 'application/json' },
+      const res = await ai.chat.completions.create({
+        model, ...sampling,
+        response_format: { type: 'json_schema', json_schema: { name: 'dtc_codes', strict: true, schema: CODES_SCHEMA } },
+        messages: [{ role: 'system', content: system }, { role: 'user', content: `Vehicle: ${car}\nCodes: ${codes.join(', ')}` }],
       });
-      const items: any[] = JSON.parse(res.text ?? '').codes;
+      const items: any[] = JSON.parse(res.choices[0].message.content ?? '').codes;
       const byCode = new Map(items.map((i) => [String(i.code).toUpperCase(), i]));
-      if (!codes.every((c) => byCode.has(c))) throw new Error('missing codes in Gemini reply');
+      if (!codes.every((c) => byCode.has(c))) throw new Error('missing codes in OpenAI reply');
       return codes.map((code) => {
         const i = byCode.get(code);
         const severity = SEVERITIES.includes(i.severity) ? i.severity : 'unknown';
@@ -111,11 +132,11 @@ async function askGemini(codes: string[], vehicle: Vehicle): Promise<DecodedCode
         const desc = typeof i.description === 'string' && i.description.trim() ? i.description.trim() : 'unknown';
         const [lo, hi] = CONFIG.costBySeverity[severity];
         const isUnknown = desc.toLowerCase() === 'unknown';
-        return { code, description: desc, system: sys, severity, cost_low: lo, cost_high: hi, source: isUnknown ? 'unknown' : 'gemini' };
+        return { code, description: desc, system: sys, severity, cost_low: lo, cost_high: hi, source: isUnknown ? 'unknown' : 'openai' };
       });
     } catch (e) {
       // API error, invalid JSON or missing codes: retry once, then fall back to unknown
-      console.warn(`Gemini attempt ${attempt + 1} failed: ${(e as Error).message.slice(0, 200)}`);
+      console.warn(`OpenAI attempt ${attempt + 1} failed: ${(e as Error).message.slice(0, 200)}`);
     }
   }
   return codes.map(unknownCode);
@@ -146,11 +167,11 @@ export async function decodeScan(vin: string, rawCodes: string[], title: TitleSt
     decodeVin(vin), valid.length ? lookupTable(valid) : new Map(), lookupRegistry(vin),
   ]);
   if (registered) title = registered.title_status;
-  // Not in the table (includes every manufacturer-specific code, 2nd char "1") -> Gemini.
+  // Not in the table (includes every manufacturer-specific code, 2nd char "1") -> OpenAI.
   const missing = valid.filter((c) => !table.has(c));
-  const fromGemini = new Map((await askGemini(missing, vehicle)).map((d) => [d.code, d]));
+  const fromAI = new Map((await askOpenAI(missing, vehicle)).map((d) => [d.code, d]));
 
-  const decoded = valid.map((c) => table.get(c) ?? fromGemini.get(c)!);
+  const decoded = valid.map((c) => table.get(c) ?? fromAI.get(c)!);
   const rank = (s: string) => SEVERITIES.indexOf(s);
   const worst = decoded.reduce((w, c) => (rank(c.severity) > rank(w) ? c.severity : w), decoded.length ? 'unknown' : 'none');
 

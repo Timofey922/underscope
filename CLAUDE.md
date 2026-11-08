@@ -19,10 +19,13 @@ Read them only when a task needs the bigger picture; this file is the source of 
 ## Stack
 - Front end: Lovable app (React + TypeScript), hosted on Vercel.
 - Back end: Vercel serverless functions in `api/` (TypeScript). All AI calls happen here, never in the browser.
-- AI for photos: OpenAI via `openai` (Karthik's credit). `api/grade-photos.ts`, model from `OPENAI_MODEL` (currently `gpt-5.5`), client from `openaiClient()` in `api/_lib/openai.ts`.
-- AI for fault codes: Google Gemini via `@google/genai`, called through Vertex AI (`GEMINI_USE_VERTEX=true`, billed to Google Cloud project `project-45b188c0-b276-4e00-a94`). Model name from env var `GEMINI_MODEL` (currently `gemini-3.8-flash`). Create clients only with `geminiClient()` from `api/_lib/gemini.ts`. `GEMINI_API_KEY` is an API key bound to service account `underscope-vertex` (Vertex AI User role); plain API keys are rejected by Vertex.
+- AI: OpenAI only, called at request time (team decision: no model training; not feasible in the hackathon window). Package `openai`, key `OPENAI_API_KEY` (Karthik's credit).
+  - Photo grading `api/grade-photos.ts`: `OPENAI_MODEL` (currently `gpt-5.5`), client from `openaiClient()` in `api/_lib/openai.ts`.
+  - Photo classification `api/classify-photos.ts`: `OPENAI_CLASSIFY_MODEL` (default `gpt-4o-mini`).
+  - Fault-code explanations `api/decode-codes.ts`: `OPENAI_CODES_MODEL` (defaults to `OPENAI_MODEL`); strict JSON schema, "unknown" allowed. About 9 s with gpt-5.5; set `OPENAI_CODES_MODEL=gpt-4o-mini` if speed matters more.
+  - Gemini/Vertex was removed. The Google Cloud project (`project-45b188c0-b276-4e00-a94`, service account `underscope-vertex`) is no longer used by the app.
 - Database: Supabase (Postgres), project `zkewmumlgbofqonxpwin`. Tables are small and demo-only; row level security on. Migrations in `supabase/migrations/`.
-- Secrets only in environment variables (`.env` locally, Vercel project settings in production): `GEMINI_API_KEY`, `GEMINI_MODEL`, `GEMINI_USE_VERTEX`, `OPENAI_API_KEY`, `OPENAI_MODEL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (server only), `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` (front end). Never hardcode or commit keys.
+- Secrets only in environment variables (`.env` locally, Vercel project settings in production): `OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_CLASSIFY_MODEL`, `OPENAI_CODES_MODEL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (server only), `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` (front end). Never hardcode or commit keys.
 
 ## Repo layout
 - `api/` — Vercel functions (`decode-codes.ts` = fault codes module)
@@ -68,8 +71,8 @@ Input: VIN + list of OBD-II trouble codes from a scan tool (e.g. ["P0300", "C123
 Steps:
 1. Validate format: letter + 4 characters. Letter = system: P powertrain, C chassis, B body, U network. Second character 0 = generic (same meaning for all makes), 1 = manufacturer-specific (meaning depends on make from VIN).
 2. Generic codes: look up the description in the Supabase table `dtc_codes` (code, description, system, severity, cost_low, cost_high), seeded from `data/dtc_codes.csv`.
-3. Manufacturer-specific or not found: ask Gemini to explain it given the make/model from the NHTSA vPIC VIN decode; it must answer "unknown" if unsure, never guess.
-4. Map each code to: system (engine, transmission, brakes/ABS, airbag/SRS, electrical, emissions, body), severity (minor, moderate, major, critical) and a repair cost band low/high. Table codes use the costs in `dtc_codes`; Gemini-explained codes use a cost band per severity from the config object.
+3. Manufacturer-specific or not found: ask OpenAI to explain it given the make/model from the NHTSA vPIC VIN decode; it must answer "unknown" if unsure, never guess.
+4. Map each code to: system (engine, transmission, brakes/ABS, airbag/SRS, electrical, emissions, body), severity (minor, moderate, major, critical) and a repair cost band low/high. Table codes use the costs in `dtc_codes`; OpenAI-explained codes use a cost band per severity from the config object.
 5. Output per vehicle (plus `vehicle` from vPIC and a `reason` for the triage):
 ```json
 {

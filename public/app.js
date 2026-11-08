@@ -400,7 +400,7 @@ async function recompute(first = false) {
 const DEST_CLASS = { ACV: 'ok', Copart: 'bad', 'Parts buyer': 'warn' };
 const DEST_LAMP = { ACV: ['on-acv', 'A'], Copart: ['on-copart', 'C'], 'Parts buyer': ['on-amber', 'P'] };
 const cap = (s) => s[0].toUpperCase() + s.slice(1);
-function routeHero(first) {
+function routeHero(first, d) {
   const r = state.route;
   if (!r || r.error) return '';
   const best = r.options[0], next = r.options[1];
@@ -409,7 +409,7 @@ function routeHero(first) {
   // Both top exits at ACV and nearly tied: the destination is clear, the repair choice isn't.
   const acvTie = best.destination === 'ACV' && next.destination === 'ACV' && gap < Math.max(500, best.expected * 0.05);
   const why = acvTie
-    ? `Repairing first and selling as-is come out within ${money(gap)} of each other (expected net about ${money(best.expected)}), so the destination is ACV either way. Use “Repair or sell as-is?” below to choose.`
+    ? `Repairing first and selling as-is come out within ${money(gap)} of each other (expected net about ${money(best.expected)}), so the destination is ACV either way.${d && d.verdict ? ' Use “Repair or sell as-is?” below to choose.' : ' There are no sold salvage prices on record for this vehicle, so the two cannot be told apart yet.'}`
     : `<b>${esc(cap(r.winner_label))}.</b> Expected net ${money(best.expected)}, middle 80% ${money(best.p10)} to ${money(best.p90)}. Next best: ${esc(next.label)} (${esc(next.destination)}), ${money(gap)} behind.`;
   return `<div class="rec hero"><div class="lamp ${lamp}${first ? ' ignite' : ''}" aria-hidden="true">${glyph}</div><div>
     <h3>Send it to ${esc(r.destination)}</h3>
@@ -650,7 +650,7 @@ function render(d, first) {
       <div class="veh-actions"><button class="btn btn-ghost btn-sm" type="button" data-copy>${ic('link')}Copy link</button>
       <button class="btn btn-ghost btn-sm" type="button" data-download>${ic('download')}Download JSON</button></div></div>
     ${state.route && !state.route.error
-      ? `${routeHero(first)}${routeExits()}${d.verdict ? `<div class="sec sec-decide"><h3>${ic('wrench')}Repair or sell as-is?</h3>${recBlock(d, false, true)}${rangesBlock(d)}</div>` : ''}${scorecardBlock(d)}`
+      ? `${routeHero(first, d)}${routeExits()}${d.verdict ? `<div class="sec sec-decide"><h3>${ic('wrench')}Repair or sell as-is?</h3>${recBlock(d, false, true)}${rangesBlock(d)}</div>` : ''}${scorecardBlock(d)}`
       : `${recBlock(d, first)}${rangesBlock(d)}${routeExits()}${scorecardBlock(d)}`}
     <div class="sec sec-repair"><h3>${ic('receipt')}Where the numbers come from</h3>${repairTab(d)}</div>
     <div class="sec sec-condition"><h3>${ic('clipboard')}Condition</h3>${conditionTab()}</div>
